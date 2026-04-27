@@ -381,6 +381,7 @@ screen_y = monitor.top + y_ratio * (monitor.height - 1)
 pointer down -> move mouse -> left down
 pointer move -> move mouse
 pointer up   -> move mouse -> left up
+two-finger vertical pan -> mouse wheel
 ```
 
 ### 当前限制

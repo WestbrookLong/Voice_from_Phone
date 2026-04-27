@@ -28,8 +28,10 @@ KEYEVENTF_UNICODE = 0x0004
 MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_WHEEL = 0x0800
 MOUSEEVENTF_ABSOLUTE = 0x8000
 MOUSEEVENTF_VIRTUALDESK = 0x4000
+WHEEL_DELTA = 120
 INPUT_KEYBOARD = 1
 INPUT_MOUSE = 0
 INPUT_HARDWARE = 2
@@ -108,14 +110,14 @@ def _send_keyboard_input(vk: int = 0, scan: int = 0, flags: int = 0) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _send_mouse_input(dx: int = 0, dy: int = 0, flags: int = 0) -> None:
+def _send_mouse_input(dx: int = 0, dy: int = 0, flags: int = 0, mouse_data: int = 0) -> None:
     event = INPUT(
         type=INPUT_MOUSE,
         union=INPUT_UNION(
-            mi=MOUSEINPUT(
+                mi=MOUSEINPUT(
                 dx=dx,
                 dy=dy,
-                mouseData=0,
+                mouseData=mouse_data,
                 dwFlags=flags,
                 time=0,
                 dwExtraInfo=0,
@@ -180,6 +182,10 @@ def left_mouse_down() -> None:
 
 def left_mouse_up() -> None:
     _send_mouse_input(flags=MOUSEEVENTF_LEFTUP)
+
+
+def mouse_wheel(delta: int) -> None:
+    _send_mouse_input(dx=0, dy=0, flags=MOUSEEVENTF_WHEEL, mouse_data=delta)
 
 
 def capture_jpeg(monitor_id: int, quality: int) -> tuple[dict[str, int], bytes]:
@@ -341,13 +347,18 @@ def create_app(token: str) -> web.Application:
                 y = int(monitor["top"] + y_ratio * max(1, monitor["height"] - 1))
                 action = payload.get("action")
 
-                move_mouse_to_screen_point(x, y)
-                if action == "down":
+                if action == "wheel":
+                    delta = int(payload.get("delta", 0))
+                    if delta:
+                        mouse_wheel(max(-1200, min(1200, delta)))
+                elif action == "down":
+                    move_mouse_to_screen_point(x, y)
                     left_mouse_down()
                 elif action == "up":
+                    move_mouse_to_screen_point(x, y)
                     left_mouse_up()
                 elif action == "move":
-                    pass
+                    move_mouse_to_screen_point(x, y)
                 else:
                     raise ValueError(f"unsupported pointer action: {action}")
             except Exception as exc:

@@ -107,6 +107,29 @@
         touch-action: manipulation;
       }
 
+      .mode-button {
+        position: fixed;
+        left: max(16px, env(safe-area-inset-left));
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 5;
+        min-width: 108px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        padding: 0 16px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 16px;
+        font-weight: 900;
+        touch-action: manipulation;
+      }
+
+      .mode-button.wheel {
+        color: #11130f;
+        background: rgba(182, 227, 109, 0.94);
+      }
+
       .input-panel {
         position: fixed;
         left: max(14px, env(safe-area-inset-left));
@@ -167,6 +190,7 @@
       <button id="closeKeyboard" type="button">收起</button>
     </div>
     <button id="keyboardButton" class="keyboard-button" type="button" aria-label="打开键盘">⌨</button>
+    <button id="modeButton" class="mode-button" type="button">点击模式</button>
 
     <script>
       const canvas = document.querySelector("#screen");
@@ -178,6 +202,7 @@
       const textInput = document.querySelector("#textInput");
       const clearTextButton = document.querySelector("#clearText");
       const closeKeyboardButton = document.querySelector("#closeKeyboard");
+      const modeButton = document.querySelector("#modeButton");
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
       const monitorId = params.get("monitor") || "1";
@@ -193,8 +218,16 @@
       let monitor = null;
       let imageRect = { left: 0, top: 0, width: 0, height: 0 };
       let activePointerId = null;
+      let activePointerType = null;
       let stageWidth = 0;
       let stageHeight = 0;
+      const touches = new Map();
+      let wheelMode = false;
+      let forcedWheelMode = false;
+      let singleFingerWheelPointerId = null;
+      let lastSingleFingerWheelY = null;
+      let lastTwoFingerCenter = null;
+      let wheelRemainder = 0;
 
       function setStatus(text, connected = false) {
         statusEl.textContent = text;
@@ -364,18 +397,154 @@
         }));
       }
 
+      function sendWheel(delta) {
+        if (!monitor || !pointerWs || pointerWs.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        pointerWs.send(JSON.stringify({
+          type: "pointer",
+          token,
+          action: "wheel",
+          x: 0.5,
+          y: 0.5,
+          delta,
+          monitor,
+        }));
+      }
+
+      function twoFingerCenter() {
+        if (touches.size !== 2) {
+          return null;
+        }
+        const points = Array.from(touches.values());
+        return {
+          x: (points[0].clientX + points[1].clientX) / 2,
+          y: (points[0].clientY + points[1].clientY) / 2,
+        };
+      }
+
+      function updateWheelFromTouches() {
+        if (!wheelMode) {
+          return;
+        }
+        const center = twoFingerCenter();
+        if (!center) {
+          return;
+        }
+        if (!lastTwoFingerCenter) {
+          lastTwoFingerCenter = center;
+          return;
+        }
+
+        const dy = center.y - lastTwoFingerCenter.y;
+        lastTwoFingerCenter = center;
+        wheelRemainder += dy * 5;
+
+        const step = 120;
+        if (Math.abs(wheelRemainder) >= step) {
+          const delta = Math.trunc(wheelRemainder / step) * step;
+          wheelRemainder -= delta;
+          sendWheel(delta);
+        }
+      }
+
+      function updateWheelFromSingleTouch(event) {
+        if (lastSingleFingerWheelY === null) {
+          lastSingleFingerWheelY = event.clientY;
+          return;
+        }
+        const dy = event.clientY - lastSingleFingerWheelY;
+        lastSingleFingerWheelY = event.clientY;
+        wheelRemainder += dy * 5;
+
+        const step = 120;
+        if (Math.abs(wheelRemainder) >= step) {
+          const delta = Math.trunc(wheelRemainder / step) * step;
+          wheelRemainder -= delta;
+          sendWheel(delta);
+        }
+      }
+
+      function setForcedWheelMode(enabled) {
+        forcedWheelMode = enabled;
+        modeButton.textContent = enabled ? "滚轮模式" : "点击模式";
+        modeButton.classList.toggle("wheel", enabled);
+        if (activePointerId !== null) {
+          sendPointer("up", { clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
+          activePointerId = null;
+          activePointerType = null;
+        }
+        touches.clear();
+        wheelMode = false;
+        singleFingerWheelPointerId = null;
+        lastSingleFingerWheelY = null;
+        lastTwoFingerCenter = null;
+        wheelRemainder = 0;
+      }
+
       canvas.addEventListener("pointerdown", (event) => {
         event.preventDefault();
-        if (activePointerId !== null) {
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            singleFingerWheelPointerId = event.pointerId;
+            lastSingleFingerWheelY = event.clientY;
+            wheelRemainder = 0;
+            canvas.setPointerCapture(event.pointerId);
+            sendPointer("move", event);
+            return;
+          }
+          touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          if (touches.size === 2) {
+            if (activePointerId !== null) {
+              sendPointer("up", event);
+              activePointerId = null;
+              activePointerType = null;
+            }
+            wheelMode = true;
+            lastTwoFingerCenter = twoFingerCenter();
+            wheelRemainder = 0;
+            return;
+          }
+          if (touches.size === 1 && activePointerId === null && !wheelMode) {
+            activePointerId = event.pointerId;
+            activePointerType = "touch";
+            canvas.setPointerCapture(event.pointerId);
+            sendPointer("down", event);
+            return;
+          }
+          return;
+        }
+        if (activePointerId !== null || wheelMode) {
           return;
         }
         activePointerId = event.pointerId;
+        activePointerType = event.pointerType;
         canvas.setPointerCapture(event.pointerId);
         sendPointer("down", event);
       });
 
       canvas.addEventListener("pointermove", (event) => {
         event.preventDefault();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            if (event.pointerId === singleFingerWheelPointerId) {
+              sendPointer("move", event);
+              updateWheelFromSingleTouch(event);
+            }
+            return;
+          }
+          if (touches.has(event.pointerId)) {
+            touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          }
+          if (wheelMode) {
+            updateWheelFromTouches();
+            return;
+          }
+          if (event.pointerId === activePointerId) {
+            sendPointer("move", event);
+          }
+          return;
+        }
         if (event.pointerId !== activePointerId) {
           return;
         }
@@ -387,11 +556,35 @@
 
       function endPointer(event) {
         event.preventDefault();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            if (event.pointerId === singleFingerWheelPointerId) {
+              singleFingerWheelPointerId = null;
+              lastSingleFingerWheelY = null;
+              wheelRemainder = 0;
+            }
+            return;
+          }
+          const wasActivePointer = event.pointerId === activePointerId;
+          if (wasActivePointer) {
+            sendPointer("up", event);
+            activePointerId = null;
+            activePointerType = null;
+          }
+          touches.delete(event.pointerId);
+          if (touches.size < 2) {
+            wheelMode = false;
+            lastTwoFingerCenter = null;
+            wheelRemainder = 0;
+          }
+          return;
+        }
         if (event.pointerId !== activePointerId) {
           return;
         }
         sendPointer("up", event);
         activePointerId = null;
+        activePointerType = null;
       }
 
       canvas.addEventListener("pointerup", endPointer);
@@ -427,6 +620,13 @@
         event.stopPropagation();
         inputPanel.classList.remove("open");
         textInput.blur();
+      });
+
+      modeButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      modeButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setForcedWheelMode(!forcedWheelMode);
       });
 
       resizeCanvas();
