@@ -159,9 +159,9 @@
 
       let ws = null;
       let seq = 0;
-      let syncedText = "";
       let queue = [];
       let reconnectTimer = null;
+      let lastSentText = "";
 
       function setStatus(text, state = "idle") {
         statusEl.textContent = text;
@@ -239,17 +239,23 @@
       }
 
       function syncNow() {
-        const current = inputEl.value;
-        const ops = diffOps(syncedText, current);
-        if (ops.length === 0) {
+        if (inputEl.value === lastSentText) {
           return;
         }
-        syncedText = current;
+        lastSentText = inputEl.value;
         sendMessage({
-          type: "ops",
+          type: "sync_text",
           token,
           seq: ++seq,
-          ops,
+          text: inputEl.value,
+        });
+      }
+
+      function resetSession() {
+        sendMessage({
+          type: "reset_session",
+          token,
+          seq: ++seq,
         });
       }
 
@@ -293,7 +299,8 @@
 
       clearButton.addEventListener("click", () => {
         inputEl.value = "";
-        syncedText = "";
+        lastSentText = "";
+        resetSession();
         inputEl.focus();
       });
 

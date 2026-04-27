@@ -114,6 +114,24 @@ def backspace(count: int) -> None:
         press_key(VK_BACK)
 
 
+class TextSession:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def replace(self, new_text: str) -> None:
+        prefix_len = common_prefix_len(self.text, new_text)
+        delete_count = len(list(self.text[prefix_len:]))
+        insert_text = new_text[prefix_len:]
+        if delete_count:
+            backspace(delete_count)
+        if insert_text:
+            type_text(insert_text)
+        self.text = new_text
+
+    def reset(self) -> None:
+        self.text = ""
+
+
 def get_lan_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -121,6 +139,14 @@ def get_lan_ip() -> str:
             return s.getsockname()[0]
     except OSError:
         return "127.0.0.1"
+
+
+def common_prefix_len(left: str, right: str) -> int:
+    length = min(len(left), len(right))
+    index = 0
+    while index < length and left[index] == right[index]:
+        index += 1
+    return index
 
 
 def validate_ops(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -155,6 +181,7 @@ def validate_ops(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def create_app(token: str) -> web.Application:
     app = web.Application()
+    session = TextSession()
 
     async def index(request: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC_DIR / "index.html")
@@ -179,17 +206,31 @@ def create_app(token: str) -> web.Application:
                 payload = json.loads(msg.data)
                 if payload.get("token") != token:
                     raise ValueError("invalid token")
-                ops = validate_ops(payload)
-                for op in ops:
-                    if op["type"] == "insert":
-                        print(f"[inject] insert {len(op['text'])} chars: {op['text']!r}", flush=True)
-                        type_text(op["text"])
-                    elif op["type"] == "enter":
-                        print("[inject] enter", flush=True)
-                        press_key(VK_RETURN)
-                    elif op["type"] == "backspace":
-                        print(f"[inject] backspace {op['count']}", flush=True)
-                        backspace(op["count"])
+                if payload.get("type") == "sync_text":
+                    text = payload.get("text")
+                    if not isinstance(text, str):
+                        raise ValueError("sync_text.text must be a string")
+                    text = text[:5000]
+                    print(
+                        f"[sync] replace {len(session.text)} chars -> {len(text)} chars: {text!r}",
+                        flush=True,
+                    )
+                    session.replace(text)
+                elif payload.get("type") == "reset_session":
+                    print("[sync] reset session", flush=True)
+                    session.reset()
+                else:
+                    ops = validate_ops(payload)
+                    for op in ops:
+                        if op["type"] == "insert":
+                            print(f"[inject] insert {len(op['text'])} chars: {op['text']!r}", flush=True)
+                            type_text(op["text"])
+                        elif op["type"] == "enter":
+                            print("[inject] enter", flush=True)
+                            press_key(VK_RETURN)
+                        elif op["type"] == "backspace":
+                            print(f"[inject] backspace {op['count']}", flush=True)
+                            backspace(op["count"])
                 await ws.send_json({"type": "ack", "seq": payload.get("seq")})
             except Exception as exc:
                 print(f"[error] {exc}", flush=True)
