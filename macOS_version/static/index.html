@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>手机实时输入</title>
+    <style>
+      :root {
+        --bg: #f4efe6;
+        --panel: #fffaf1;
+        --ink: #211a12;
+        --muted: #766a5b;
+        --accent: #0f6b5f;
+        --danger: #b6412d;
+        --line: #dccfbc;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        color: var(--ink);
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+        background:
+          radial-gradient(circle at 18% 8%, rgba(15, 107, 95, 0.16), transparent 28rem),
+          linear-gradient(145deg, #f8f0df, var(--bg) 48%, #e9ddca);
+      }
+
+      main {
+        display: flex;
+        min-height: 100dvh;
+        align-items: stretch;
+        padding: 18px;
+      }
+
+      .shell {
+        display: flex;
+        width: 100%;
+        flex-direction: column;
+        gap: 14px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 18px;
+        background: rgba(255, 250, 241, 0.86);
+        box-shadow: 0 20px 70px rgba(72, 52, 28, 0.16);
+        backdrop-filter: blur(12px);
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(24px, 7vw, 42px);
+        letter-spacing: -0.06em;
+        line-height: 0.92;
+      }
+
+      .status {
+        flex: 0 0 auto;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 12px;
+        color: var(--muted);
+        font: 600 13px/1.1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+        background: #fff7e9;
+      }
+
+      .status[data-state="connected"] {
+        color: var(--accent);
+      }
+
+      .status[data-state="error"] {
+        color: var(--danger);
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 58dvh;
+        flex: 1;
+        resize: none;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        outline: none;
+        padding: 18px;
+        color: var(--ink);
+        font: 24px/1.55 "LXGW WenKai", "STKaiti", KaiTi, "Songti SC", serif;
+        background:
+          linear-gradient(rgba(255, 250, 241, 0.93), rgba(255, 250, 241, 0.93)),
+          repeating-linear-gradient(to bottom, transparent 0 36px, rgba(15, 107, 95, 0.08) 37px);
+      }
+
+      textarea:focus {
+        border-color: rgba(15, 107, 95, 0.58);
+        box-shadow: 0 0 0 4px rgba(15, 107, 95, 0.08);
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+      }
+
+      button {
+        min-height: 48px;
+        flex: 1;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        color: var(--ink);
+        font: 700 16px/1 system-ui, sans-serif;
+        background: #fff7e9;
+      }
+
+      button.primary {
+        border-color: transparent;
+        color: #fffaf1;
+        background: var(--accent);
+      }
+
+      .hint {
+        margin: 0;
+        color: var(--muted);
+        font: 14px/1.45 system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="shell">
+        <header>
+          <h1>实时输入</h1>
+          <div id="status" class="status" data-state="idle">连接中</div>
+        </header>
+
+        <textarea id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里输入或使用手机语音输入法，电脑光标处会实时出现同样的变化。"></textarea>
+
+        <div class="toolbar">
+          <button id="clear" type="button">清空手机输入框</button>
+          <button id="reconnect" class="primary" type="button">重新连接</button>
+        </div>
+
+        <p class="hint">使用前先把电脑光标放到目标输入位置。不要关闭本页；本页不会要求点击发送。</p>
+      </section>
+    </main>
+
+    <script>
+      const statusEl = document.querySelector("#status");
+      const inputEl = document.querySelector("#input");
+      const clearButton = document.querySelector("#clear");
+      const reconnectButton = document.querySelector("#reconnect");
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+
+      let ws = null;
+      let seq = 0;
+      let queue = [];
+      let reconnectTimer = null;
+      let lastSentText = "";
+
+      function setStatus(text, state = "idle") {
+        statusEl.textContent = text;
+        statusEl.dataset.state = state;
+      }
+
+      function socketUrl() {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        return `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+      }
+
+      function sendMessage(message) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          queue.push(message);
+          setStatus("离线缓存", "error");
+          return;
+        }
+        ws.send(JSON.stringify(message));
+      }
+
+      function flushQueue() {
+        const pending = queue;
+        queue = [];
+        for (const item of pending) {
+          sendMessage(item);
+        }
+      }
+
+      function syncNow() {
+        if (inputEl.value === lastSentText) {
+          return;
+        }
+        lastSentText = inputEl.value;
+        sendMessage({
+          type: "sync_text",
+          token,
+          seq: ++seq,
+          text: inputEl.value,
+        });
+      }
+
+      function resetSession() {
+        sendMessage({
+          type: "reset_session",
+          token,
+          seq: ++seq,
+        });
+      }
+
+      function connect() {
+        clearTimeout(reconnectTimer);
+        if (ws) {
+          ws.close();
+        }
+
+        setStatus("连接中", "idle");
+        ws = new WebSocket(socketUrl());
+
+        ws.addEventListener("open", () => {
+          setStatus("已连接", "connected");
+          flushQueue();
+          inputEl.focus();
+        });
+
+        ws.addEventListener("message", (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === "error") {
+              setStatus("电脑端错误", "error");
+            }
+          } catch (_) {
+            // Ignore non-JSON diagnostics.
+          }
+        });
+
+        ws.addEventListener("close", () => {
+          setStatus("已断开", "error");
+          reconnectTimer = setTimeout(connect, 1200);
+        });
+
+        ws.addEventListener("error", () => {
+          setStatus("连接错误", "error");
+        });
+      }
+
+      inputEl.addEventListener("input", syncNow);
+
+      clearButton.addEventListener("click", () => {
+        inputEl.value = "";
+        lastSentText = "";
+        resetSession();
+        inputEl.focus();
+      });
+
+      reconnectButton.addEventListener("click", connect);
+
+      connect();
+    </script>
+  </body>
+</html>
