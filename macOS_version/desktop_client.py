@@ -1,24 +1,40 @@
 import asyncio
+import ssl
+import subprocess
+import sys
 import queue
 import secrets
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 from aiohttp import web
 from PIL import ImageTk
 import qrcode
 
-from server import create_app, get_lan_ip
+from server import DEFAULT_CERT_FILE, DEFAULT_KEY_FILE, build_ssl_context, create_app, get_lan_ip
+
+
+ROOT = Path(__file__).resolve().parent
+SETUP_HTTPS_SCRIPT = ROOT / "scripts" / "setup_https.py"
 
 
 class BridgeServerThread(threading.Thread):
-    def __init__(self, host: str, port: int, token: str, events: queue.Queue[str]) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        token: str,
+        events: queue.Queue[str],
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.token = token
         self.events = events
+        self.ssl_context = ssl_context
         self.loop: asyncio.AbstractEventLoop | None = None
         self.runner: web.AppRunner | None = None
 
@@ -36,7 +52,7 @@ class BridgeServerThread(threading.Thread):
         app = create_app(self.token)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
-        site = web.TCPSite(self.runner, self.host, self.port)
+        site = web.TCPSite(self.runner, self.host, self.port, ssl_context=self.ssl_context)
         await site.start()
         self.events.put("started")
 
@@ -64,9 +80,11 @@ class DesktopClient(tk.Tk):
         self.port_var = tk.StringVar(value="8787")
         self.status_var = tk.StringVar(value="未启动")
         self.url_var = tk.StringVar(value="")
+        self.cert_url_var = tk.StringVar(value="")
         self.qr_image: ImageTk.PhotoImage | None = None
 
         self._build_ui()
+        self._update_url()
         self.after(200, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -97,6 +115,12 @@ class DesktopClient(tk.Tk):
         ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(url_row, text="复制", command=self._copy_url).pack(side=tk.LEFT, padx=(8, 0))
 
+        ttk.Label(root, text="手机证书安装").pack(anchor=tk.W, pady=(10, 4))
+        cert_row = ttk.Frame(root)
+        cert_row.pack(fill=tk.X)
+        ttk.Entry(cert_row, textvariable=self.cert_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(cert_row, text="复制证书地址", command=self._copy_cert_url).pack(side=tk.LEFT, padx=(8, 0))
+
         qr_panel = ttk.Frame(root)
         qr_panel.pack(fill=tk.X, pady=(14, 0))
         self.qr_label = ttk.Label(qr_panel)
@@ -114,6 +138,7 @@ class DesktopClient(tk.Tk):
         self.start_button.pack(side=tk.LEFT)
         self.stop_button = ttk.Button(controls, text="停止服务", command=self._stop_server, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(controls, text="生成/更新 HTTPS 证书", command=self._generate_https_cert).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(controls, text="打开网页版", command=self._open_web_page).pack(side=tk.LEFT, padx=(8, 0))
 
         status = ttk.Label(root, textvariable=self.status_var, foreground="#0f6b5f")
@@ -126,6 +151,12 @@ class DesktopClient(tk.Tk):
             wraplength=590,
         )
         note.pack(anchor=tk.W, pady=(16, 0))
+
+    def _https_available(self) -> bool:
+        return DEFAULT_CERT_FILE.exists() and DEFAULT_KEY_FILE.exists()
+
+    def _scheme(self) -> str:
+        return "https" if self._https_available() else "http"
 
     def _start_server(self) -> None:
         if self.server_thread is not None:
@@ -144,8 +175,18 @@ class DesktopClient(tk.Tk):
             messagebox.showerror("Token 错误", "Token 不能为空。")
             return
 
+        ssl_context = None
+        if self._https_available():
+            try:
+                ssl_context = build_ssl_context(DEFAULT_CERT_FILE, DEFAULT_KEY_FILE)
+            except Exception as exc:
+                messagebox.showerror("HTTPS 证书错误", str(exc))
+                return
+        else:
+            messagebox.showinfo("HTTPS 未启用", "未找到本地证书，将以 HTTP 启动。语音输入需要先生成 HTTPS 证书。")
+
         self.status_var.set("启动中...")
-        self.server_thread = BridgeServerThread("0.0.0.0", port, token, self.events)
+        self.server_thread = BridgeServerThread("0.0.0.0", port, token, self.events, ssl_context=ssl_context)
         self.server_thread.start()
         self._update_url()
 
@@ -156,6 +197,19 @@ class DesktopClient(tk.Tk):
         self.status_var.set("已停止")
         self.start_button.configure(state=tk.NORMAL)
         self.stop_button.configure(state=tk.DISABLED)
+
+    def _generate_https_cert(self) -> None:
+        try:
+            subprocess.run([sys.executable, str(SETUP_HTTPS_SCRIPT)], cwd=ROOT, check=True)
+        except subprocess.CalledProcessError as exc:
+            messagebox.showerror("证书生成失败", f"setup_https.py 退出码：{exc.returncode}")
+            return
+        except FileNotFoundError:
+            messagebox.showerror("证书生成失败", "找不到 Python 或 setup_https.py。")
+            return
+        self.lan_ip = get_lan_ip()
+        self._update_url()
+        messagebox.showinfo("证书已生成", "HTTPS 证书已生成/更新。请重启服务后使用 HTTPS 地址。")
 
     def _regenerate_token(self) -> None:
         if self.server_thread is not None:
@@ -173,6 +227,13 @@ class DesktopClient(tk.Tk):
         self.clipboard_append(url)
         self.status_var.set("地址已复制")
 
+    def _copy_cert_url(self) -> None:
+        self._update_url()
+        url = self.cert_url_var.get()
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        self.status_var.set("证书地址已复制")
+
     def _open_web_page(self) -> None:
         import webbrowser
 
@@ -182,8 +243,10 @@ class DesktopClient(tk.Tk):
     def _update_url(self) -> None:
         port = self.port_var.get().strip() or "8787"
         token = self.token_var.get().strip()
-        url = f"http://{self.lan_ip}:{port}/?token={token}"
+        scheme = self._scheme()
+        url = f"{scheme}://{self.lan_ip}:{port}/?token={token}"
         self.url_var.set(url)
+        self.cert_url_var.set(f"{scheme}://{self.lan_ip}:{port}/cert/help")
         self._update_qr(url)
 
     def _update_qr(self, url: str) -> None:

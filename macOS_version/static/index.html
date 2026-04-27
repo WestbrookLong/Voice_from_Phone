@@ -123,10 +123,30 @@
         background: var(--accent);
       }
 
+      button.voice[data-recording="true"] {
+        border-color: transparent;
+        color: #fffaf1;
+        background: var(--danger);
+      }
+
       .hint {
         margin: 0;
         color: var(--muted);
         font: 14px/1.45 system-ui, sans-serif;
+      }
+
+      .cert-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        color: var(--muted);
+        font: 14px/1.45 system-ui, sans-serif;
+      }
+
+      .cert-links a {
+        color: var(--accent);
+        font-weight: 700;
+        text-decoration: none;
       }
     </style>
   </head>
@@ -141,19 +161,27 @@
         <textarea id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里输入或使用手机语音输入法，电脑光标处会实时出现同样的变化。"></textarea>
 
         <div class="toolbar">
+          <button id="voice" class="voice" type="button" data-recording="false">开启语音输入</button>
           <button id="clear" type="button">清空手机输入框</button>
           <button id="reconnect" class="primary" type="button">重新连接</button>
         </div>
 
         <p class="hint">使用前先把电脑光标放到目标输入位置。不要关闭本页；本页不会要求点击发送。</p>
+        <div class="cert-links">
+          <span id="securityHint">语音输入需要 HTTPS 页面。</span>
+          <a href="/cert/ca.crt">下载证书</a>
+          <a href="/cert/help">安装说明</a>
+        </div>
       </section>
     </main>
 
     <script>
       const statusEl = document.querySelector("#status");
       const inputEl = document.querySelector("#input");
+      const voiceButton = document.querySelector("#voice");
       const clearButton = document.querySelector("#clear");
       const reconnectButton = document.querySelector("#reconnect");
+      const securityHint = document.querySelector("#securityHint");
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
 
@@ -162,6 +190,14 @@
       let queue = [];
       let reconnectTimer = null;
       let lastSentText = "";
+      let asrWs = null;
+      let audioContext = null;
+      let mediaStream = null;
+      let processor = null;
+      let source = null;
+      let recording = false;
+      let pcmBuffer = [];
+      let chunkSamples = 1600;
 
       function setStatus(text, state = "idle") {
         statusEl.textContent = text;
@@ -171,6 +207,11 @@
       function socketUrl() {
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
         return `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+      }
+
+      function asrSocketUrl(sampleRate) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        return `${protocol}//${location.host}/asr_ws?token=${encodeURIComponent(token)}&sample_rate=${encodeURIComponent(sampleRate)}`;
       }
 
       function sendMessage(message) {
@@ -209,6 +250,156 @@
           token,
           seq: ++seq,
         });
+      }
+
+      function setVoiceButton(isRecording) {
+        voiceButton.dataset.recording = String(isRecording);
+        voiceButton.textContent = isRecording ? "停止语音输入" : "开启语音输入";
+      }
+
+      function updateSecurityState() {
+        if (location.protocol === "https:") {
+          securityHint.textContent = "当前是 HTTPS，浏览器可以请求麦克风权限。";
+          voiceButton.disabled = false;
+          return;
+        }
+        securityHint.textContent = "当前是 HTTP，手机浏览器会禁止网页录音；请安装证书后用 HTTPS 地址打开。";
+        voiceButton.disabled = true;
+        voiceButton.title = "语音输入需要 HTTPS";
+      }
+
+      function floatToPcm16(samples) {
+        const buffer = new ArrayBuffer(samples.length * 2);
+        const view = new DataView(buffer);
+        for (let i = 0; i < samples.length; i += 1) {
+          const sample = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+        }
+        return buffer;
+      }
+
+      function sendAudioSamples(samples) {
+        for (const sample of samples) {
+          pcmBuffer.push(sample);
+        }
+        while (pcmBuffer.length >= chunkSamples) {
+          const chunk = pcmBuffer.splice(0, chunkSamples);
+          if (asrWs && asrWs.readyState === WebSocket.OPEN) {
+            asrWs.send(floatToPcm16(chunk));
+          }
+        }
+      }
+
+      function handleAsrMessage(event) {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "asr_started") {
+            setStatus("语音识别中", "connected");
+          } else if (message.type === "asr_result") {
+            if (message.sentence_end) {
+              inputEl.value = message.text || "";
+              lastSentText = inputEl.value;
+            }
+            setStatus(message.sentence_end ? "语音句子完成" : "语音识别中", "connected");
+          } else if (message.type === "asr_finished") {
+            setStatus("语音已停止", "connected");
+          } else if (message.type === "asr_error") {
+            setStatus("语音识别错误", "error");
+            console.error(message.message);
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      async function startVoiceInput() {
+        if (recording) {
+          return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setStatus("浏览器不支持录音", "error");
+          return;
+        }
+
+        setStatus("请求麦克风", "idle");
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        audioContext = new AudioContextClass();
+        await audioContext.resume();
+        chunkSamples = Math.max(1, Math.round(audioContext.sampleRate / 10));
+
+        asrWs = new WebSocket(asrSocketUrl(audioContext.sampleRate));
+        asrWs.binaryType = "arraybuffer";
+
+        await new Promise((resolve, reject) => {
+          asrWs.addEventListener("open", resolve, { once: true });
+          asrWs.addEventListener("error", reject, { once: true });
+        });
+
+        asrWs.addEventListener("message", handleAsrMessage);
+        asrWs.addEventListener("close", () => {
+          if (recording) {
+            stopVoiceInput(false);
+          }
+        });
+
+        source = audioContext.createMediaStreamSource(mediaStream);
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = (event) => {
+          if (!recording) {
+            return;
+          }
+          const input = event.inputBuffer.getChannelData(0);
+          sendAudioSamples(input);
+        };
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        inputEl.value = "";
+        lastSentText = "";
+        recording = true;
+        pcmBuffer = [];
+        setVoiceButton(true);
+        resetSession();
+        setStatus("语音启动中", "idle");
+      }
+
+      async function stopVoiceInput(sendFinish = true) {
+        recording = false;
+        setVoiceButton(false);
+        if (sendFinish && asrWs && asrWs.readyState === WebSocket.OPEN) {
+          if (pcmBuffer.length > 0) {
+            asrWs.send(floatToPcm16(pcmBuffer));
+            pcmBuffer = [];
+          }
+          asrWs.send(JSON.stringify({ type: "finish_asr" }));
+        }
+        if (processor) {
+          processor.disconnect();
+          processor.onaudioprocess = null;
+          processor = null;
+        }
+        if (source) {
+          source.disconnect();
+          source = null;
+        }
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((track) => track.stop());
+          mediaStream = null;
+        }
+        if (audioContext) {
+          await audioContext.close();
+          audioContext = null;
+        }
+        setStatus("语音已停止", "connected");
       }
 
       function connect() {
@@ -256,8 +447,23 @@
         inputEl.focus();
       });
 
+      voiceButton.addEventListener("click", async () => {
+        try {
+          if (recording) {
+            await stopVoiceInput();
+          } else {
+            await startVoiceInput();
+          }
+        } catch (error) {
+          console.error(error);
+          setStatus("语音启动失败", "error");
+          await stopVoiceInput(false);
+        }
+      });
+
       reconnectButton.addEventListener("click", connect);
 
+      updateSecurityState();
       connect();
     </script>
   </body>
