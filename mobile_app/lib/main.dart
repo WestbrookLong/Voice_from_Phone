@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() {
   runApp(const VoiceInputApp());
@@ -79,7 +80,10 @@ class _InputBridgePageState extends State<InputBridgePage> {
   }
 
   void _parseComputerUrl() {
-    final raw = _urlController.text.trim();
+    _parseAndFillComputerUrl(_urlController.text.trim());
+  }
+
+  void _parseAndFillComputerUrl(String raw) {
     if (raw.isEmpty) {
       return;
     }
@@ -94,6 +98,19 @@ class _InputBridgePageState extends State<InputBridgePage> {
     _hostController.text = '${uri.host}:$port';
     _tokenController.text = uri.queryParameters['token'] ?? _tokenController.text;
     _setStatus(BridgeStatus.disconnected, '已解析 URL');
+  }
+
+  Future<void> _scanQrCode() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) => const QrScanPage(),
+      ),
+    );
+    if (result == null || result.trim().isEmpty) {
+      return;
+    }
+    _urlController.text = result.trim();
+    _parseAndFillComputerUrl(result.trim());
   }
 
   Uri? get _wsUri {
@@ -327,6 +344,15 @@ class _InputBridgePageState extends State<InputBridgePage> {
                 ),
                 child: const Text('从完整 URL 填充地址和 Token'),
               ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _scanQrCode,
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('扫码连接'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(46),
+                ),
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: _hostController,
@@ -393,6 +419,76 @@ class _InputBridgePageState extends State<InputBridgePage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class QrScanPage extends StatefulWidget {
+  const QrScanPage({super.key});
+
+  @override
+  State<QrScanPage> createState() => _QrScanPageState();
+}
+
+class _QrScanPageState extends State<QrScanPage> {
+  bool _handled = false;
+
+  void _handleDetect(BarcodeCapture capture) {
+    if (_handled) {
+      return;
+    }
+    final value = capture.barcodes
+        .map((barcode) => barcode.rawValue)
+        .whereType<String>()
+        .where((value) => value.trim().isNotEmpty)
+        .firstOrNull;
+    if (value == null) {
+      return;
+    }
+
+    _handled = true;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('扫码连接'),
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          MobileScanner(onDetect: _handleDetect),
+          Center(
+            child: Container(
+              width: 240,
+              height: 240,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.white, width: 3),
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+          ),
+          const Positioned(
+            left: 24,
+            right: 24,
+            bottom: 48,
+            child: Text(
+              '扫描电脑客户端窗口中的二维码',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

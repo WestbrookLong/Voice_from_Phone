@@ -6,6 +6,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from aiohttp import web
+from PIL import ImageTk
+import qrcode
 
 from server import create_app, get_lan_ip
 
@@ -62,6 +64,7 @@ class DesktopClient(tk.Tk):
         self.port_var = tk.StringVar(value="8787")
         self.status_var = tk.StringVar(value="未启动")
         self.url_var = tk.StringVar(value="")
+        self.qr_image: ImageTk.PhotoImage | None = None
 
         self._build_ui()
         self.after(200, self._poll_events)
@@ -93,6 +96,17 @@ class DesktopClient(tk.Tk):
         url_row.pack(fill=tk.X)
         ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(url_row, text="复制", command=self._copy_url).pack(side=tk.LEFT, padx=(8, 0))
+
+        qr_panel = ttk.Frame(root)
+        qr_panel.pack(fill=tk.X, pady=(14, 0))
+        self.qr_label = ttk.Label(qr_panel)
+        self.qr_label.pack(side=tk.LEFT)
+        ttk.Label(
+            qr_panel,
+            text="手机 App 点击“扫码连接”，扫描这里即可自动填充地址和 Token。",
+            foreground="#666666",
+            wraplength=300,
+        ).pack(side=tk.LEFT, padx=(14, 0), anchor=tk.N)
 
         controls = ttk.Frame(root)
         controls.pack(fill=tk.X, pady=(18, 8))
@@ -168,7 +182,14 @@ class DesktopClient(tk.Tk):
     def _update_url(self) -> None:
         port = self.port_var.get().strip() or "8787"
         token = self.token_var.get().strip()
-        self.url_var.set(f"http://{self.lan_ip}:{port}/?token={token}")
+        url = f"http://{self.lan_ip}:{port}/?token={token}"
+        self.url_var.set(url)
+        self._update_qr(url)
+
+    def _update_qr(self, url: str) -> None:
+        image = qrcode.make(url).resize((180, 180))
+        self.qr_image = ImageTk.PhotoImage(image)
+        self.qr_label.configure(image=self.qr_image)
 
     def _poll_events(self) -> None:
         while True:
