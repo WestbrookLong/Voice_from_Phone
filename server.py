@@ -5,21 +5,38 @@ import json
 import secrets
 import socket
 import sys
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from ctypes import wintypes
 
 from aiohttp import web
+from PIL import Image
 
 
-ROOT = Path(__file__).resolve().parent
+def app_root() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent
+
+
+ROOT = app_root()
 STATIC_DIR = ROOT / "static"
 
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_ABSOLUTE = 0x8000
+MOUSEEVENTF_VIRTUALDESK = 0x4000
 INPUT_KEYBOARD = 1
 INPUT_MOUSE = 0
 INPUT_HARDWARE = 2
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
 VK_BACK = 0x08
 VK_RETURN = 0x0D
 ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
@@ -69,6 +86,8 @@ class INPUT(ctypes.Structure):
 
 USER32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
 USER32.SendInput.restype = wintypes.UINT
+USER32.GetSystemMetrics.argtypes = (ctypes.c_int,)
+USER32.GetSystemMetrics.restype = ctypes.c_int
 
 
 def _send_keyboard_input(vk: int = 0, scan: int = 0, flags: int = 0) -> None:
@@ -78,6 +97,25 @@ def _send_keyboard_input(vk: int = 0, scan: int = 0, flags: int = 0) -> None:
             ki=KEYBDINPUT(
                 wVk=vk,
                 wScan=scan,
+                dwFlags=flags,
+                time=0,
+                dwExtraInfo=0,
+            )
+        ),
+    )
+    sent = USER32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event))
+    if sent != 1:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _send_mouse_input(dx: int = 0, dy: int = 0, flags: int = 0) -> None:
+    event = INPUT(
+        type=INPUT_MOUSE,
+        union=INPUT_UNION(
+            mi=MOUSEINPUT(
+                dx=dx,
+                dy=dy,
+                mouseData=0,
                 dwFlags=flags,
                 time=0,
                 dwExtraInfo=0,
@@ -112,6 +150,49 @@ def type_text(text: str) -> None:
 def backspace(count: int) -> None:
     for _ in range(max(0, min(count, 1000))):
         press_key(VK_BACK)
+
+
+def virtual_screen_rect() -> dict[str, int]:
+    return {
+        "left": USER32.GetSystemMetrics(SM_XVIRTUALSCREEN),
+        "top": USER32.GetSystemMetrics(SM_YVIRTUALSCREEN),
+        "width": USER32.GetSystemMetrics(SM_CXVIRTUALSCREEN),
+        "height": USER32.GetSystemMetrics(SM_CYVIRTUALSCREEN),
+    }
+
+
+def move_mouse_to_screen_point(x: int, y: int) -> None:
+    rect = virtual_screen_rect()
+    width = max(1, rect["width"] - 1)
+    height = max(1, rect["height"] - 1)
+    normalized_x = round((x - rect["left"]) * 65535 / width)
+    normalized_y = round((y - rect["top"]) * 65535 / height)
+    _send_mouse_input(
+        dx=max(0, min(65535, normalized_x)),
+        dy=max(0, min(65535, normalized_y)),
+        flags=MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+    )
+
+
+def left_mouse_down() -> None:
+    _send_mouse_input(flags=MOUSEEVENTF_LEFTDOWN)
+
+
+def left_mouse_up() -> None:
+    _send_mouse_input(flags=MOUSEEVENTF_LEFTUP)
+
+
+def capture_jpeg(monitor_id: int, quality: int) -> tuple[dict[str, int], bytes]:
+    import mss
+
+    with mss.mss() as sct:
+        monitor_index = max(1, min(monitor_id, len(sct.monitors) - 1))
+        monitor = dict(sct.monitors[monitor_index])
+        shot = sct.grab(monitor)
+        image = Image.frombytes("RGB", shot.size, shot.rgb)
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=quality, optimize=False)
+        return monitor, buffer.getvalue()
 
 
 class TextSession:
@@ -189,6 +270,93 @@ def create_app(token: str) -> web.Application:
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"ok": True})
 
+    async def tablet(request: web.Request) -> web.FileResponse:
+        return web.FileResponse(STATIC_DIR / "tablet.html")
+
+    async def screen_handler(request: web.Request) -> web.WebSocketResponse:
+        if request.query.get("token") != token:
+            raise web.HTTPUnauthorized(text="invalid token")
+
+        fps = max(1, min(int(request.query.get("fps", "24")), 30))
+        quality = max(25, min(int(request.query.get("quality", "58")), 85))
+        monitor_id = max(1, int(request.query.get("monitor", "1")))
+        interval = 1 / fps
+
+        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=16 * 1024 * 1024)
+        await ws.prepare(request)
+        peer = request.remote or "unknown"
+        print(f"[screen] connected: {peer}", flush=True)
+
+        last_monitor: dict[str, int] | None = None
+        try:
+            while not ws.closed:
+                started = asyncio.get_running_loop().time()
+                monitor, frame = await asyncio.to_thread(capture_jpeg, monitor_id, quality)
+                if monitor != last_monitor:
+                    await ws.send_json(
+                        {
+                            "type": "screen_meta",
+                            "monitor": monitor,
+                            "fps": fps,
+                            "quality": quality,
+                        }
+                    )
+                    last_monitor = monitor
+                await ws.send_bytes(frame)
+                elapsed = asyncio.get_running_loop().time() - started
+                await asyncio.sleep(max(0, interval - elapsed))
+        except ConnectionResetError:
+            pass
+        finally:
+            print(f"[screen] disconnected: {peer}", flush=True)
+        return ws
+
+    async def pointer_handler(request: web.Request) -> web.WebSocketResponse:
+        if request.query.get("token") != token:
+            raise web.HTTPUnauthorized(text="invalid token")
+
+        ws = web.WebSocketResponse(heartbeat=20)
+        await ws.prepare(request)
+        peer = request.remote or "unknown"
+        print(f"[pointer] connected: {peer}", flush=True)
+
+        async for msg in ws:
+            if msg.type != web.WSMsgType.TEXT:
+                continue
+            try:
+                payload = json.loads(msg.data)
+                if payload.get("token") != token:
+                    raise ValueError("invalid token")
+                if payload.get("type") != "pointer":
+                    raise ValueError("unsupported pointer message")
+
+                monitor = payload.get("monitor")
+                if not isinstance(monitor, dict):
+                    raise ValueError("missing monitor metadata")
+                x_ratio = float(payload.get("x"))
+                y_ratio = float(payload.get("y"))
+                x_ratio = max(0.0, min(1.0, x_ratio))
+                y_ratio = max(0.0, min(1.0, y_ratio))
+                x = int(monitor["left"] + x_ratio * max(1, monitor["width"] - 1))
+                y = int(monitor["top"] + y_ratio * max(1, monitor["height"] - 1))
+                action = payload.get("action")
+
+                move_mouse_to_screen_point(x, y)
+                if action == "down":
+                    left_mouse_down()
+                elif action == "up":
+                    left_mouse_up()
+                elif action == "move":
+                    pass
+                else:
+                    raise ValueError(f"unsupported pointer action: {action}")
+            except Exception as exc:
+                print(f"[pointer error] {exc}", flush=True)
+                await ws.send_json({"type": "error", "message": str(exc)})
+
+        print(f"[pointer] disconnected: {peer}", flush=True)
+        return ws
+
     async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
         if request.query.get("token") != token:
             raise web.HTTPUnauthorized(text="invalid token")
@@ -240,8 +408,11 @@ def create_app(token: str) -> web.Application:
         return ws
 
     app.router.add_get("/", index)
+    app.router.add_get("/tablet", tablet)
     app.router.add_get("/health", health)
     app.router.add_get("/ws", websocket_handler)
+    app.router.add_get("/screen", screen_handler)
+    app.router.add_get("/pointer", pointer_handler)
     app.router.add_static("/static", STATIC_DIR)
     return app
 

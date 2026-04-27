@@ -53,8 +53,8 @@ class DesktopClient(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("手机实时输入桥接")
-        self.geometry("620x360")
-        self.minsize(560, 330)
+        self.geometry("760x560")
+        self.minsize(680, 500)
 
         self.events: queue.Queue[str] = queue.Queue()
         self.server_thread: BridgeServerThread | None = None
@@ -64,6 +64,7 @@ class DesktopClient(tk.Tk):
         self.port_var = tk.StringVar(value="8787")
         self.status_var = tk.StringVar(value="未启动")
         self.url_var = tk.StringVar(value="")
+        self.tablet_url_var = tk.StringVar(value="")
         self.qr_image: ImageTk.PhotoImage | None = None
 
         self._build_ui()
@@ -91,11 +92,19 @@ class DesktopClient(tk.Tk):
         ttk.Button(form, text="重新生成", command=self._regenerate_token).grid(row=1, column=2, padx=(8, 0), pady=4)
         form.columnconfigure(1, weight=1)
 
-        ttk.Label(root, text="手机访问地址").pack(anchor=tk.W, pady=(16, 4))
+        ttk.Label(root, text="手机语音输入地址").pack(anchor=tk.W, pady=(16, 4))
         url_row = ttk.Frame(root)
         url_row.pack(fill=tk.X)
         ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(url_row, text="复制", command=self._copy_url).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(url_row, text="复制", command=lambda: self._copy_value(self.url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(url_row, text="显示二维码", command=lambda: self._show_qr(self.url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(root, text="iPad 数位板地址").pack(anchor=tk.W, pady=(10, 4))
+        tablet_row = ttk.Frame(root)
+        tablet_row.pack(fill=tk.X)
+        ttk.Entry(tablet_row, textvariable=self.tablet_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(tablet_row, text="复制", command=lambda: self._copy_value(self.tablet_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(tablet_row, text="显示二维码", command=lambda: self._show_qr(self.tablet_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
 
         qr_panel = ttk.Frame(root)
         qr_panel.pack(fill=tk.X, pady=(14, 0))
@@ -103,7 +112,7 @@ class DesktopClient(tk.Tk):
         self.qr_label.pack(side=tk.LEFT)
         ttk.Label(
             qr_panel,
-            text="手机 App 点击“扫码连接”，扫描这里即可自动填充地址和 Token。",
+            text="可切换显示语音输入或 iPad 数位板二维码。iPad 用浏览器扫描/打开数位板地址。",
             foreground="#666666",
             wraplength=300,
         ).pack(side=tk.LEFT, padx=(14, 0), anchor=tk.N)
@@ -165,13 +174,21 @@ class DesktopClient(tk.Tk):
         self._update_url()
 
     def _copy_url(self) -> None:
-        url = self.url_var.get()
-        if not url:
+        self._copy_value(self.url_var.get())
+
+    def _copy_value(self, value: str) -> None:
+        if not value:
             self._update_url()
-            url = self.url_var.get()
+            value = self.url_var.get()
         self.clipboard_clear()
-        self.clipboard_append(url)
+        self.clipboard_append(value)
         self.status_var.set("地址已复制")
+
+    def _show_qr(self, value: str) -> None:
+        if not value:
+            self._update_url()
+            value = self.url_var.get()
+        self._update_qr(value)
 
     def _open_web_page(self) -> None:
         import webbrowser
@@ -182,9 +199,9 @@ class DesktopClient(tk.Tk):
     def _update_url(self) -> None:
         port = self.port_var.get().strip() or "8787"
         token = self.token_var.get().strip()
-        url = f"http://{self.lan_ip}:{port}/?token={token}"
-        self.url_var.set(url)
-        self._update_qr(url)
+        self.url_var.set(f"http://{self.lan_ip}:{port}/?token={token}")
+        self.tablet_url_var.set(f"http://{self.lan_ip}:{port}/tablet?token={token}")
+        self._update_qr(self.url_var.get())
 
     def _update_qr(self, url: str) -> None:
         image = qrcode.make(url).resize((180, 180))

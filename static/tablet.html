@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <title>iPad 远程数位板</title>
+    <style>
+      :root {
+        --bg: #11130f;
+        --panel: rgba(20, 24, 18, 0.82);
+        --ink: #f6f0df;
+        --muted: #b8b09f;
+        --accent: #b6e36d;
+        --danger: #ff725e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        touch-action: none;
+        overscroll-behavior: none;
+        color: var(--ink);
+        background: radial-gradient(circle at 20% 10%, #28371d, transparent 30rem), var(--bg);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #screen {
+        position: fixed;
+        inset: 0;
+        width: var(--stage-width, 100vw);
+        height: var(--stage-height, 100vh);
+        display: block;
+        background: #000;
+        cursor: crosshair;
+        touch-action: none;
+      }
+
+      .hud {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        top: max(14px, env(safe-area-inset-top));
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 12px;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 999px;
+        background: var(--panel);
+        backdrop-filter: blur(16px);
+        user-select: none;
+        pointer-events: none;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+
+      .dot.connected {
+        background: var(--accent);
+      }
+
+      #status {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .hint {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        right: max(14px, env(safe-area-inset-right));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        padding: 10px 12px;
+        border-radius: 18px;
+        color: var(--muted);
+        background: var(--panel);
+        backdrop-filter: blur(16px);
+        font-size: 13px;
+        line-height: 1.35;
+        pointer-events: none;
+      }
+
+      .keyboard-button {
+        position: fixed;
+        right: max(16px, env(safe-area-inset-right));
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 5;
+        width: 62px;
+        height: 62px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 22px;
+        color: var(--ink);
+        background: rgba(182, 227, 109, 0.92);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 28px;
+        font-weight: 800;
+        touch-action: manipulation;
+      }
+
+      .input-panel {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        right: max(14px, env(safe-area-inset-right));
+        bottom: calc(max(86px, env(safe-area-inset-bottom) + 86px));
+        z-index: 4;
+        display: none;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 22px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+      }
+
+      .input-panel.open {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        align-items: stretch;
+      }
+
+      #textInput {
+        min-height: 52px;
+        max-height: 130px;
+        resize: vertical;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 16px;
+        outline: none;
+        padding: 10px 12px;
+        color: var(--ink);
+        background: rgba(0, 0, 0, 0.34);
+        font-size: 18px;
+        line-height: 1.35;
+      }
+
+      .input-panel button {
+        min-width: 62px;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 16px;
+        color: var(--ink);
+        background: rgba(246, 240, 223, 0.12);
+        font-size: 15px;
+        font-weight: 800;
+        touch-action: manipulation;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="screen"></canvas>
+    <div class="hud">
+      <span id="dot" class="dot"></span>
+      <span id="status">连接中</span>
+    </div>
+    <div class="hint">在电脑上打开 Photoshop 等绘图软件并选好工具。Apple Pencil 接触画面会映射为电脑鼠标按下和拖动。</div>
+    <div id="inputPanel" class="input-panel">
+      <textarea id="textInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里输入，会注入到电脑当前文字光标处"></textarea>
+      <button id="clearText" type="button">清空</button>
+      <button id="closeKeyboard" type="button">收起</button>
+    </div>
+    <button id="keyboardButton" class="keyboard-button" type="button" aria-label="打开键盘">⌨</button>
+
+    <script>
+      const canvas = document.querySelector("#screen");
+      const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      const dot = document.querySelector("#dot");
+      const statusEl = document.querySelector("#status");
+      const keyboardButton = document.querySelector("#keyboardButton");
+      const inputPanel = document.querySelector("#inputPanel");
+      const textInput = document.querySelector("#textInput");
+      const clearTextButton = document.querySelector("#clearText");
+      const closeKeyboardButton = document.querySelector("#closeKeyboard");
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+      const monitorId = params.get("monitor") || "1";
+      const fps = params.get("fps") || "24";
+      const quality = params.get("quality") || "58";
+
+      let screenWs = null;
+      let pointerWs = null;
+      let textWs = null;
+      let textSeq = 0;
+      let lastSentText = "";
+      let textQueue = [];
+      let monitor = null;
+      let imageRect = { left: 0, top: 0, width: 0, height: 0 };
+      let activePointerId = null;
+      let stageWidth = 0;
+      let stageHeight = 0;
+
+      function setStatus(text, connected = false) {
+        statusEl.textContent = text;
+        dot.classList.toggle("connected", connected);
+      }
+
+      function wsUrl(path, query = {}) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = new URL(`${protocol}//${location.host}${path}`);
+        url.searchParams.set("token", token);
+        Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, value));
+        return url.toString();
+      }
+
+      function resizeCanvas() {
+        if (!stageWidth || !stageHeight) {
+          stageWidth = window.innerWidth;
+          stageHeight = window.innerHeight;
+          document.documentElement.style.setProperty("--stage-width", `${stageWidth}px`);
+          document.documentElement.style.setProperty("--stage-height", `${stageHeight}px`);
+        }
+        const dpr = window.devicePixelRatio || 1;
+        const width = Math.floor(stageWidth * dpr);
+        const height = Math.floor(stageHeight * dpr);
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+      }
+
+      function computeImageRect(imageWidth, imageHeight) {
+        const viewWidth = canvas.width;
+        const viewHeight = canvas.height;
+        const scale = Math.min(viewWidth / imageWidth, viewHeight / imageHeight);
+        const width = imageWidth * scale;
+        const height = imageHeight * scale;
+        imageRect = {
+          left: (viewWidth - width) / 2,
+          top: (viewHeight - height) / 2,
+          width,
+          height,
+        };
+      }
+
+      async function drawFrame(blob) {
+        resizeCanvas();
+        const bitmap = await createImageBitmap(blob);
+        computeImageRect(bitmap.width, bitmap.height);
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, imageRect.left, imageRect.top, imageRect.width, imageRect.height);
+        bitmap.close();
+      }
+
+      function connectScreen() {
+        if (screenWs) {
+          screenWs.close();
+        }
+        screenWs = new WebSocket(wsUrl("/screen", { monitor: monitorId, fps, quality }));
+        screenWs.binaryType = "blob";
+
+        screenWs.addEventListener("open", () => setStatus("屏幕已连接", true));
+        screenWs.addEventListener("message", async (event) => {
+          if (typeof event.data === "string") {
+            const message = JSON.parse(event.data);
+            if (message.type === "screen_meta") {
+              monitor = message.monitor;
+            }
+            return;
+          }
+          await drawFrame(event.data);
+        });
+        screenWs.addEventListener("close", () => {
+          setStatus("屏幕断开，重连中", false);
+          setTimeout(connectScreen, 800);
+        });
+        screenWs.addEventListener("error", () => setStatus("屏幕连接错误", false));
+      }
+
+      function connectPointer() {
+        if (pointerWs) {
+          pointerWs.close();
+        }
+        pointerWs = new WebSocket(wsUrl("/pointer"));
+        pointerWs.addEventListener("open", () => setStatus("已连接", true));
+        pointerWs.addEventListener("close", () => {
+          setStatus("输入断开，重连中", false);
+          setTimeout(connectPointer, 800);
+        });
+        pointerWs.addEventListener("error", () => setStatus("输入连接错误", false));
+      }
+
+      function connectText() {
+        if (textWs) {
+          textWs.close();
+        }
+        textWs = new WebSocket(wsUrl("/ws"));
+        textWs.addEventListener("open", () => {
+          flushTextQueue();
+        });
+        textWs.addEventListener("close", () => {
+          setTimeout(connectText, 800);
+        });
+      }
+
+      function sendTextMessage(message) {
+        if (!textWs || textWs.readyState !== WebSocket.OPEN) {
+          textQueue.push(message);
+          return;
+        }
+        textWs.send(JSON.stringify(message));
+      }
+
+      function flushTextQueue() {
+        const pending = textQueue;
+        textQueue = [];
+        pending.forEach(sendTextMessage);
+      }
+
+      function syncTextInput() {
+        if (textInput.value === lastSentText) {
+          return;
+        }
+        lastSentText = textInput.value;
+        sendTextMessage({
+          type: "sync_text",
+          token,
+          seq: ++textSeq,
+          text: textInput.value,
+        });
+      }
+
+      function resetTextSession() {
+        sendTextMessage({
+          type: "reset_session",
+          token,
+          seq: ++textSeq,
+        });
+      }
+
+      function eventToRatio(event) {
+        const dpr = window.devicePixelRatio || 1;
+        const x = event.clientX * dpr;
+        const y = event.clientY * dpr;
+        const rx = (x - imageRect.left) / imageRect.width;
+        const ry = (y - imageRect.top) / imageRect.height;
+        return {
+          x: Math.max(0, Math.min(1, rx)),
+          y: Math.max(0, Math.min(1, ry)),
+        };
+      }
+
+      function sendPointer(action, event) {
+        if (!monitor || !pointerWs || pointerWs.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        const point = eventToRatio(event);
+        pointerWs.send(JSON.stringify({
+          type: "pointer",
+          token,
+          action,
+          x: point.x,
+          y: point.y,
+          pressure: event.pressure || 0,
+          pointerType: event.pointerType,
+          monitor,
+        }));
+      }
+
+      canvas.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        if (activePointerId !== null) {
+          return;
+        }
+        activePointerId = event.pointerId;
+        canvas.setPointerCapture(event.pointerId);
+        sendPointer("down", event);
+      });
+
+      canvas.addEventListener("pointermove", (event) => {
+        event.preventDefault();
+        if (event.pointerId !== activePointerId) {
+          return;
+        }
+        const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
+        for (const item of events) {
+          sendPointer("move", item);
+        }
+      });
+
+      function endPointer(event) {
+        event.preventDefault();
+        if (event.pointerId !== activePointerId) {
+          return;
+        }
+        sendPointer("up", event);
+        activePointerId = null;
+      }
+
+      canvas.addEventListener("pointerup", endPointer);
+      canvas.addEventListener("pointercancel", endPointer);
+      window.addEventListener("orientationchange", () => {
+        stageWidth = 0;
+        stageHeight = 0;
+        setTimeout(resizeCanvas, 250);
+      });
+
+      keyboardButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      keyboardButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        inputPanel.classList.add("open");
+        textInput.focus();
+      });
+
+      textInput.addEventListener("pointerdown", (event) => event.stopPropagation());
+      textInput.addEventListener("input", syncTextInput);
+
+      clearTextButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        textInput.value = "";
+        lastSentText = "";
+        resetTextSession();
+        textInput.focus();
+      });
+
+      closeKeyboardButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        inputPanel.classList.remove("open");
+        textInput.blur();
+      });
+
+      resizeCanvas();
+      connectScreen();
+      connectPointer();
+      connectText();
+    </script>
+  </body>
+</html>
