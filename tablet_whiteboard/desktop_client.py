@@ -65,9 +65,10 @@ class WhiteboardServerThread(threading.Thread):
 class WhiteboardClient(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Mobile Remote Bridge")
-        self.geometry("760x470")
-        self.minsize(680, 430)
+        self.title("iPad Whiteboard Bridge")
+        self.geometry("900x620")
+        self.minsize(820, 560)
+        self.configure(bg="#0f0f0f")
 
         self.events: queue.Queue[str] = queue.Queue()
         self.server_thread: WhiteboardServerThread | None = None
@@ -81,59 +82,158 @@ class WhiteboardClient(tk.Tk):
         self.status_var = tk.StringVar(value="Not started")
         self.url_var = tk.StringVar(value="")
 
+        self._configure_style()
         self._build_ui()
         self._update_url()
         self.after(200, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _configure_style(self) -> None:
+        style = ttk.Style(self)
+        style.theme_use("clam")
+
+        bg = "#0f0f0f"
+        panel = "#181818"
+        panel_soft = "#202020"
+        panel_lift = "#25221e"
+        border = "#34302a"
+        text = "#f3eee8"
+        muted = "#a99f93"
+        fine = "#746c64"
+        orange = "#ff8a00"
+        orange_hover = "#ffa12b"
+        orange_dark = "#3a2208"
+        danger = "#b84224"
+
+        self.colors = {
+            "bg": bg,
+            "panel": panel,
+            "panel_soft": panel_soft,
+            "text": text,
+            "orange": orange,
+            "orange_dark": orange_dark,
+        }
+
+        style.configure("App.TFrame", background=bg)
+        style.configure("Card.TFrame", background=panel, borderwidth=1, relief=tk.SOLID)
+        style.configure("Panel.TFrame", background=panel, borderwidth=1, relief=tk.SOLID)
+        style.configure("QrCard.TFrame", background=panel_lift, borderwidth=1, relief=tk.SOLID)
+        style.configure("Toolbar.TFrame", background=bg)
+
+        font = "Microsoft YaHei UI"
+        style.configure("Eyebrow.TLabel", background=bg, foreground=orange, font=("Cascadia Mono", 10, "bold"))
+        style.configure("Hero.TLabel", background=bg, foreground=text, font=(font, 24, "bold"))
+        style.configure("Subtitle.TLabel", background=bg, foreground=muted, font=(font, 10))
+        style.configure("CardTitle.TLabel", background=panel, foreground=text, font=(font, 13, "bold"))
+        style.configure("QrTitle.TLabel", background=panel_lift, foreground=text, font=(font, 13, "bold"))
+        style.configure("Meta.TLabel", background=panel, foreground=muted, font=(font, 8, "bold"))
+        style.configure("Desc.TLabel", background=panel, foreground=muted, font=(font, 9))
+        style.configure("QrDesc.TLabel", background=panel_lift, foreground=muted, font=(font, 9))
+        style.configure("Fine.TLabel", background=bg, foreground=fine, font=(font, 8))
+        style.configure("FineCard.TLabel", background=panel_lift, foreground=fine, font=(font, 8))
+        style.configure("Status.TLabel", background=orange_dark, foreground=orange, font=(font, 10, "bold"), padding=(14, 8))
+        style.configure("Ip.TLabel", background=panel, foreground=text, font=("Cascadia Mono", 12, "bold"))
+        style.configure("Qr.TLabel", background=panel_lift)
+
+        style.configure(
+            "Input.TEntry",
+            fieldbackground="#111111",
+            background="#111111",
+            foreground=text,
+            bordercolor=border,
+            lightcolor=border,
+            darkcolor=border,
+            padding=8,
+        )
+        style.map(
+            "Input.TEntry",
+            fieldbackground=[("readonly", "#111111"), ("focus", "#171717")],
+            foreground=[("readonly", text), ("disabled", "#746c64")],
+            bordercolor=[("focus", orange)],
+        )
+
+        style.configure("Primary.TButton", background=orange, foreground="#160d02", font=(font, 10, "bold"), padding=(16, 10), borderwidth=0)
+        style.map("Primary.TButton", background=[("active", orange_hover), ("disabled", "#684514")], foreground=[("disabled", "#a58763")])
+        style.configure("Ghost.TButton", background=panel_soft, foreground=text, font=(font, 9, "bold"), padding=(12, 8), borderwidth=1)
+        style.map("Ghost.TButton", background=[("active", "#2c2a27"), ("disabled", "#1c1c1c")], foreground=[("disabled", "#70685e")])
+        style.configure("Danger.TButton", background=danger, foreground="#fff5ef", font=(font, 10, "bold"), padding=(16, 10), borderwidth=0)
+        style.map("Danger.TButton", background=[("active", "#d04e2a"), ("disabled", "#4a2c23")], foreground=[("disabled", "#8f736b")])
+
     def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=18)
+        root = ttk.Frame(self, padding=24, style="App.TFrame")
         root.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(root, text="Mobile Remote Bridge", font=("Microsoft YaHei UI", 18, "bold")).pack(anchor=tk.W)
+        header = ttk.Frame(root, style="App.TFrame")
+        header.pack(fill=tk.X)
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="WHITEBOARD BRIDGE", style="Eyebrow.TLabel").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(header, text="iPad Whiteboard Control", style="Hero.TLabel").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+        ttk.Label(header, textvariable=self.status_var, style="Status.TLabel").grid(row=0, column=1, rowspan=2, sticky=tk.NE)
         ttk.Label(
             root,
-            text="Use the exact URL or QR code shown here. The mobile canvas sends pointer strokes to the current PC screen.",
-            foreground="#555555",
-        ).pack(anchor=tk.W, pady=(4, 16))
+            text="Scan the QR code on iPad. Local strokes stay smooth, and the PC receives mapped mouse strokes.",
+            style="Subtitle.TLabel",
+        ).pack(anchor=tk.W, pady=(8, 18))
 
-        form = ttk.Frame(root)
+        form = ttk.Frame(root, padding=18, style="Card.TFrame")
         form.pack(fill=tk.X)
-        ttk.Label(form, text="Port").grid(row=0, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(form, textvariable=self.port_var, width=12).grid(row=0, column=1, sticky=tk.W, pady=4)
-        ttk.Label(form, text="Monitor").grid(row=0, column=2, sticky=tk.W, padx=(16, 0), pady=4)
-        ttk.Entry(form, textvariable=self.monitor_var, width=8).grid(row=0, column=3, sticky=tk.W, pady=4)
-        ttk.Label(form, text="Token").grid(row=1, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(form, textvariable=self.token_var).grid(row=1, column=1, columnspan=3, sticky=tk.EW, pady=4)
-        ttk.Button(form, text="Regenerate", command=self._regenerate_token).grid(row=1, column=4, padx=(8, 0), pady=4)
-        form.columnconfigure(1, weight=1)
+        form.columnconfigure(4, weight=1)
+        ttk.Label(form, text="PORT", style="Meta.TLabel").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(form, textvariable=self.port_var, width=12, style="Input.TEntry").grid(row=1, column=0, sticky=tk.W, pady=(6, 0))
+        ttk.Label(form, text="MONITOR", style="Meta.TLabel").grid(row=0, column=1, sticky=tk.W, padx=(18, 0))
+        ttk.Entry(form, textvariable=self.monitor_var, width=8, style="Input.TEntry").grid(row=1, column=1, sticky=tk.W, padx=(18, 0), pady=(6, 0))
+        ttk.Label(form, text="LAN ADDRESS", style="Meta.TLabel").grid(row=0, column=2, sticky=tk.W, padx=(18, 0))
+        ttk.Label(form, text=self.lan_ip, style="Ip.TLabel").grid(row=1, column=2, sticky=tk.W, padx=(18, 0), pady=(6, 0))
+        ttk.Label(form, text="SESSION TOKEN", style="Meta.TLabel").grid(row=0, column=4, sticky=tk.W, padx=(18, 0))
+        ttk.Entry(form, textvariable=self.token_var, style="Input.TEntry").grid(row=1, column=4, sticky=tk.EW, padx=(18, 0), pady=(6, 0))
+        ttk.Button(form, text="Regenerate", command=self._regenerate_token, style="Ghost.TButton").grid(row=1, column=5, padx=(10, 0), pady=(6, 0))
 
-        ttk.Label(root, text="Mobile remote URL").pack(anchor=tk.W, pady=(16, 4))
-        url_row = ttk.Frame(root)
-        url_row.pack(fill=tk.X)
-        ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(url_row, text="Copy", command=lambda: self._copy_value(self.url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(url_row, text="Show QR", command=lambda: self._show_qr(self.url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        content = ttk.Frame(root, style="App.TFrame")
+        content.pack(fill=tk.BOTH, expand=True, pady=(16, 0))
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
 
-        qr_panel = ttk.Frame(root)
-        qr_panel.pack(fill=tk.X, pady=(14, 0))
-        self.qr_label = ttk.Label(qr_panel)
-        self.qr_label.pack(side=tk.LEFT)
+        link_panel = ttk.Frame(content, padding=18, style="Panel.TFrame")
+        link_panel.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 16))
+        link_panel.columnconfigure(0, weight=1)
+        ttk.Label(link_panel, text="iPad whiteboard URL", style="CardTitle.TLabel").pack(anchor=tk.W)
         ttk.Label(
-            qr_panel,
-            text="Open this exact URL on the mobile device. If it says Check URL or Link Expired, refresh from this QR/code.",
-            foreground="#666666",
-            wraplength=360,
-        ).pack(side=tk.LEFT, padx=(14, 0), anchor=tk.N)
+            link_panel,
+            text="The link includes the current token and page version. Use the latest QR after changing port or token.",
+            style="Desc.TLabel",
+        ).pack(anchor=tk.W, pady=(5, 14))
 
-        controls = ttk.Frame(root)
-        controls.pack(fill=tk.X, pady=(18, 8))
-        self.start_button = ttk.Button(controls, text="Start service", command=self._start_server)
+        url_row = ttk.Frame(link_panel, style="Card.TFrame")
+        url_row.pack(fill=tk.X)
+        ttk.Entry(url_row, textvariable=self.url_var, state="readonly", style="Input.TEntry").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(url_row, text="Copy", command=lambda: self._copy_value(self.url_var.get()), style="Ghost.TButton").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Button(url_row, text="Refresh QR", command=lambda: self._show_qr(self.url_var.get()), style="Ghost.TButton").pack(side=tk.LEFT, padx=(8, 0))
+
+        notes = ttk.Frame(link_panel, padding=(0, 22, 0, 0), style="Card.TFrame")
+        notes.pack(fill=tk.X)
+        ttk.Label(notes, text="Pointer mapping", style="CardTitle.TLabel").pack(anchor=tk.W)
+        ttk.Label(
+            notes,
+            text="Pen, line and eraser actions are handled locally on iPad first. Only the final pointer path is sent to this PC client.",
+            style="Desc.TLabel",
+            wraplength=520,
+        ).pack(anchor=tk.W, pady=(5, 0))
+
+        qr_panel = ttk.Frame(content, padding=18, style="QrCard.TFrame")
+        qr_panel.grid(row=0, column=1, sticky=tk.NS)
+        ttk.Label(qr_panel, text="Scan on iPad", style="QrTitle.TLabel").pack(anchor=tk.W)
+        ttk.Label(qr_panel, text="Keep both devices on the same LAN.", style="QrDesc.TLabel", wraplength=220).pack(anchor=tk.W, pady=(5, 14))
+        self.qr_label = ttk.Label(qr_panel, style="Qr.TLabel")
+        self.qr_label.pack(anchor=tk.CENTER, pady=(0, 12))
+        ttk.Label(qr_panel, text="If connection fails, restart service and scan the regenerated code.", style="FineCard.TLabel", wraplength=220).pack(anchor=tk.W)
+
+        controls = ttk.Frame(root, style="Toolbar.TFrame")
+        controls.pack(fill=tk.X, pady=(18, 0))
+        self.start_button = ttk.Button(controls, text="Start service", command=self._start_server, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
-        self.stop_button = ttk.Button(controls, text="Stop service", command=self._stop_server, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT, padx=(8, 0))
-
-        ttk.Label(root, textvariable=self.status_var, foreground="#0f6b5f").pack(anchor=tk.W, pady=(8, 0))
+        self.stop_button = ttk.Button(controls, text="Stop service", command=self._stop_server, state=tk.DISABLED, style="Danger.TButton")
+        self.stop_button.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(controls, text="Run as administrator when controlling elevated apps.", style="Fine.TLabel").pack(side=tk.RIGHT)
 
     def _start_server(self) -> None:
         if self.server_thread is not None:
@@ -194,7 +294,10 @@ class WhiteboardClient(tk.Tk):
         self._update_qr(value)
 
     def _update_qr(self, url: str) -> None:
-        image = qrcode.make(url).resize((180, 180))
+        qr = qrcode.QRCode(border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        image = qr.make_image(fill_color="#101010", back_color="#fff1de").resize((190, 190))
         self.qr_image = ImageTk.PhotoImage(image)
         self.qr_label.configure(image=self.qr_image)
 
