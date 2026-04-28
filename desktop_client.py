@@ -2,6 +2,7 @@ import asyncio
 import queue
 import secrets
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -59,6 +60,7 @@ class DesktopClient(tk.Tk):
         self.events: queue.Queue[str] = queue.Queue()
         self.server_thread: BridgeServerThread | None = None
         self.lan_ip = get_lan_ip()
+        self.page_version = str(int(time.time()))
 
         self.token_var = tk.StringVar(value=secrets.token_urlsafe(12))
         self.port_var = tk.StringVar(value="8787")
@@ -199,8 +201,8 @@ class DesktopClient(tk.Tk):
     def _update_url(self) -> None:
         port = self.port_var.get().strip() or "8787"
         token = self.token_var.get().strip()
-        self.url_var.set(f"http://{self.lan_ip}:{port}/?token={token}")
-        self.tablet_url_var.set(f"http://{self.lan_ip}:{port}/tablet?token={token}")
+        self.url_var.set(f"http://{self.lan_ip}:{port}/?token={token}&v={self.page_version}")
+        self.tablet_url_var.set(f"http://{self.lan_ip}:{port}/tablet?token={token}&v={self.page_version}")
         self._update_qr(self.url_var.get())
 
     def _update_qr(self, url: str) -> None:

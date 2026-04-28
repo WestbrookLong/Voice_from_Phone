@@ -270,14 +270,24 @@ def create_app(token: str) -> web.Application:
     app = web.Application()
     session = TextSession()
 
+    def html_response(path: Path) -> web.FileResponse:
+        return web.FileResponse(
+            path,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+
     async def index(request: web.Request) -> web.FileResponse:
-        return web.FileResponse(STATIC_DIR / "index.html")
+        return html_response(STATIC_DIR / "index.html")
 
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"ok": True})
 
     async def tablet(request: web.Request) -> web.FileResponse:
-        return web.FileResponse(STATIC_DIR / "tablet.html")
+        return html_response(STATIC_DIR / "tablet.html")
 
     async def screen_handler(request: web.Request) -> web.WebSocketResponse:
         if request.query.get("token") != token:

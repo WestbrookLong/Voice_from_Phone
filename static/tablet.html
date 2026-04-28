@@ -16,6 +16,10 @@
 
       * {
         box-sizing: border-box;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
       }
 
       html,
@@ -26,6 +30,9 @@
         overflow: hidden;
         touch-action: none;
         overscroll-behavior: none;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
         color: var(--ink);
         background: radial-gradient(circle at 20% 10%, #28371d, transparent 30rem), var(--bg);
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -33,12 +40,24 @@
 
       #screen {
         position: fixed;
-        inset: 0;
+        left: 0;
+        top: var(--stage-top, 0px);
         width: var(--stage-width, 100vw);
         height: var(--stage-height, 100vh);
         display: block;
         background: #000;
         cursor: crosshair;
+        touch-action: none;
+      }
+
+      #inkOverlay {
+        position: fixed;
+        left: 0;
+        top: var(--stage-top, 0px);
+        width: var(--stage-width, 100vw);
+        height: var(--stage-height, 100vh);
+        display: block;
+        pointer-events: none;
         touch-action: none;
       }
 
@@ -90,6 +109,20 @@
         pointer-events: none;
       }
 
+      body.keyboard-open .hint {
+        display: none;
+      }
+
+      body.keyboard-open .hud {
+        display: none;
+      }
+
+      body.keyboard-open .mode-button,
+      body.keyboard-open .echo-button,
+      body.keyboard-open .echo-clear-button {
+        display: none;
+      }
+
       .keyboard-button {
         position: fixed;
         right: max(16px, env(safe-area-inset-right));
@@ -130,6 +163,52 @@
         background: rgba(182, 227, 109, 0.94);
       }
 
+      .echo-button {
+        position: fixed;
+        left: max(138px, env(safe-area-inset-left) + 138px);
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 5;
+        min-width: 108px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        padding: 0 16px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 16px;
+        font-weight: 900;
+        touch-action: manipulation;
+      }
+
+      .echo-button.on {
+        color: #11130f;
+        background: rgba(126, 214, 255, 0.94);
+      }
+
+      .echo-clear-button {
+        position: fixed;
+        left: max(262px, env(safe-area-inset-left) + 262px);
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 5;
+        min-width: 132px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        padding: 0 16px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 16px;
+        font-weight: 900;
+        touch-action: manipulation;
+      }
+
+      .echo-clear-button.frame {
+        color: #11130f;
+        background: rgba(255, 210, 92, 0.94);
+      }
+
       .input-panel {
         position: fixed;
         left: max(14px, env(safe-area-inset-left));
@@ -151,6 +230,10 @@
         align-items: stretch;
       }
 
+      body.keyboard-open .input-panel.open {
+        bottom: max(6px, env(safe-area-inset-bottom));
+      }
+
       #textInput {
         min-height: 52px;
         max-height: 130px;
@@ -163,6 +246,8 @@
         background: rgba(0, 0, 0, 0.34);
         font-size: 18px;
         line-height: 1.35;
+        -webkit-user-select: text;
+        user-select: text;
       }
 
       .input-panel button {
@@ -179,6 +264,7 @@
   </head>
   <body>
     <canvas id="screen"></canvas>
+    <canvas id="inkOverlay"></canvas>
     <div class="hud">
       <span id="dot" class="dot"></span>
       <span id="status">连接中</span>
@@ -191,10 +277,14 @@
     </div>
     <button id="keyboardButton" class="keyboard-button" type="button" aria-label="打开键盘">⌨</button>
     <button id="modeButton" class="mode-button" type="button">点击模式</button>
+    <button id="echoButton" class="echo-button" type="button">蒙版关</button>
+    <button id="echoClearButton" class="echo-clear-button" type="button">自动淡出</button>
 
     <script>
       const canvas = document.querySelector("#screen");
       const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      const inkCanvas = document.querySelector("#inkOverlay");
+      const inkCtx = inkCanvas.getContext("2d", { alpha: true, desynchronized: true });
       const dot = document.querySelector("#dot");
       const statusEl = document.querySelector("#status");
       const keyboardButton = document.querySelector("#keyboardButton");
@@ -203,11 +293,14 @@
       const clearTextButton = document.querySelector("#clearText");
       const closeKeyboardButton = document.querySelector("#closeKeyboard");
       const modeButton = document.querySelector("#modeButton");
+      const echoButton = document.querySelector("#echoButton");
+      const echoClearButton = document.querySelector("#echoClearButton");
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
       const monitorId = params.get("monitor") || "1";
       const fps = params.get("fps") || "24";
       const quality = params.get("quality") || "58";
+      const buildId = "tablet-20260428-keyboard-clear";
 
       let screenWs = null;
       let pointerWs = null;
@@ -221,16 +314,27 @@
       let activePointerType = null;
       let stageWidth = 0;
       let stageHeight = 0;
+      let keyboardLayoutOpen = false;
+      let layoutResizeTimer = null;
       const touches = new Map();
       let wheelMode = false;
       let forcedWheelMode = false;
+      let localEchoEnabled = false;
+      let echoClearMode = "fade";
+      let hasPendingEcho = false;
+      let echoFadeRunning = false;
+      let activeEchoPoint = null;
+      let activeEchoStroke = null;
+      let localEchoStrokes = [];
+      let screenFrameCounter = 0;
+      let lastProcessedMove = null;
       let singleFingerWheelPointerId = null;
       let lastSingleFingerWheelY = null;
       let lastTwoFingerCenter = null;
       let wheelRemainder = 0;
 
       function setStatus(text, connected = false) {
-        statusEl.textContent = text;
+        statusEl.textContent = `${text} | ${buildId}`;
         dot.classList.toggle("connected", connected);
       }
 
@@ -242,10 +346,33 @@
         return url.toString();
       }
 
+      function viewportMetrics() {
+        const visualViewport = window.visualViewport;
+        return {
+          width: visualViewport ? visualViewport.width : window.innerWidth,
+          height: visualViewport ? visualViewport.height : window.innerHeight,
+          offsetTop: visualViewport ? visualViewport.offsetTop : 0,
+        };
+      }
+
       function resizeCanvas() {
-        if (!stageWidth || !stageHeight) {
+        if (keyboardLayoutOpen) {
+          const viewport = viewportMetrics();
+          const panelHeight = inputPanel.classList.contains("open") ? inputPanel.getBoundingClientRect().height : 0;
+          const reservedBottom = panelHeight + 10;
+          const portraitFallbackHeight = Math.floor(window.innerHeight * 0.56);
+          stageWidth = Math.max(1, Math.floor(viewport.width));
+          stageHeight = Math.max(
+            160,
+            Math.floor(Math.min(viewport.height - reservedBottom, portraitFallbackHeight))
+          );
+          document.documentElement.style.setProperty("--stage-top", `${Math.max(0, Math.floor(viewport.offsetTop))}px`);
+          document.documentElement.style.setProperty("--stage-width", `${stageWidth}px`);
+          document.documentElement.style.setProperty("--stage-height", `${stageHeight}px`);
+        } else if (!stageWidth || !stageHeight) {
           stageWidth = window.innerWidth;
           stageHeight = window.innerHeight;
+          document.documentElement.style.setProperty("--stage-top", "0px");
           document.documentElement.style.setProperty("--stage-width", `${stageWidth}px`);
           document.documentElement.style.setProperty("--stage-height", `${stageHeight}px`);
         }
@@ -256,6 +383,41 @@
           canvas.width = width;
           canvas.height = height;
         }
+        if (inkCanvas.width !== width || inkCanvas.height !== height) {
+          inkCanvas.width = width;
+          inkCanvas.height = height;
+        }
+      }
+
+      function scheduleKeyboardLayoutUpdate() {
+        resizeCanvas();
+        if (layoutResizeTimer) {
+          clearTimeout(layoutResizeTimer);
+        }
+        layoutResizeTimer = setTimeout(() => {
+          resizeCanvas();
+          layoutResizeTimer = null;
+        }, 320);
+      }
+
+      function openKeyboardPanel() {
+        keyboardLayoutOpen = true;
+        document.body.classList.add("keyboard-open");
+        inputPanel.classList.add("open");
+        scheduleKeyboardLayoutUpdate();
+        textInput.focus();
+        setTimeout(scheduleKeyboardLayoutUpdate, 120);
+        setTimeout(scheduleKeyboardLayoutUpdate, 420);
+      }
+
+      function closeKeyboardPanel() {
+        keyboardLayoutOpen = false;
+        document.body.classList.remove("keyboard-open");
+        inputPanel.classList.remove("open");
+        textInput.blur();
+        stageWidth = 0;
+        stageHeight = 0;
+        resizeCanvas();
       }
 
       function computeImageRect(imageWidth, imageHeight) {
@@ -273,6 +435,7 @@
       }
 
       async function drawFrame(blob) {
+        screenFrameCounter += 1;
         resizeCanvas();
         const bitmap = await createImageBitmap(blob);
         computeImageRect(bitmap.width, bitmap.height);
@@ -280,6 +443,10 @@
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(bitmap, imageRect.left, imageRect.top, imageRect.width, imageRect.height);
         bitmap.close();
+        if (localEchoEnabled && echoClearMode === "frame") {
+          pruneFrameEchoStrokes();
+          redrawFrameEchoStrokes();
+        }
       }
 
       function connectScreen() {
@@ -380,6 +547,176 @@
         };
       }
 
+      function eventToCanvasPoint(event) {
+        const dpr = window.devicePixelRatio || 1;
+        return {
+          x: event.clientX * dpr,
+          y: event.clientY * dpr,
+        };
+      }
+
+      function drawLocalEcho(from, to) {
+        if (!localEchoEnabled || forcedWheelMode) {
+          return;
+        }
+        inkCtx.save();
+        inkCtx.lineCap = "round";
+        inkCtx.lineJoin = "round";
+        inkCtx.strokeStyle = "rgba(126, 214, 255, 0.82)";
+        inkCtx.lineWidth = Math.max(3, 4 * (window.devicePixelRatio || 1));
+        inkCtx.beginPath();
+        inkCtx.moveTo(from.x, from.y);
+        inkCtx.lineTo(to.x, to.y);
+        inkCtx.stroke();
+        inkCtx.restore();
+        hasPendingEcho = true;
+        if (echoClearMode === "frame" && activeEchoStroke) {
+          activeEchoStroke.segments.push({ from, to });
+        }
+      }
+
+      function renderLocalEchoDot(point) {
+        const radius = Math.max(2.2, 2.8 * (window.devicePixelRatio || 1));
+        inkCtx.save();
+        inkCtx.fillStyle = "rgba(126, 214, 255, 0.82)";
+        inkCtx.beginPath();
+        inkCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        inkCtx.fill();
+        inkCtx.restore();
+      }
+
+      function drawLocalEchoDot(point) {
+        if (!localEchoEnabled || forcedWheelMode) {
+          return;
+        }
+        renderLocalEchoDot(point);
+        hasPendingEcho = true;
+        if (echoClearMode === "frame" && activeEchoStroke) {
+          activeEchoStroke.segments.push({ from: point, to: point, dot: true });
+        }
+      }
+
+      function startLocalEchoStroke(point) {
+        activeEchoPoint = point;
+        if (!localEchoEnabled || forcedWheelMode) {
+          return;
+        }
+        if (echoClearMode === "frame") {
+          activeEchoStroke = {
+            segments: [],
+            endFrame: null,
+          };
+          localEchoStrokes.push(activeEchoStroke);
+        }
+        drawLocalEchoDot(point);
+      }
+
+      function endLocalEchoStroke() {
+        activeEchoPoint = null;
+        if (activeEchoStroke) {
+          activeEchoStroke.endFrame = screenFrameCounter;
+          activeEchoStroke = null;
+        }
+      }
+
+      function forceEndActivePointer(event) {
+        if (activePointerId === null) {
+          return;
+        }
+        sendPointer("up", event);
+        try {
+          canvas.releasePointerCapture(activePointerId);
+        } catch (_) {
+          // Safari may release capture implicitly or reject stale ids.
+        }
+        activePointerId = null;
+        activePointerType = null;
+        endLocalEchoStroke();
+      }
+
+      function drawEchoSegment(segment) {
+        if (segment.dot) {
+          renderLocalEchoDot(segment.from);
+          return;
+        }
+        inkCtx.save();
+        inkCtx.lineCap = "round";
+        inkCtx.lineJoin = "round";
+        inkCtx.strokeStyle = "rgba(126, 214, 255, 0.82)";
+        inkCtx.lineWidth = Math.max(3, 4 * (window.devicePixelRatio || 1));
+        inkCtx.beginPath();
+        inkCtx.moveTo(segment.from.x, segment.from.y);
+        inkCtx.lineTo(segment.to.x, segment.to.y);
+        inkCtx.stroke();
+        inkCtx.restore();
+      }
+
+      function pruneFrameEchoStrokes() {
+        localEchoStrokes = localEchoStrokes.filter((stroke) => {
+          if (stroke === activeEchoStroke || stroke.endFrame === null) {
+            return true;
+          }
+          return screenFrameCounter - stroke.endFrame < 3;
+        });
+        hasPendingEcho = localEchoStrokes.length > 0;
+      }
+
+      function redrawFrameEchoStrokes() {
+        inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+        for (const stroke of localEchoStrokes) {
+          for (const segment of stroke.segments) {
+            drawEchoSegment(segment);
+          }
+        }
+      }
+
+      function fadeLocalEcho() {
+        if (!localEchoEnabled || echoClearMode !== "fade") {
+          echoFadeRunning = false;
+          return;
+        }
+        inkCtx.save();
+        inkCtx.globalCompositeOperation = "destination-out";
+        inkCtx.fillStyle = "rgba(0, 0, 0, 0.055)";
+        inkCtx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
+        inkCtx.restore();
+        requestAnimationFrame(fadeLocalEcho);
+      }
+
+      function clearLocalEchoPixels() {
+        inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+        hasPendingEcho = false;
+        localEchoStrokes = [];
+        activeEchoStroke = null;
+      }
+
+      function resetLocalEcho() {
+        clearLocalEchoPixels();
+        activeEchoPoint = null;
+      }
+
+      function setLocalEcho(enabled) {
+        localEchoEnabled = enabled;
+        echoButton.textContent = enabled ? "蒙版开" : "蒙版关";
+        echoButton.classList.toggle("on", enabled);
+        resetLocalEcho();
+        if (enabled && echoClearMode === "fade" && !echoFadeRunning) {
+          echoFadeRunning = true;
+          requestAnimationFrame(fadeLocalEcho);
+        }
+      }
+
+      function setEchoClearMode(mode) {
+        echoClearMode = mode;
+        echoClearButton.textContent = mode === "frame" ? "等屏幕响应" : "自动淡出";
+        echoClearButton.classList.toggle("frame", mode === "frame");
+        resetLocalEcho();
+        if (localEchoEnabled && mode === "fade" && !echoFadeRunning) {
+          echoFadeRunning = true;
+          requestAnimationFrame(fadeLocalEcho);
+        }
+      }
+
       function sendPointer(action, event) {
         if (!monitor || !pointerWs || pointerWs.readyState !== WebSocket.OPEN) {
           return;
@@ -410,6 +747,38 @@
           delta,
           monitor,
         }));
+      }
+
+      function shouldProcessMove(event) {
+        const now = performance.now();
+        if (
+          lastProcessedMove &&
+          lastProcessedMove.pointerId === event.pointerId &&
+          lastProcessedMove.x === event.clientX &&
+          lastProcessedMove.y === event.clientY &&
+          now - lastProcessedMove.time < 8
+        ) {
+          return false;
+        }
+        lastProcessedMove = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          time: now,
+        };
+        return true;
+      }
+
+      function processActivePointerMove(event) {
+        if (!shouldProcessMove(event)) {
+          return;
+        }
+        const point = eventToCanvasPoint(event);
+        if (activeEchoPoint) {
+          drawLocalEcho(activeEchoPoint, point);
+        }
+        activeEchoPoint = point;
+        sendPointer("move", event);
       }
 
       function twoFingerCenter() {
@@ -469,11 +838,7 @@
         forcedWheelMode = enabled;
         modeButton.textContent = enabled ? "滚轮模式" : "点击模式";
         modeButton.classList.toggle("wheel", enabled);
-        if (activePointerId !== null) {
-          sendPointer("up", { clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
-          activePointerId = null;
-          activePointerType = null;
-        }
+        forceEndActivePointer({ clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
         touches.clear();
         wheelMode = false;
         singleFingerWheelPointerId = null;
@@ -495,35 +860,35 @@
           }
           touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
           if (touches.size === 2) {
-            if (activePointerId !== null) {
-              sendPointer("up", event);
-              activePointerId = null;
-              activePointerType = null;
-            }
+            forceEndActivePointer(event);
             wheelMode = true;
             lastTwoFingerCenter = twoFingerCenter();
             wheelRemainder = 0;
             return;
           }
-          if (touches.size === 1 && activePointerId === null && !wheelMode) {
+          if (touches.size === 1 && !wheelMode) {
+            forceEndActivePointer(event);
             activePointerId = event.pointerId;
             activePointerType = "touch";
+            startLocalEchoStroke(eventToCanvasPoint(event));
             canvas.setPointerCapture(event.pointerId);
             sendPointer("down", event);
             return;
           }
           return;
         }
-        if (activePointerId !== null || wheelMode) {
+        if (wheelMode) {
           return;
         }
+        forceEndActivePointer(event);
         activePointerId = event.pointerId;
         activePointerType = event.pointerType;
+        startLocalEchoStroke(eventToCanvasPoint(event));
         canvas.setPointerCapture(event.pointerId);
         sendPointer("down", event);
       });
 
-      canvas.addEventListener("pointermove", (event) => {
+      function handlePointerMove(event) {
         event.preventDefault();
         if (event.pointerType === "touch") {
           if (forcedWheelMode) {
@@ -541,7 +906,7 @@
             return;
           }
           if (event.pointerId === activePointerId) {
-            sendPointer("move", event);
+            processActivePointerMove(event);
           }
           return;
         }
@@ -550,9 +915,14 @@
         }
         const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
         for (const item of events) {
-          sendPointer("move", item);
+          processActivePointerMove(item);
         }
-      });
+      }
+
+      canvas.addEventListener("pointermove", handlePointerMove);
+      if ("onpointerrawupdate" in window) {
+        canvas.addEventListener("pointerrawupdate", handlePointerMove);
+      }
 
       function endPointer(event) {
         event.preventDefault();
@@ -568,8 +938,14 @@
           const wasActivePointer = event.pointerId === activePointerId;
           if (wasActivePointer) {
             sendPointer("up", event);
+            try {
+              canvas.releasePointerCapture(event.pointerId);
+            } catch (_) {
+              // Safari may release capture implicitly.
+            }
             activePointerId = null;
             activePointerType = null;
+            endLocalEchoStroke();
           }
           touches.delete(event.pointerId);
           if (touches.size < 2) {
@@ -583,8 +959,14 @@
           return;
         }
         sendPointer("up", event);
+        try {
+          canvas.releasePointerCapture(event.pointerId);
+        } catch (_) {
+          // Safari may release capture implicitly.
+        }
         activePointerId = null;
         activePointerType = null;
+        endLocalEchoStroke();
       }
 
       canvas.addEventListener("pointerup", endPointer);
@@ -594,13 +976,39 @@
         stageHeight = 0;
         setTimeout(resizeCanvas, 250);
       });
+      window.addEventListener("resize", () => {
+        if (keyboardLayoutOpen) {
+          scheduleKeyboardLayoutUpdate();
+        }
+      });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", () => {
+          if (keyboardLayoutOpen) {
+            scheduleKeyboardLayoutUpdate();
+          }
+        });
+        window.visualViewport.addEventListener("scroll", () => {
+          if (keyboardLayoutOpen) {
+            scheduleKeyboardLayoutUpdate();
+          }
+        });
+      }
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+      window.addEventListener("selectstart", (event) => {
+        if (event.target !== textInput) {
+          event.preventDefault();
+        }
+      });
+      window.addEventListener("dragstart", (event) => event.preventDefault());
+      window.addEventListener("gesturestart", (event) => event.preventDefault());
+      window.addEventListener("gesturechange", (event) => event.preventDefault());
+      window.addEventListener("gestureend", (event) => event.preventDefault());
 
       keyboardButton.addEventListener("pointerdown", (event) => event.stopPropagation());
       keyboardButton.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        inputPanel.classList.add("open");
-        textInput.focus();
+        openKeyboardPanel();
       });
 
       textInput.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -618,8 +1026,7 @@
       closeKeyboardButton.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        inputPanel.classList.remove("open");
-        textInput.blur();
+        closeKeyboardPanel();
       });
 
       modeButton.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -627,6 +1034,20 @@
         event.preventDefault();
         event.stopPropagation();
         setForcedWheelMode(!forcedWheelMode);
+      });
+
+      echoButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      echoButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setLocalEcho(!localEchoEnabled);
+      });
+
+      echoClearButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      echoClearButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setEchoClearMode(echoClearMode === "fade" ? "frame" : "fade");
       });
 
       resizeCanvas();
