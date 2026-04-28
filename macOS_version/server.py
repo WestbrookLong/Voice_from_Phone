@@ -1,9 +1,11 @@
 import argparse
 import ctypes
 import ctypes.util
+import ipaddress
 import json
 import secrets
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -114,11 +116,44 @@ class TextSession:
         self.text = ""
 
 
+def _is_usable_lan_ip(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return isinstance(address, ipaddress.IPv4Address) and address.is_private and not address.is_loopback
+
+
+def _get_interface_ip(interface_name: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["ipconfig", "getifaddr", interface_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    address = result.stdout.strip()
+    return address if _is_usable_lan_ip(address) else None
+
+
 def get_lan_ip() -> str:
+    for interface_name in ("en0", "en1", "en2", "en3"):
+        address = _get_interface_ip(interface_name)
+        if address:
+            return address
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            address = s.getsockname()[0]
+            return address if _is_usable_lan_ip(address) else "127.0.0.1"
     except OSError:
         return "127.0.0.1"
 

@@ -71,3 +71,20 @@ python3 server.py --test-text "你好 macOS"
 - 删除文字会在 Mac 端发送对应数量的 Delete/Backspace。
 - 清空手机输入框只会重置本次会话状态，不会删除 Mac 上已经输入的内容。
 - 当前安全边界是局域网 + session token，不要直接暴露到公网。
+
+## iPad 白板功能
+
+iPad 白板桥接功能放在独立子目录：
+
+```bash
+cd macOS_whiteboard
+./start_desktop_client.sh
+```
+
+启动后点击 **Start service**。窗口会显示 `iPad端白板网址` 和二维码，iPad 打开该地址后可把笔迹映射到 Mac 当前前台的绘图软件或网页画板。
+
+详细说明见：
+
+```text
+macOS_whiteboard/README.md
+```
