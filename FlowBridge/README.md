@@ -30,7 +30,7 @@ http://192.168.1.20:8787/?token=xxxx
 
 ## Flutter App
 
-`mobile_app/` 中提供了 Flutter/Dart 手机端 App 源码。当前电脑未安装 Flutter/Dart，因此未在本机编译 APK；安装 Flutter 后参考 `mobile_app/README.md` 运行。
+`../mobile_app/` 中提供了 Flutter/Dart 手机端 App 源码。当前电脑未安装 Flutter/Dart，因此未在本机编译 APK；安装 Flutter 后参考 `../mobile_app/README.md` 运行。
 
 ## Windows 桌面客户端
 

@@ -8,7 +8,7 @@
 
 ## Reading Context
 
-- Source: local checkout at `D:\Users\WESTBROOK\Projects\Voice_input`
+- Source: local checkout at `D:\Users\WESTBROOK\Projects\Voice_input\FlowBridge`
 - Git branch: `main`
 - Git commit: `6d33d5334f9a436a033521039a78dda18a2d7411`
 - Primary runtime: Python 3 on Windows
@@ -18,7 +18,7 @@
   - `server.py`
   - `static/index.html`
   - `static/tablet.html`
-  - `mobile_app/lib/main.dart`
+  - `../mobile_app/lib/main.dart`
   - `requirements.txt`
   - `VoiceInput.spec`
   - `PACKAGING.md`
@@ -51,7 +51,7 @@ The server uses `ctypes` to call Win32 `user32.SendInput`. Keyboard injection is
 
 `static/index.html` is the no-install phone web client. It opens `/ws`, sends full text state as `sync_text`, and sends `reset_session` when the local textbox is cleared.
 
-`mobile_app/lib/main.dart` implements a Flutter Android client with the same `/ws` protocol, plus QR scanning through `mobile_scanner`.
+`../mobile_app/lib/main.dart` implements a Flutter Android client with the same `/ws` protocol, plus QR scanning through `mobile_scanner`.
 
 `static/tablet.html` is a browser-based mobile remote client. It opens three WebSockets: `/screen` for display frames, `/pointer` for mouse movement/click/wheel injection, and `/ws` for optional keyboard text input.
 
@@ -118,7 +118,7 @@ For mobile remote mode, the core loop is split:
 - Phone text input URL and mobile remote URL.
 - QR code generation for both URLs.
 - Phone web client through `static/index.html`.
-- Flutter Android client in `mobile_app/`, including QR scan connection.
+- Flutter Android client in `../mobile_app/`, including QR scan connection.
 - Full-text `sync_text` protocol for voice input correction.
 - `reset_session` protocol that clears server-side session state without deleting already injected computer text.
 - Legacy `ops` protocol support for insert/enter/backspace operations.
@@ -168,7 +168,7 @@ Security is scoped to a trusted LAN plus a bearer token in the URL and message b
 
 Failure handling is pragmatic but minimal. Web clients reconnect automatically; server handlers log errors and send JSON error messages. There is no persistent connection registry, structured logging, metrics, or backpressure strategy beyond basic message size limits and input length caps.
 
-Testing is light. The only explicit test found is `mobile_app/test/widget_test.dart`, which checks that the Flutter UI renders key labels. There are no Python unit tests for `common_prefix_len`, `TextSession`, protocol validation, or coordinate mapping.
+Testing is light. The only explicit test found is `../mobile_app/test/widget_test.dart`, which checks that the Flutter UI renders key labels. There are no Python unit tests for `common_prefix_len`, `TextSession`, protocol validation, or coordinate mapping.
 
 The most important design tradeoff is the text correction algorithm. It is simple and responsive, but depends on the target app focus and caret position staying stable. A future target-window lock, accessibility integration, or clipboard fallback would reduce accidental edits in more complex workflows.
 
@@ -177,5 +177,5 @@ The most important design tradeoff is the text correction algorithm. It is simpl
 - `server.py`: read `TextSession`, `type_text`, `create_app`, `/ws`, `/screen`, and `/pointer` together; this is where the actual bridge behavior lives.
 - `desktop_client.py`: read `DesktopClient._start_server()` and `BridgeServerThread`; this explains how the BAT entrypoint becomes a desktop-managed server.
 - `static/tablet.html`: read connection setup, pointer conversion, zoom handling, wheel handling, and local echo logic; this is the most complex client.
-- `mobile_app/lib/main.dart`: read URL parsing, WebSocket reconnect, queueing, and QR scan flow; this is the installable phone client.
+- `../mobile_app/lib/main.dart`: read URL parsing, WebSocket reconnect, queueing, and QR scan flow; this is the installable phone client.
 - `VoiceInput.spec` and `PACKAGING.md`: read these when changing dependencies or rebuilding the Windows EXE.

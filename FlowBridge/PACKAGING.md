@@ -26,7 +26,7 @@ dist/VoiceInput.exe
 如果修改了电脑端代码，重新打包：
 
 ```powershell
-cd D:\Users\WESTBROOK\Projects\Voice_input
+cd D:\Users\WESTBROOK\Projects\Voice_input\FlowBridge
 python -m pip install -r requirements.txt
 python -m pip install pyinstaller
 python -m PyInstaller --clean --noconfirm VoiceInput.spec
@@ -35,7 +35,7 @@ python -m PyInstaller --clean --noconfirm VoiceInput.spec
 输出位置：
 
 ```text
-D:\Users\WESTBROOK\Projects\Voice_input\dist\VoiceInput.exe
+D:\Users\WESTBROOK\Projects\Voice_input\FlowBridge\dist\VoiceInput.exe
 ```
 
 ## 注意事项

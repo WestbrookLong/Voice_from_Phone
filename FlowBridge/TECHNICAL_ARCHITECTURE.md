@@ -59,8 +59,8 @@
 
 相关文件：
 
-- `mobile_app/lib/main.dart`：Flutter 手机 App 主逻辑。
-- `mobile_app/android/app/src/main/AndroidManifest.xml`：网络权限与相机权限。
+- `../mobile_app/lib/main.dart`：Flutter 手机 App 主逻辑。
+- `../mobile_app/android/app/src/main/AndroidManifest.xml`：网络权限与相机权限。
 
 ### 备用网页端
 
