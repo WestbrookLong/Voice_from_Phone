@@ -307,13 +307,13 @@ python desktop_client.py
 - 增加 HTTPS/WSS 或局域网设备配对机制，提高安全性。
 - 增加剪贴板注入 fallback，提升部分特殊应用中的兼容性。
 
-## 11. iPad 远程数位板扩展
+## 11. 移动端远程扩展
 
-项目现在还包含一个实验性的 iPad 远程数位板模式。
+项目现在还包含一个实验性的移动端远程模式。
 
-该模式的目标不是同步一张画布图片，而是让 iPad 显示电脑屏幕，并把 Apple Pencil 的按下、移动、抬起映射成 Windows 鼠标事件。这样用户可以在 Photoshop 等成熟软件中提前选好画笔工具，然后用 iPad 作为远程输入面板进行绘制。
+该模式的目标不是同步一张画布图片，而是让手机或平板显示电脑屏幕，并把触控或 Apple Pencil 的按下、移动、抬起映射成 Windows 鼠标事件。这样用户可以在 Photoshop 等成熟软件中提前选好画笔工具，然后用移动端作为远程输入面板进行绘制。
 
-数位板页面还提供一个右下角键盘按钮。点击后会在 iPad 上聚焦一个 textarea，从而弹出系统输入法；该 textarea 的内容通过已有 `sync_text` 协议注入电脑当前文字光标处。
+移动端远程页面还提供一个右下角键盘按钮。点击后会在移动端聚焦一个 textarea，从而弹出系统输入法；该 textarea 的内容通过已有 `sync_text` 协议注入电脑当前文字光标处。
 
 ### 数据流
 
@@ -322,9 +322,9 @@ python desktop_client.py
   -> mss 截屏
   -> Pillow JPEG 编码
   -> WebSocket binary frame
-  -> iPad 浏览器 canvas 显示
+  -> 移动端浏览器 canvas 显示
 
-iPad Pointer Events
+移动端 Pointer Events
   -> 归一化 x/y 坐标
   -> WebSocket JSON
   -> Windows SendInput 鼠标移动/按下/抬起
@@ -333,7 +333,7 @@ iPad Pointer Events
 
 ### 相关接口
 
-- `GET /tablet?token=...`：iPad 数位板网页。
+- `GET /tablet?token=...`：移动端远程网页。
 - `GET /screen?token=...&fps=24&quality=58&monitor=1`：屏幕 JPEG 帧 WebSocket。
 - `GET /pointer?token=...`：指针事件 WebSocket。
 
@@ -361,7 +361,7 @@ iPad Pointer Events
 
 ### 坐标映射
 
-iPad 端显示电脑屏幕时，会按比例将屏幕帧绘制到 canvas 中，并记录实际图像矩形区域。Pointer event 坐标会先换算成屏幕图像内的归一化坐标：
+移动端显示电脑屏幕时，会按比例将屏幕帧绘制到 canvas 中，并记录实际图像矩形区域。Pointer event 坐标会先换算成屏幕图像内的归一化坐标：
 
 ```text
 x_ratio = (pointer_x - image_left) / image_width
@@ -386,9 +386,9 @@ two-finger vertical pan -> mouse wheel
 
 ### 当前限制
 
-- 当前只模拟鼠标，不模拟 Windows Ink / HID 数位板，因此 Photoshop 无法获得真实压感。
+- 当前只模拟鼠标，不模拟 Windows Ink / HID 设备，因此 Photoshop 无法获得真实压感。
 - 当前默认捕获主屏幕 `monitor=1`。
 - 当前屏幕传输是 JPEG over WebSocket，延迟较低、实现简单，但不如 WebRTC/H.264 高效。
 - 如果目标软件以管理员权限运行，桌面客户端也需要管理员权限运行。
 - 键盘输入依赖电脑端当前已有文字光标；如果当前焦点是 Photoshop 画布等非文本区域，文本可能不会输入到预期位置。
-- iPad 端提供本地蒙版回显开关。开启后会在本地 overlay canvas 立即绘制半透明临时轨迹；清除策略支持自动淡出或等下一帧电脑屏幕响应后清除，真实结果仍以电脑屏幕回传为准。
+- 移动端提供本地蒙版回显开关。开启后会在本地 overlay canvas 立即绘制半透明临时轨迹；清除策略支持自动淡出或等下一帧电脑屏幕响应后清除，真实结果仍以电脑屏幕回传为准。

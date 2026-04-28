@@ -3,130 +3,209 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>手机实时输入</title>
+    <title>Flow Voice</title>
     <style>
       :root {
-        --bg: #f4efe6;
-        --panel: #fffaf1;
-        --ink: #211a12;
-        --muted: #766a5b;
-        --accent: #0f6b5f;
-        --danger: #b6412d;
-        --line: #dccfbc;
+        --bg: #10140f;
+        --panel: rgba(249, 244, 229, 0.92);
+        --panel-strong: #fff8e8;
+        --ink: #172016;
+        --muted: #69705d;
+        --accent: #d9ff70;
+        --accent-strong: #3d5a21;
+        --danger: #c4533c;
+        --line: rgba(23, 32, 22, 0.12);
+        --shadow: rgba(6, 11, 5, 0.28);
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html,
       body {
         margin: 0;
+        min-height: 100%;
+      }
+
+      body {
         min-height: 100dvh;
         color: var(--ink);
-        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
         background:
-          radial-gradient(circle at 18% 8%, rgba(15, 107, 95, 0.16), transparent 28rem),
-          linear-gradient(145deg, #f8f0df, var(--bg) 48%, #e9ddca);
+          radial-gradient(circle at 12% 0%, rgba(217, 255, 112, 0.32), transparent 18rem),
+          radial-gradient(circle at 92% 12%, rgba(104, 167, 255, 0.18), transparent 16rem),
+          linear-gradient(155deg, #11180f 0%, #1e2819 42%, #0c100b 100%);
+        font-family: "Aptos Display", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
       }
 
       main {
-        display: flex;
         min-height: 100dvh;
-        align-items: stretch;
-        padding: 18px;
+        display: grid;
+        padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
       }
 
       .shell {
-        display: flex;
-        width: 100%;
-        flex-direction: column;
-        gap: 14px;
-        border: 1px solid var(--line);
-        border-radius: 28px;
+        position: relative;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 16px;
+        width: min(100%, 760px);
+        min-height: calc(100dvh - 34px);
+        margin: auto;
+        overflow: hidden;
+        border: 1px solid rgba(249, 244, 229, 0.22);
+        border-radius: 34px;
         padding: 18px;
-        background: rgba(255, 250, 241, 0.86);
-        box-shadow: 0 20px 70px rgba(72, 52, 28, 0.16);
-        backdrop-filter: blur(12px);
+        background:
+          linear-gradient(145deg, rgba(255, 248, 232, 0.96), rgba(239, 229, 203, 0.88)),
+          var(--panel);
+        box-shadow: 0 30px 90px var(--shadow);
+      }
+
+      .shell::before {
+        content: "";
+        position: absolute;
+        inset: -36% 20% auto -20%;
+        height: 280px;
+        pointer-events: none;
+        background: radial-gradient(circle, rgba(217, 255, 112, 0.58), transparent 65%);
+        filter: blur(6px);
       }
 
       header {
+        position: relative;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
-        gap: 12px;
+        gap: 14px;
+      }
+
+      .brand {
+        display: grid;
+        gap: 6px;
+      }
+
+      .eyebrow {
+        width: fit-content;
+        border: 1px solid rgba(61, 90, 33, 0.24);
+        border-radius: 999px;
+        padding: 6px 10px;
+        color: var(--accent-strong);
+        background: rgba(217, 255, 112, 0.38);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
 
       h1 {
         margin: 0;
-        font-size: clamp(24px, 7vw, 42px);
-        letter-spacing: -0.06em;
-        line-height: 0.92;
+        font-size: clamp(38px, 13vw, 78px);
+        line-height: 0.86;
+        letter-spacing: -0.08em;
       }
 
       .status {
         flex: 0 0 auto;
         border: 1px solid var(--line);
         border-radius: 999px;
-        padding: 8px 12px;
+        padding: 9px 12px;
         color: var(--muted);
-        font: 600 13px/1.1 ui-monospace, "Cascadia Mono", Consolas, monospace;
-        background: #fff7e9;
+        background: rgba(255, 248, 232, 0.78);
+        font: 800 12px/1.1 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
       }
 
       .status[data-state="connected"] {
-        color: var(--accent);
+        color: #255b2e;
+        background: rgba(217, 255, 112, 0.5);
       }
 
       .status[data-state="error"] {
         color: var(--danger);
+        background: rgba(196, 83, 60, 0.1);
+      }
+
+      .composer {
+        position: relative;
+        display: grid;
+        min-height: 0;
       }
 
       textarea {
         width: 100%;
-        min-height: 58dvh;
-        flex: 1;
+        min-height: 48dvh;
         resize: none;
-        border: 1px solid var(--line);
-        border-radius: 22px;
+        border: 1px solid rgba(23, 32, 22, 0.14);
+        border-radius: 30px;
         outline: none;
-        padding: 18px;
+        padding: 22px;
         color: var(--ink);
-        font: 24px/1.55 "LXGW WenKai", "STKaiti", KaiTi, "Songti SC", serif;
         background:
-          linear-gradient(rgba(255, 250, 241, 0.93), rgba(255, 250, 241, 0.93)),
-          repeating-linear-gradient(to bottom, transparent 0 36px, rgba(15, 107, 95, 0.08) 37px);
+          linear-gradient(rgba(255, 248, 232, 0.86), rgba(255, 248, 232, 0.86)),
+          radial-gradient(circle at 100% 0%, rgba(217, 255, 112, 0.22), transparent 16rem);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.72),
+          0 18px 48px rgba(69, 50, 22, 0.12);
+        font: 500 clamp(23px, 6vw, 34px)/1.42 "LXGW WenKai", "STKaiti", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      textarea::placeholder {
+        color: rgba(23, 32, 22, 0.34);
       }
 
       textarea:focus {
-        border-color: rgba(15, 107, 95, 0.58);
-        box-shadow: 0 0 0 4px rgba(15, 107, 95, 0.08);
+        border-color: rgba(61, 90, 33, 0.42);
+        box-shadow:
+          0 0 0 5px rgba(217, 255, 112, 0.22),
+          0 18px 48px rgba(69, 50, 22, 0.12);
       }
 
       .toolbar {
-        display: flex;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 10px;
       }
 
       button {
-        min-height: 48px;
-        flex: 1;
+        min-height: 54px;
         border: 1px solid var(--line);
-        border-radius: 16px;
+        border-radius: 20px;
         color: var(--ink);
-        font: 700 16px/1 system-ui, sans-serif;
-        background: #fff7e9;
+        background: rgba(255, 248, 232, 0.76);
+        font: 900 16px/1 "Segoe UI", "PingFang SC", sans-serif;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
       }
 
       button.primary {
         border-color: transparent;
-        color: #fffaf1;
+        color: #152011;
         background: var(--accent);
       }
 
-      .hint {
-        margin: 0;
-        color: var(--muted);
-        font: 14px/1.45 system-ui, sans-serif;
+      @media (max-width: 430px) {
+        .shell {
+          border-radius: 28px;
+          padding: 14px;
+        }
+
+        header {
+          align-items: center;
+        }
+
+        .eyebrow {
+          display: none;
+        }
+
+        .status {
+          padding: 8px 10px;
+        }
+
+        textarea {
+          min-height: 54dvh;
+          border-radius: 24px;
+          padding: 18px;
+        }
       }
     </style>
   </head>
@@ -134,18 +213,21 @@
     <main>
       <section class="shell">
         <header>
-          <h1>实时输入</h1>
+          <div class="brand">
+            <div class="eyebrow">LIVE INPUT</div>
+            <h1>Flow Voice</h1>
+          </div>
           <div id="status" class="status" data-state="idle">连接中</div>
         </header>
 
-        <textarea id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里输入或使用手机语音输入法，电脑光标处会实时出现同样的变化。"></textarea>
-
-        <div class="toolbar">
-          <button id="clear" type="button">清空手机输入框</button>
-          <button id="reconnect" class="primary" type="button">重新连接</button>
+        <div class="composer">
+          <textarea id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="开始输入"></textarea>
         </div>
 
-        <p class="hint">使用前先把电脑光标放到目标输入位置。不要关闭本页；本页不会要求点击发送。</p>
+        <div class="toolbar">
+          <button id="clear" type="button">清空</button>
+          <button id="reconnect" class="primary" type="button">重连</button>
+        </div>
       </section>
     </main>
 
@@ -169,54 +251,6 @@
         statusEl.dataset.state = state;
       }
 
-      function toChars(value) {
-        return Array.from(value);
-      }
-
-      function diffOps(previous, current) {
-        const a = toChars(previous);
-        const b = toChars(current);
-        let prefix = 0;
-        while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) {
-          prefix += 1;
-        }
-
-        let suffix = 0;
-        while (
-          suffix < a.length - prefix &&
-          suffix < b.length - prefix &&
-          a[a.length - 1 - suffix] === b[b.length - 1 - suffix]
-        ) {
-          suffix += 1;
-        }
-
-        const deleteCount = a.length - prefix - suffix;
-        const insertText = b.slice(prefix, b.length - suffix).join("");
-        const ops = [];
-
-        if (deleteCount > 0) {
-          ops.push({ type: "backspace", count: deleteCount });
-        }
-        if (insertText.length > 0) {
-          ops.push(...textToOps(insertText));
-        }
-        return ops;
-      }
-
-      function textToOps(text) {
-        const ops = [];
-        const parts = text.split("\n");
-        parts.forEach((part, index) => {
-          if (part.length > 0) {
-            ops.push({ type: "insert", text: part });
-          }
-          if (index < parts.length - 1) {
-            ops.push({ type: "enter" });
-          }
-        });
-        return ops;
-      }
-
       function socketUrl() {
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
         return `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
@@ -225,7 +259,7 @@
       function sendMessage(message) {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           queue.push(message);
-          setStatus("离线缓存", "error");
+          setStatus("离线", "error");
           return;
         }
         ws.send(JSON.stringify(message));
@@ -298,7 +332,7 @@
         ws = new WebSocket(socketUrl());
 
         ws.addEventListener("open", () => {
-          setStatus("已连接", "connected");
+          setStatus("在线", "connected");
           flushQueue();
           inputEl.focus();
         });
@@ -307,7 +341,7 @@
           try {
             const message = JSON.parse(event.data);
             if (message.type === "error") {
-              setStatus("电脑端错误", "error");
+              setStatus("错误", "error");
             }
           } catch (_) {
             // Ignore non-JSON diagnostics.
@@ -315,12 +349,12 @@
         });
 
         ws.addEventListener("close", () => {
-          setStatus("已断开", "error");
+          setStatus("断开", "error");
           reconnectTimer = setTimeout(connect, 1200);
         });
 
         ws.addEventListener("error", () => {
-          setStatus("连接错误", "error");
+          setStatus("错误", "error");
         });
       }
 

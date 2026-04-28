@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <link rel="icon" href="data:," />
-    <title>iPad Whiteboard Bridge</title>
+    <title>Mobile Remote Bridge</title>
     <style>
       :root {
         --stage-left: 0px;
@@ -30,7 +30,7 @@
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background: #f5f5f5;
+        background: #f3f4f6;
         color: var(--ink);
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         touch-action: none;
@@ -44,7 +44,7 @@
         width: var(--stage-width);
         height: var(--stage-height);
         background: #fff;
-        box-shadow: 0 0 0 1px var(--line);
+        box-shadow: 0 0 0 1px var(--line), 0 12px 34px rgba(0, 0, 0, 0.08);
         touch-action: none;
       }
 
@@ -61,11 +61,13 @@
         position: fixed;
         left: max(12px, env(safe-area-inset-left));
         top: max(12px, env(safe-area-inset-top));
+        right: max(12px, env(safe-area-inset-right));
         z-index: 5;
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         align-items: center;
-        padding: 6px;
+        padding: 8px;
         border: 1px solid rgba(0, 0, 0, 0.1);
         border-radius: 8px;
         background: var(--panel);
@@ -73,22 +75,83 @@
         backdrop-filter: blur(14px);
       }
 
-      button {
-        min-width: 56px;
-        height: 42px;
+      .group {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        min-height: 42px;
+        padding-right: 8px;
+        border-right: 1px solid rgba(0, 0, 0, 0.1);
+      }
+
+      .group:last-child {
+        border-right: 0;
+        padding-right: 0;
+      }
+
+      button,
+      select {
+        height: 38px;
         border: 1px solid rgba(0, 0, 0, 0.16);
         border-radius: 7px;
-        padding: 0 12px;
+        padding: 0 11px;
         color: #111;
         background: #fff;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 800;
         touch-action: manipulation;
+      }
+
+      button {
+        min-width: 46px;
       }
 
       button.active {
         color: #fff;
         background: #111;
+      }
+
+      button:disabled {
+        opacity: 0.38;
+      }
+
+      .swatch {
+        width: 32px;
+        min-width: 32px;
+        padding: 0;
+        border-radius: 50%;
+        border: 2px solid rgba(0, 0, 0, 0.18);
+      }
+
+      .swatch.active {
+        box-shadow: 0 0 0 3px #111 inset, 0 0 0 1px #111;
+        background: var(--swatch);
+      }
+
+      #colorInput {
+        width: 38px;
+        height: 38px;
+        border: 1px solid rgba(0, 0, 0, 0.16);
+        border-radius: 7px;
+        padding: 2px;
+        background: #fff;
+      }
+
+      .size-control {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      #sizeInput {
+        width: 130px;
+      }
+
+      #sizeLabel {
+        min-width: 38px;
+        color: #555;
+        font-size: 12px;
+        font-weight: 900;
       }
 
       #clearButton {
@@ -123,31 +186,74 @@
       <canvas id="ink"></canvas>
     </main>
     <div class="toolbar">
-      <button id="penButton" class="active" type="button">Pen</button>
-      <button id="eraserButton" type="button">Eraser</button>
-      <button id="clearButton" type="button">Clear</button>
+      <div class="group">
+        <button id="penButton" class="active" type="button">Pen</button>
+        <button id="lineButton" type="button">Line</button>
+        <button id="highlighterButton" type="button">High</button>
+        <button id="eraserButton" type="button">Eraser</button>
+      </div>
+      <div id="swatches" class="group" aria-label="Colors"></div>
+      <div class="group">
+        <input id="colorInput" type="color" value="#111111" aria-label="Custom color" />
+        <div class="size-control">
+          <input id="sizeInput" type="range" min="1" max="36" value="5" aria-label="Stroke size" />
+          <span id="sizeLabel">5px</span>
+        </div>
+      </div>
+      <div class="group">
+        <button id="undoButton" type="button">Undo</button>
+        <button id="redoButton" type="button">Redo</button>
+        <button id="clearButton" type="button">Clear</button>
+      </div>
+      <div class="group">
+        <button id="snapshotButton" type="button">PC Shot</button>
+        <button id="hideSnapshotButton" type="button" disabled>Hide PC</button>
+        <select id="paperSelect" aria-label="Paper">
+          <option value="blank">Blank</option>
+          <option value="lined">Lined</option>
+          <option value="grid">Grid</option>
+          <option value="dots">Dots</option>
+        </select>
+      </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">Offline</span></div>
     </div>
 
     <script>
-      const stage = document.querySelector("#stage");
       const canvas = document.querySelector("#ink");
       const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
       const penButton = document.querySelector("#penButton");
+      const lineButton = document.querySelector("#lineButton");
+      const highlighterButton = document.querySelector("#highlighterButton");
       const eraserButton = document.querySelector("#eraserButton");
+      const undoButton = document.querySelector("#undoButton");
+      const redoButton = document.querySelector("#redoButton");
       const clearButton = document.querySelector("#clearButton");
+      const snapshotButton = document.querySelector("#snapshotButton");
+      const hideSnapshotButton = document.querySelector("#hideSnapshotButton");
+      const colorInput = document.querySelector("#colorInput");
+      const sizeInput = document.querySelector("#sizeInput");
+      const sizeLabel = document.querySelector("#sizeLabel");
+      const paperSelect = document.querySelector("#paperSelect");
+      const swatchesEl = document.querySelector("#swatches");
       const dot = document.querySelector("#dot");
       const statusEl = document.querySelector("#status");
 
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
-      const buildId = "whiteboard-engine-20260428-4";
+      const buildId = "whiteboard-tools-20260428-2";
+      const palette = ["#111111", "#e03131", "#f08c00", "#2f9e44", "#1971c2", "#7048e8", "#d6336c", "#868e96"];
 
       const state = {
         monitor: { width: 16, height: 10 },
         tool: "pen",
+        color: "#111111",
+        size: 5,
+        paper: "blank",
+        snapshot: null,
+        snapshotVisible: false,
         dpr: window.devicePixelRatio || 1,
-        board: { cssLeft: 0, cssTop: 0, cssWidth: 1, cssHeight: 1, pxWidth: 1, pxHeight: 1 },
+        strokes: [],
+        undone: [],
       };
 
       function setStatus(text, connected = false) {
@@ -164,6 +270,14 @@
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
         const url = new URL(`${protocol}//${location.host}/pointer`);
         url.searchParams.set("token", token);
+        return url.toString();
+      }
+
+      function snapshotUrl() {
+        const url = new URL(`${location.protocol}//${location.host}/snapshot`);
+        url.searchParams.set("token", token);
+        url.searchParams.set("quality", "72");
+        url.searchParams.set("v", String(Date.now()));
         return url.toString();
       }
 
@@ -312,22 +426,22 @@
           const ratio = pointerRatio(event);
           this.active = {
             pointerId: event.pointerId,
-            tool: state.tool,
-            startPoint: localPoint,
-            startRatio: ratio,
+            stroke: createStroke(localPoint),
             lastPoint: localPoint,
             lastRatio: ratio,
             pathLength: 0,
             moveCount: 0,
-            startedAt: performance.now(),
           };
-
+          state.undone = [];
           try {
             canvas.setPointerCapture(event.pointerId);
           } catch (_) {}
 
-          drawDot(localPoint, this.active.tool);
+          if (this.active.stroke.tool !== "line") {
+            drawDot(localPoint, this.active.stroke);
+          }
           this.transport.sendPriority("down", ratio, event);
+          updateHistoryButtons();
         }
 
         move(event) {
@@ -345,12 +459,17 @@
           if (!this.shouldUseLocalMove(event)) {
             return;
           }
-          const localPoint = canvasPoint(event);
+          const point = canvasPoint(event);
           const ratio = pointerRatio(event);
-          if (distance(this.active.lastPoint, localPoint) >= 0.35) {
-            this.active.pathLength += distance(this.active.lastPoint, localPoint);
-            drawSegment(this.active.lastPoint, localPoint, this.active.tool);
-            this.active.lastPoint = localPoint;
+          const stroke = this.active.stroke;
+          if (stroke.tool === "line") {
+            stroke.points[1] = point;
+            redraw(stroke);
+          } else if (distance(this.active.lastPoint, point) >= 0.35) {
+            this.active.pathLength += distance(this.active.lastPoint, point);
+            stroke.points.push(point);
+            drawSegment(this.active.lastPoint, point, stroke);
+            this.active.lastPoint = point;
           }
           this.active.lastRatio = ratio;
           this.active.moveCount += 1;
@@ -362,30 +481,42 @@
           if (!this.active || event.pointerId !== this.active.pointerId) {
             return;
           }
-          const finalPoint = canvasPoint(event);
-          const finalRatio = pointerRatio(event);
-          const tailDistance = distance(this.active.lastPoint, finalPoint);
-          if (tailDistance > 0.35) {
-            this.active.pathLength += tailDistance;
-            drawSegment(this.active.lastPoint, finalPoint, this.active.tool);
-            this.active.lastPoint = finalPoint;
-            this.active.lastRatio = finalRatio;
+          const point = canvasPoint(event);
+          const ratio = pointerRatio(event);
+          const stroke = this.active.stroke;
+          if (stroke.tool === "line") {
+            stroke.points[1] = point;
+            this.active.pathLength = distance(stroke.points[0], point);
+            redraw(stroke);
+            this.transport.sendMoveNow(ratio, event);
+            this.active.lastRatio = ratio;
+          } else {
+            const tailDistance = distance(this.active.lastPoint, point);
+            if (tailDistance > 0.35) {
+              this.active.pathLength += tailDistance;
+              stroke.points.push(point);
+              drawSegment(this.active.lastPoint, point, stroke);
+              this.active.lastPoint = point;
+              this.active.lastRatio = ratio;
+            }
+            this.normalizeShortStroke(event, point);
           }
 
-          const shortStroke = this.normalizeShortStroke(event, finalPoint, finalRatio);
-          const upRatio = shortStroke ? shortStroke.ratio : this.active.lastRatio;
-          this.transport.sendPriority("up", upRatio, event);
+          state.strokes.push(cloneStroke(this.active.stroke));
+          this.transport.sendPriority("up", this.active.lastRatio, event);
           this.releaseActive();
+          updateHistoryButtons();
         }
 
-        normalizeShortStroke(event, finalPoint, finalRatio) {
-          const minimumPixels = Math.max(7, 5 * state.dpr);
-          const strokeDistance = Math.max(this.active.pathLength, distance(this.active.startPoint, finalPoint));
+        normalizeShortStroke(event, finalPoint) {
+          const stroke = this.active.stroke;
+          const minimumPixels = Math.max(state.size * state.dpr * 1.4, 8 * state.dpr);
+          const strokeDistance = Math.max(this.active.pathLength, distance(stroke.points[0], finalPoint));
           if (strokeDistance >= minimumPixels || this.active.moveCount >= 2) {
-            return null;
+            return;
           }
 
-          const start = this.active.startPoint;
+          const start = stroke.points[0];
           let dx = finalPoint.x - start.x;
           let dy = finalPoint.y - start.y;
           const length = Math.hypot(dx, dy);
@@ -397,33 +528,23 @@
             dx *= scale;
             dy *= scale;
           }
-
-          let endPoint = {
+          const endPoint = {
             x: clamp(start.x + dx, 0, canvas.width),
             y: clamp(start.y + dy, 0, canvas.height),
           };
-          if (distance(start, endPoint) < minimumPixels * 0.5) {
-            endPoint = {
-              x: clamp(start.x - minimumPixels, 0, canvas.width),
-              y: start.y,
-            };
-          }
-
-          drawSegment(start, endPoint, this.active.tool);
+          stroke.points.push(endPoint);
+          drawSegment(start, endPoint, stroke);
           const ratio = ratioFromCanvasPoint(endPoint);
           this.active.lastPoint = endPoint;
           this.active.lastRatio = ratio;
-          this.active.pathLength = Math.max(this.active.pathLength, distance(start, endPoint));
           this.transport.sendMoveNow(ratio, event);
-          return { point: endPoint, ratio };
         }
 
         forceFinish(event) {
           if (!this.active) {
             return;
           }
-          const ratio = this.active.lastRatio || pointerRatio(event);
-          this.transport.sendPriority("up", ratio, {
+          this.transport.sendPriority("up", this.active.lastRatio, {
             pointerId: this.active.pointerId,
             pointerType: event.pointerType || "touch",
             pressure: 0,
@@ -441,6 +562,7 @@
           this.active = null;
           this.lastLocalMove = null;
           this.transport.resetStrokeState();
+          redraw();
         }
 
         shouldUseLocalMove(event) {
@@ -478,61 +600,242 @@
           height = viewportHeight;
           width = height * aspect;
         }
-        const left = (viewportWidth - width) / 2;
-        const top = (viewportHeight - height) / 2;
-
-        state.board = {
-          cssLeft: left,
-          cssTop: top,
-          cssWidth: width,
-          cssHeight: height,
-          pxWidth: Math.max(1, Math.floor(width * state.dpr)),
-          pxHeight: Math.max(1, Math.floor(height * state.dpr)),
-        };
-
-        document.documentElement.style.setProperty("--stage-left", `${left}px`);
-        document.documentElement.style.setProperty("--stage-top", `${top}px`);
+        document.documentElement.style.setProperty("--stage-left", `${(viewportWidth - width) / 2}px`);
+        document.documentElement.style.setProperty("--stage-top", `${(viewportHeight - height) / 2}px`);
         document.documentElement.style.setProperty("--stage-width", `${width}px`);
         document.documentElement.style.setProperty("--stage-height", `${height}px`);
 
-        if (canvas.width !== state.board.pxWidth || canvas.height !== state.board.pxHeight) {
-          const old = document.createElement("canvas");
-          old.width = canvas.width;
-          old.height = canvas.height;
-          if (old.width && old.height) {
-            old.getContext("2d").drawImage(canvas, 0, 0);
-          }
-          canvas.width = state.board.pxWidth;
-          canvas.height = state.board.pxHeight;
-          clearCanvas();
-          if (old.width && old.height) {
-            ctx.drawImage(old, 0, 0, canvas.width, canvas.height);
-          }
+        const pixelWidth = Math.max(1, Math.floor(width * state.dpr));
+        const pixelHeight = Math.max(1, Math.floor(height * state.dpr));
+        if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+          canvas.width = pixelWidth;
+          canvas.height = pixelHeight;
+          redraw();
         }
       }
 
-      function clearCanvas() {
+      function createStroke(point) {
+        const tool = state.tool;
+        return {
+          tool,
+          color: tool === "eraser" ? "#ffffff" : state.color,
+          size: tool === "highlighter" ? state.size * 2.2 : state.size,
+          alpha: tool === "highlighter" ? 0.34 : 1,
+          points: tool === "line" ? [point, point] : [point],
+        };
+      }
+
+      function cloneStroke(stroke) {
+        return {
+          tool: stroke.tool,
+          color: stroke.color,
+          size: stroke.size,
+          alpha: stroke.alpha,
+          points: stroke.points.map((point) => ({ x: point.x, y: point.y })),
+        };
+      }
+
+      function redraw(previewStroke = null) {
+        drawPaper();
+        drawSnapshot();
+        for (const stroke of state.strokes) {
+          drawStroke(stroke);
+        }
+        if (previewStroke) {
+          drawStroke(previewStroke);
+        }
+      }
+
+      function drawPaper() {
         ctx.save();
         ctx.globalCompositeOperation = "source-over";
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const step = Math.round(32 * state.dpr);
+        ctx.strokeStyle = "rgba(25, 113, 194, 0.16)";
+        ctx.fillStyle = "rgba(25, 113, 194, 0.18)";
+        ctx.lineWidth = Math.max(1, state.dpr);
+        if (state.paper === "lined") {
+          for (let y = step; y < canvas.height; y += step) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y);
+            ctx.stroke();
+          }
+        } else if (state.paper === "grid") {
+          for (let x = step; x < canvas.width; x += step) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, canvas.height);
+            ctx.stroke();
+          }
+          for (let y = step; y < canvas.height; y += step) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y);
+            ctx.stroke();
+          }
+        } else if (state.paper === "dots") {
+          for (let x = step; x < canvas.width; x += step) {
+            for (let y = step; y < canvas.height; y += step) {
+              ctx.beginPath();
+              ctx.arc(x, y, Math.max(1.2, 1.2 * state.dpr), 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawSnapshot() {
+        if (!state.snapshotVisible || !state.snapshot) {
+          return;
+        }
+        ctx.save();
+        ctx.globalAlpha = 0.82;
+        ctx.drawImage(state.snapshot, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      }
+
+      function drawStroke(stroke) {
+        if (!stroke.points.length) {
+          return;
+        }
+        if (stroke.points.length === 1) {
+          drawDot(stroke.points[0], stroke);
+          return;
+        }
+        for (let i = 1; i < stroke.points.length; i += 1) {
+          drawSegment(stroke.points[i - 1], stroke.points[i], stroke);
+        }
+      }
+
+      function drawSegment(from, to, stroke) {
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.globalAlpha = stroke.alpha;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth = Math.max(1, stroke.size * state.dpr);
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawDot(point, stroke) {
+        ctx.save();
+        ctx.globalAlpha = stroke.alpha;
+        ctx.fillStyle = stroke.color;
+        const radius = Math.max(1, stroke.size * state.dpr) / 2;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
       }
 
       function setTool(tool) {
         state.tool = tool;
-        penButton.classList.toggle("active", tool === "pen");
-        eraserButton.classList.toggle("active", tool === "eraser");
+        for (const [button, value] of [
+          [penButton, "pen"],
+          [lineButton, "line"],
+          [highlighterButton, "highlighter"],
+          [eraserButton, "eraser"],
+        ]) {
+          button.classList.toggle("active", tool === value);
+        }
+      }
+
+      function setColor(color) {
+        state.color = color;
+        colorInput.value = color;
+        for (const button of swatchesEl.querySelectorAll(".swatch")) {
+          button.classList.toggle("active", button.dataset.color === color);
+        }
+      }
+
+      function setSize(size) {
+        state.size = Number(size);
+        sizeInput.value = String(state.size);
+        sizeLabel.textContent = `${state.size}px`;
+      }
+
+      function undo() {
+        const stroke = state.strokes.pop();
+        if (!stroke) {
+          return;
+        }
+        state.undone.push(stroke);
+        redraw();
+        updateHistoryButtons();
+      }
+
+      function redo() {
+        const stroke = state.undone.pop();
+        if (!stroke) {
+          return;
+        }
+        state.strokes.push(stroke);
+        redraw();
+        updateHistoryButtons();
+      }
+
+      function clearAll() {
+        if (!state.strokes.length) {
+          return;
+        }
+        state.undone.push(...state.strokes.splice(0));
+        redraw();
+        updateHistoryButtons();
+      }
+
+      function updateHistoryButtons() {
+        undoButton.disabled = state.strokes.length === 0;
+        redoButton.disabled = state.undone.length === 0;
+        hideSnapshotButton.disabled = !state.snapshot;
+        hideSnapshotButton.textContent = state.snapshotVisible ? "Hide PC" : "Show PC";
+      }
+
+      async function loadSnapshot() {
+        snapshotButton.disabled = true;
+        const previousLabel = snapshotButton.textContent;
+        snapshotButton.textContent = "Loading";
+        try {
+          const response = await fetch(snapshotUrl(), { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error(`snapshot ${response.status}`);
+          }
+          const blob = await response.blob();
+          const image = await createImageBitmap(blob);
+          if (state.snapshot && state.snapshot.close) {
+            state.snapshot.close();
+          }
+          state.snapshot = image;
+          state.snapshotVisible = true;
+          redraw();
+          updateHistoryButtons();
+        } catch (error) {
+          setStatus("Snapshot failed", false);
+        } finally {
+          snapshotButton.disabled = false;
+          snapshotButton.textContent = previousLabel;
+        }
+      }
+
+      function toggleSnapshot() {
+        if (!state.snapshot) {
+          return;
+        }
+        state.snapshotVisible = !state.snapshotVisible;
+        redraw();
+        updateHistoryButtons();
       }
 
       function isInsideBoard(event) {
         const rect = canvas.getBoundingClientRect();
-        return (
-          event.clientX >= rect.left &&
-          event.clientX <= rect.right &&
-          event.clientY >= rect.top &&
-          event.clientY <= rect.bottom
-        );
+        return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
       }
 
       function canvasPoint(event) {
@@ -562,34 +865,15 @@
         return Math.hypot(left.x - right.x, left.y - right.y);
       }
 
-      function drawSegment(from, to, tool) {
-        ctx.save();
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.globalCompositeOperation = "source-over";
-        if (tool === "eraser") {
-          ctx.strokeStyle = "#fff";
-          ctx.lineWidth = Math.max(22, 18 * state.dpr);
-        } else {
-          ctx.strokeStyle = "#000";
-          ctx.lineWidth = Math.max(5, 4.2 * state.dpr);
-        }
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      function drawDot(point, tool) {
-        ctx.save();
-        ctx.globalCompositeOperation = "source-over";
-        ctx.fillStyle = tool === "eraser" ? "#fff" : "#000";
-        const radius = tool === "eraser" ? Math.max(11, 9 * state.dpr) : Math.max(2.8, 2.2 * state.dpr);
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+      for (const color of palette) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "swatch";
+        button.dataset.color = color;
+        button.style.setProperty("--swatch", color);
+        button.style.background = color;
+        button.addEventListener("click", () => setColor(color));
+        swatchesEl.appendChild(button);
       }
 
       canvas.addEventListener("pointerdown", (event) => engine.start(event), { passive: false });
@@ -598,21 +882,24 @@
       canvas.addEventListener("pointercancel", (event) => engine.finish(event), { passive: false });
       canvas.addEventListener("lostpointercapture", (event) => engine.forceFinish(event));
 
-      penButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        setTool("pen");
-      });
-      eraserButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        setTool("eraser");
-      });
-      clearButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        clearCanvas();
+      penButton.addEventListener("click", () => setTool("pen"));
+      lineButton.addEventListener("click", () => setTool("line"));
+      highlighterButton.addEventListener("click", () => setTool("highlighter"));
+      eraserButton.addEventListener("click", () => setTool("eraser"));
+      undoButton.addEventListener("click", undo);
+      redoButton.addEventListener("click", redo);
+      clearButton.addEventListener("click", clearAll);
+      snapshotButton.addEventListener("click", loadSnapshot);
+      hideSnapshotButton.addEventListener("click", toggleSnapshot);
+      colorInput.addEventListener("input", (event) => setColor(event.target.value));
+      sizeInput.addEventListener("input", (event) => setSize(event.target.value));
+      paperSelect.addEventListener("change", (event) => {
+        state.paper = event.target.value;
+        redraw();
       });
 
-      for (const button of [penButton, eraserButton, clearButton]) {
-        button.addEventListener("pointerdown", (event) => event.stopPropagation());
+      for (const control of document.querySelectorAll("button, input, select")) {
+        control.addEventListener("pointerdown", (event) => event.stopPropagation());
       }
 
       window.addEventListener("resize", resizeStage);
@@ -630,8 +917,11 @@
       window.addEventListener("gesturechange", (event) => event.preventDefault());
       window.addEventListener("gestureend", (event) => event.preventDefault());
 
+      setColor(state.color);
+      setSize(state.size);
+      updateHistoryButtons();
       resizeStage();
-      clearCanvas();
+      redraw();
       transport.connect();
     </script>
   </body>

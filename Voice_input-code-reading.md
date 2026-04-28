@@ -2,7 +2,7 @@
 
 ## Repository Summary
 
-`Voice_input` 是一个局域网内的手机到 Windows 光标输入桥接工具。用户在手机网页或 Flutter App 中输入文字，或使用手机输入法语音转文字，电脑端把这些文本变化实时注入到当前 Windows 光标位置。项目还扩展了一个 iPad 远程数位板模式：iPad 浏览器显示电脑屏幕，并把触控/Apple Pencil 动作映射为 Windows 鼠标事件。
+`Voice_input` 是一个局域网内的手机到 Windows 光标输入桥接工具。用户在手机网页或 Flutter App 中输入文字，或使用手机输入法语音转文字，电脑端把这些文本变化实时注入到当前 Windows 光标位置。项目还扩展了一个移动端远程模式：移动端浏览器显示电脑屏幕，并把触控/Apple Pencil 动作映射为 Windows 鼠标事件。
 
 从 `start_desktop_client.bat` 进入的主运行形态是 Windows 桌面客户端：批处理脚本启动 `desktop_client.py`，桌面 UI 生成 token、端口、URL 和二维码，然后在后台线程启动 `server.py` 中的 aiohttp 服务。服务端同时提供静态网页、WebSocket 文本同步、屏幕 JPEG 推流、指针事件注入和健康检查。
 
@@ -36,7 +36,7 @@ The main architecture has four layers:
 `server.py` defines `create_app(token)`, which returns a single aiohttp application. It registers:
 
 - `GET /` for the phone text input web page.
-- `GET /tablet` for the iPad tablet page.
+- `GET /tablet` for the mobile remote page.
 - `GET /health` for a JSON health check.
 - `GET /ws` for text input WebSocket messages.
 - `GET /screen` for binary JPEG screen frames.
@@ -53,7 +53,7 @@ The server uses `ctypes` to call Win32 `user32.SendInput`. Keyboard injection is
 
 `mobile_app/lib/main.dart` implements a Flutter Android client with the same `/ws` protocol, plus QR scanning through `mobile_scanner`.
 
-`static/tablet.html` is a browser-based iPad client. It opens three WebSockets: `/screen` for display frames, `/pointer` for mouse movement/click/wheel injection, and `/ws` for optional keyboard text input.
+`static/tablet.html` is a browser-based mobile remote client. It opens three WebSockets: `/screen` for display frames, `/pointer` for mouse movement/click/wheel injection, and `/ws` for optional keyboard text input.
 
 ## Main Execution Path
 
@@ -78,8 +78,8 @@ When the user clicks "启动服务", `DesktopClient._start_server()` validates t
 Once a phone client connects:
 
 - normal text input goes to `ws://<host>:<port>/ws?token=<token>`;
-- iPad display frames come from `ws://<host>:<port>/screen?token=<token>`;
-- iPad pointer input goes to `ws://<host>:<port>/pointer?token=<token>`.
+- Mobile remote display frames come from `ws://<host>:<port>/screen?token=<token>`;
+- Mobile remote pointer input goes to `ws://<host>:<port>/pointer?token=<token>`.
 
 Each WebSocket endpoint validates the URL token. The text and pointer handlers also validate the token in the JSON message body.
 
@@ -103,7 +103,7 @@ The main invariant is that the Windows caret is still at the end of the text inj
 
 For Unicode text, `type_text()` encodes text as UTF-16LE and sends each UTF-16 code unit through `KEYEVENTF_UNICODE`, with `\n` mapped to Enter. This avoids relying on the Windows IME or the clipboard.
 
-For iPad tablet mode, the core loop is split:
+For mobile remote mode, the core loop is split:
 
 - `capture_jpeg()` uses `mss` to capture a monitor and Pillow to JPEG-encode it.
 - `/screen` sends a `screen_meta` JSON message when monitor metadata changes, then sends JPEG bytes at a bounded FPS.
@@ -115,7 +115,7 @@ For iPad tablet mode, the core loop is split:
 - Windows desktop client with Tkinter.
 - Start/stop controls for the local bridge server.
 - Random session token and editable port.
-- Phone text input URL and iPad tablet URL.
+- Phone text input URL and mobile remote URL.
 - QR code generation for both URLs.
 - Phone web client through `static/index.html`.
 - Flutter Android client in `mobile_app/`, including QR scan connection.
@@ -124,7 +124,7 @@ For iPad tablet mode, the core loop is split:
 - Legacy `ops` protocol support for insert/enter/backspace operations.
 - Unicode text injection into the current Windows focus.
 - Enter and Backspace injection.
-- iPad remote tablet page with screen streaming, pointer down/move/up, wheel mode, local stroke echo, zoom controls, and optional text panel.
+- Mobile remote page with screen streaming, pointer down/move/up, wheel mode, local stroke echo, zoom controls, and optional text panel.
 - PyInstaller packaging into `dist/VoiceInput.exe` using `VoiceInput.spec`.
 
 ## Technology Stack
@@ -146,7 +146,7 @@ Web clients:
 
 - HTML, CSS, and browser JavaScript
 - Browser WebSocket API
-- Canvas 2D API for iPad screen display and local ink overlay
+- Canvas 2D API for mobile remote screen display and local ink overlay
 - Pointer Events, including coalesced/raw pointer events where available
 
 Mobile app:
