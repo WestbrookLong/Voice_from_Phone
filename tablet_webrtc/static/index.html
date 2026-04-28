@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <title>WebRTC 低延迟数位板</title>
+    <style>
+      :root {
+        --bg: #080a0d;
+        --panel: rgba(13, 18, 24, 0.78);
+        --ink: #f7f4eb;
+        --muted: #b5bdc7;
+        --accent: #59d38c;
+        --warn: #ffbf47;
+        --danger: #ff6b5f;
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-drag: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        color: var(--ink);
+        background: var(--bg);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #viewport {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        background: #000;
+        outline: none;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      #surface {
+        position: absolute;
+        inset: 0;
+        transform-origin: 50% 50%;
+        outline: none;
+        -webkit-user-drag: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      #screen,
+      #ink {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        outline: none;
+        -webkit-user-drag: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      #screen {
+        object-fit: contain;
+        background: #000;
+      }
+
+      #ink {
+        pointer-events: none;
+      }
+
+      .hud {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        top: max(14px, env(safe-area-inset-top));
+        z-index: 10;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 12px;
+        border: 1px solid rgba(247, 244, 235, 0.14);
+        border-radius: 999px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        pointer-events: none;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+
+      .dot.connected {
+        background: var(--accent);
+      }
+
+      #status {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .toolbar,
+      .zoom {
+        position: fixed;
+        z-index: 12;
+        display: flex;
+        gap: 10px;
+        pointer-events: auto;
+      }
+
+      .toolbar {
+        left: max(14px, env(safe-area-inset-left));
+        bottom: max(14px, env(safe-area-inset-bottom));
+      }
+
+      .zoom {
+        right: max(14px, env(safe-area-inset-right));
+        top: max(14px, env(safe-area-inset-top));
+        flex-direction: column;
+      }
+
+      button {
+        min-width: 58px;
+        height: 54px;
+        border: 1px solid rgba(247, 244, 235, 0.18);
+        border-radius: 18px;
+        color: var(--ink);
+        background: rgba(16, 22, 30, 0.88);
+        box-shadow: 0 12px 38px rgba(0, 0, 0, 0.35);
+        font-size: 15px;
+        font-weight: 900;
+        touch-action: manipulation;
+      }
+
+      button.on {
+        color: #07100a;
+        background: var(--accent);
+      }
+
+      button.warn {
+        color: #141007;
+        background: var(--warn);
+      }
+
+      .zoom button {
+        width: 56px;
+        font-size: 28px;
+        line-height: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="viewport">
+      <div id="surface">
+        <video id="screen" autoplay muted playsinline></video>
+        <canvas id="ink"></canvas>
+      </div>
+    </div>
+    <div class="hud">
+      <span id="dot" class="dot"></span>
+      <span id="status">初始化</span>
+    </div>
+    <div class="zoom">
+      <button id="zoomIn" type="button" aria-label="放大">+</button>
+      <button id="zoomOut" type="button" aria-label="缩小">-</button>
+    </div>
+    <div class="toolbar">
+      <button id="wheelMode" type="button">点击</button>
+      <button id="echoMode" type="button">蒙版</button>
+      <button id="reconnect" class="warn" type="button">重连</button>
+    </div>
+
+    <script>
+      const viewport = document.querySelector("#viewport");
+      const surface = document.querySelector("#surface");
+      const video = document.querySelector("#screen");
+      const ink = document.querySelector("#ink");
+      const inkCtx = ink.getContext("2d", { alpha: true, desynchronized: true });
+      const statusEl = document.querySelector("#status");
+      const dot = document.querySelector("#dot");
+      const wheelModeButton = document.querySelector("#wheelMode");
+      const echoModeButton = document.querySelector("#echoMode");
+      const reconnectButton = document.querySelector("#reconnect");
+      const zoomInButton = document.querySelector("#zoomIn");
+      const zoomOutButton = document.querySelector("#zoomOut");
+
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+      const monitor = Number(params.get("monitor") || "1");
+      const fps = Number(params.get("fps") || "45");
+      const maxWidth = Number(params.get("maxWidth") || "1600");
+
+      let pc = null;
+      let pointerChannel = null;
+      let activePointerId = null;
+      let activePointerType = null;
+      let lastPoint = null;
+      let localEcho = true;
+      let forcedWheelMode = false;
+      let singleFingerWheelPointerId = null;
+      let lastWheelY = null;
+      let wheelRemainder = 0;
+      let touches = new Map();
+      let twoFingerWheel = false;
+      let lastTwoFingerCenter = null;
+      let zoomLevel = 1;
+      let lastMove = null;
+      let pointerStack = [];
+      let pointerPumpTimer = null;
+      let activeStroke = null;
+      let strokeSeq = 0;
+
+      function setStatus(text, connected = false) {
+        statusEl.textContent = text;
+        dot.classList.toggle("connected", connected);
+      }
+
+      function resizeInk() {
+        const dpr = window.devicePixelRatio || 1;
+        const width = Math.floor(window.innerWidth * dpr);
+        const height = Math.floor(window.innerHeight * dpr);
+        if (ink.width !== width || ink.height !== height) {
+          ink.width = width;
+          ink.height = height;
+        }
+      }
+
+      function setZoom(value) {
+        zoomLevel = Math.max(1, Math.min(3, value));
+        surface.style.transform = `scale(${zoomLevel})`;
+      }
+
+      function videoContentRect() {
+        const rect = video.getBoundingClientRect();
+        const videoWidth = video.videoWidth || rect.width;
+        const videoHeight = video.videoHeight || rect.height;
+        const scale = Math.min(rect.width / videoWidth, rect.height / videoHeight);
+        const width = videoWidth * scale;
+        const height = videoHeight * scale;
+        return {
+          left: rect.left + (rect.width - width) / 2,
+          top: rect.top + (rect.height - height) / 2,
+          width,
+          height,
+        };
+      }
+
+      function eventRatio(event) {
+        const rect = videoContentRect();
+        return {
+          x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+          y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+        };
+      }
+
+      function canvasPoint(event) {
+        const rect = surface.getBoundingClientRect();
+        return {
+          x: ((event.clientX - rect.left) / rect.width) * ink.width,
+          y: ((event.clientY - rect.top) / rect.height) * ink.height,
+        };
+      }
+
+      function drawEcho(from, to) {
+        if (!localEcho || forcedWheelMode) {
+          return;
+        }
+        inkCtx.save();
+        inkCtx.lineCap = "round";
+        inkCtx.lineJoin = "round";
+        inkCtx.strokeStyle = "rgba(89, 211, 140, 0.82)";
+        inkCtx.lineWidth = Math.max(3, 4 * (window.devicePixelRatio || 1));
+        inkCtx.beginPath();
+        inkCtx.moveTo(from.x, from.y);
+        inkCtx.lineTo(to.x, to.y);
+        inkCtx.stroke();
+        inkCtx.restore();
+      }
+
+      function drawEchoDot(point) {
+        if (!localEcho || forcedWheelMode) {
+          return;
+        }
+        const radius = Math.max(2.5, 3.2 * (window.devicePixelRatio || 1));
+        inkCtx.save();
+        inkCtx.fillStyle = "rgba(89, 211, 140, 0.9)";
+        inkCtx.beginPath();
+        inkCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        inkCtx.fill();
+        inkCtx.restore();
+      }
+
+      function fadeEcho() {
+        if (localEcho) {
+          inkCtx.save();
+          inkCtx.globalCompositeOperation = "destination-out";
+          inkCtx.fillStyle = "rgba(0, 0, 0, 0.045)";
+          inkCtx.fillRect(0, 0, ink.width, ink.height);
+          inkCtx.restore();
+        }
+        requestAnimationFrame(fadeEcho);
+      }
+
+      function clampRatio(value) {
+        return Math.max(0, Math.min(1, value));
+      }
+
+      function enqueuePointerMessage(message) {
+        pointerStack.push(message);
+        schedulePointerPump();
+      }
+
+      function schedulePointerPump() {
+        if (pointerPumpTimer !== null) {
+          return;
+        }
+        pointerPumpTimer = setTimeout(pumpPointerStack, 2);
+      }
+
+      function pumpPointerStack() {
+        pointerPumpTimer = null;
+        if (!pointerChannel || pointerChannel.readyState !== "open") {
+          if (pointerStack.length) {
+            schedulePointerPump();
+          }
+          return;
+        }
+        const message = pointerStack.shift();
+        if (message) {
+          pointerChannel.send(JSON.stringify(message));
+        }
+        if (pointerStack.length) {
+          schedulePointerPump();
+        }
+      }
+
+      function resetPointerStack() {
+        pointerStack = [];
+        if (pointerPumpTimer !== null) {
+          clearTimeout(pointerPumpTimer);
+          pointerPumpTimer = null;
+        }
+      }
+
+      function pointerMessage(action, ratio, pressure = 0, pointerType = "touch") {
+        return {
+          type: "pointer",
+          action,
+          x: clampRatio(ratio.x),
+          y: clampRatio(ratio.y),
+          pressure,
+          pointerType,
+        };
+      }
+
+      function enqueuePointer(action, event) {
+        const ratio = eventRatio(event);
+        enqueuePointerMessage(pointerMessage(
+          action,
+          ratio,
+          event.pressure || 0,
+          event.pointerType || activePointerType || "touch"
+        ));
+        return ratio;
+      }
+
+      function sendWheel(delta) {
+        enqueuePointerMessage({
+          type: "pointer",
+          action: "wheel",
+          delta,
+        });
+      }
+
+      function waitIceGatheringComplete(connection) {
+        if (connection.iceGatheringState === "complete") {
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          function check() {
+            if (connection.iceGatheringState === "complete") {
+              connection.removeEventListener("icegatheringstatechange", check);
+              resolve();
+            }
+          }
+          connection.addEventListener("icegatheringstatechange", check);
+        });
+      }
+
+      async function connect() {
+        setStatus("连接中");
+        if (pc) {
+          pc.close();
+        }
+        resetPointerStack();
+
+        pc = new RTCPeerConnection({
+          bundlePolicy: "max-bundle",
+          rtcpMuxPolicy: "require",
+        });
+        pointerChannel = pc.createDataChannel("pointer", {
+          ordered: true,
+        });
+        pointerChannel.addEventListener("open", () => {
+          setStatus("已连接", true);
+          schedulePointerPump();
+        });
+        pointerChannel.addEventListener("close", () => setStatus("输入断开"));
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addEventListener("track", (event) => {
+          video.srcObject = event.streams[0];
+          video.play().catch(() => {});
+        });
+        pc.addEventListener("connectionstatechange", () => {
+          if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+            setStatus("连接断开");
+          }
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitIceGatheringComplete(pc);
+
+        const response = await fetch(`/offer?token=${encodeURIComponent(token)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sdp: pc.localDescription.sdp,
+            type: pc.localDescription.type,
+            monitor,
+            fps,
+            maxWidth,
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const answer = await response.json();
+        await pc.setRemoteDescription(answer);
+      }
+
+      function shouldProcessMove(event) {
+        const now = performance.now();
+        if (
+          lastMove &&
+          lastMove.pointerId === event.pointerId &&
+          lastMove.x === event.clientX &&
+          lastMove.y === event.clientY &&
+          now - lastMove.time < 6
+        ) {
+          return false;
+        }
+        lastMove = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, time: now };
+        return true;
+      }
+
+      function twoFingerCenter() {
+        if (touches.size !== 2) {
+          return null;
+        }
+        const points = Array.from(touches.values());
+        return {
+          x: (points[0].clientX + points[1].clientX) / 2,
+          y: (points[0].clientY + points[1].clientY) / 2,
+        };
+      }
+
+      function updateWheel(deltaY) {
+        wheelRemainder += deltaY * 5;
+        const step = 120;
+        if (Math.abs(wheelRemainder) >= step) {
+          const delta = Math.trunc(wheelRemainder / step) * step;
+          wheelRemainder -= delta;
+          sendWheel(delta);
+        }
+      }
+
+      function createStrokePoint(event) {
+        const ratio = eventRatio(event);
+        const canvas = canvasPoint(event);
+        return {
+          ratio,
+          canvas,
+          pressure: event.pressure || 0,
+          t: activeStroke ? performance.now() - activeStroke.startedAt : 0,
+        };
+      }
+
+      function beginStroke(event) {
+        const point = createStrokePoint(event);
+        activeStroke = {
+          id: ++strokeSeq,
+          pointerType: event.pointerType || "touch",
+          startedAt: performance.now(),
+          points: [{ x: point.ratio.x, y: point.ratio.y, t: 0, p: point.pressure }],
+          canvasPoints: [point.canvas],
+          maxDistance: 0,
+        };
+        lastPoint = point.canvas;
+        drawEchoDot(lastPoint);
+      }
+
+      function pushStrokePoint(event, draw = true) {
+        if (!activeStroke) {
+          return;
+        }
+        const point = createStrokePoint(event);
+        const previous = activeStroke.canvasPoints[activeStroke.canvasPoints.length - 1];
+        if (previous) {
+          const distance = Math.hypot(point.canvas.x - previous.x, point.canvas.y - previous.y);
+          const previousRemote = activeStroke.points[activeStroke.points.length - 1];
+          if (distance < 0.5 && point.t - previousRemote.t < 4) {
+            return;
+          }
+          activeStroke.maxDistance = Math.max(activeStroke.maxDistance, distance);
+          if (draw) {
+            drawEcho(previous, point.canvas);
+          }
+        }
+        activeStroke.points.push({
+          x: point.ratio.x,
+          y: point.ratio.y,
+          t: Math.max(0, point.t),
+          p: point.pressure,
+        });
+        activeStroke.canvasPoints.push(point.canvas);
+        lastPoint = point.canvas;
+      }
+
+      function ensureMinimumStroke(stroke) {
+        if (!stroke.points.length) {
+          return;
+        }
+        if (stroke.points.length >= 2 && stroke.maxDistance >= 2) {
+          return;
+        }
+        const first = stroke.points[0];
+        const nudge = 3 / Math.max(video.videoWidth || 1000, 1000);
+        stroke.points = [
+          first,
+          { x: clampRatio(first.x + nudge), y: first.y, t: Math.max(4, first.t + 4), p: first.p || 0 },
+          { x: first.x, y: first.y, t: Math.max(8, first.t + 8), p: first.p || 0 },
+        ];
+      }
+
+      function finishActiveStroke(event = null) {
+        if (activePointerId === null || !activeStroke) {
+          return;
+        }
+        if (event && event.pointerId === activePointerId) {
+          pushStrokePoint(event, true);
+        }
+        ensureMinimumStroke(activeStroke);
+        enqueuePointerMessage({
+          type: "stroke",
+          id: activeStroke.id,
+          pointerType: activeStroke.pointerType,
+          points: activeStroke.points,
+        });
+        try {
+          viewport.releasePointerCapture(activePointerId);
+        } catch (_) {}
+        activePointerId = null;
+        activePointerType = null;
+        lastPoint = null;
+        activeStroke = null;
+      }
+
+      function processMove(event) {
+        if (!shouldProcessMove(event)) {
+          return;
+        }
+        pushStrokePoint(event, true);
+      }
+
+      viewport.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            singleFingerWheelPointerId = event.pointerId;
+            lastWheelY = event.clientY;
+            wheelRemainder = 0;
+            viewport.setPointerCapture(event.pointerId);
+            enqueuePointer("move", event);
+            return;
+          }
+          touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          if (touches.size === 2) {
+            finishActiveStroke();
+            twoFingerWheel = true;
+            lastTwoFingerCenter = twoFingerCenter();
+            wheelRemainder = 0;
+            return;
+          }
+        }
+        if (twoFingerWheel) {
+          return;
+        }
+        finishActiveStroke();
+        activePointerId = event.pointerId;
+        activePointerType = event.pointerType;
+        beginStroke(event);
+        viewport.setPointerCapture(event.pointerId);
+      });
+
+      function handlePointerMove(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            if (event.pointerId === singleFingerWheelPointerId) {
+              if (lastWheelY !== null) {
+                updateWheel(event.clientY - lastWheelY);
+              }
+              lastWheelY = event.clientY;
+            }
+            return;
+          }
+          if (touches.has(event.pointerId)) {
+            touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          }
+          if (twoFingerWheel) {
+            const center = twoFingerCenter();
+            if (center && lastTwoFingerCenter) {
+              updateWheel(center.y - lastTwoFingerCenter.y);
+            }
+            lastTwoFingerCenter = center;
+            return;
+          }
+        }
+        if (event.pointerId !== activePointerId) {
+          return;
+        }
+        const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
+        for (const item of events) {
+          processMove(item);
+        }
+      }
+
+      viewport.addEventListener("pointermove", handlePointerMove);
+      if ("onpointerrawupdate" in window) {
+        viewport.addEventListener("pointerrawupdate", handlePointerMove);
+      }
+
+      function handlePointerEnd(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            if (event.pointerId === singleFingerWheelPointerId) {
+              singleFingerWheelPointerId = null;
+              lastWheelY = null;
+              wheelRemainder = 0;
+            }
+            return;
+          }
+          touches.delete(event.pointerId);
+          if (event.pointerId === activePointerId) {
+            finishActiveStroke(event);
+          }
+          if (touches.size < 2) {
+            twoFingerWheel = false;
+            lastTwoFingerCenter = null;
+            wheelRemainder = 0;
+          }
+          return;
+        }
+        if (event.pointerId === activePointerId) {
+          finishActiveStroke(event);
+        }
+      }
+
+      viewport.addEventListener("pointerup", handlePointerEnd);
+      viewport.addEventListener("pointercancel", handlePointerEnd);
+
+      wheelModeButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        forcedWheelMode = !forcedWheelMode;
+        wheelModeButton.textContent = forcedWheelMode ? "滚轮" : "点击";
+        wheelModeButton.classList.toggle("on", forcedWheelMode);
+        touches.clear();
+        twoFingerWheel = false;
+      });
+      echoModeButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        localEcho = !localEcho;
+        echoModeButton.classList.toggle("on", localEcho);
+        inkCtx.clearRect(0, 0, ink.width, ink.height);
+      });
+      reconnectButton.addEventListener("click", () => connect().catch((error) => setStatus(error.message)));
+      zoomInButton.addEventListener("click", () => setZoom(zoomLevel + 0.25));
+      zoomOutButton.addEventListener("click", () => setZoom(zoomLevel - 0.25));
+      window.addEventListener("resize", resizeInk);
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+      window.addEventListener("selectstart", (event) => event.preventDefault());
+      window.addEventListener("dragstart", (event) => event.preventDefault());
+      document.addEventListener("selectionchange", () => {
+        const selection = window.getSelection && window.getSelection();
+        if (selection && selection.rangeCount) {
+          selection.removeAllRanges();
+        }
+      });
+      window.addEventListener("gesturestart", (event) => event.preventDefault());
+      window.addEventListener("gesturechange", (event) => event.preventDefault());
+      window.addEventListener("gestureend", (event) => event.preventDefault());
+
+      resizeInk();
+      setZoom(1);
+      echoModeButton.classList.toggle("on", localEcho);
+      requestAnimationFrame(fadeEcho);
+      connect().catch((error) => setStatus(error.message));
+    </script>
+  </body>
+</html>
