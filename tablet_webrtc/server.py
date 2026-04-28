@@ -420,7 +420,7 @@ def create_app(token: str, monitor: int, fps: int, max_width: int) -> web.Applic
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Low-latency WebRTC iPad tablet server.")
+    parser = argparse.ArgumentParser(description="Low-latency WebRTC mobile remote server.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--token", default=None)
@@ -435,8 +435,8 @@ def main() -> None:
     token = args.token or secrets.token_urlsafe(12)
     app = create_app(token=token, monitor=args.monitor, fps=args.fps, max_width=args.max_width)
     lan_ip = get_lan_ip()
-    print("WebRTC tablet server is running.", flush=True)
-    print(f"Open on iPad: http://{lan_ip}:{args.port}/?token={token}", flush=True)
+    print("WebRTC mobile remote server is running.", flush=True)
+    print(f"Open on mobile device: http://{lan_ip}:{args.port}/?token={token}", flush=True)
     print(f"Default capture: monitor={args.monitor}, fps={args.fps}, max_width={args.max_width}", flush=True)
     web.run_app(app, host=args.host, port=args.port, print=None)
 

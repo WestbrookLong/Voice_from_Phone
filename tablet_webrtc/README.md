@@ -1,8 +1,8 @@
-# WebRTC 低延迟数位板实验版
+# WebRTC 低延迟移动端远程实验版
 
-这个目录是独立于现有 `server.py` / `static/tablet.html` 的重构实现，目标是降低 iPad 数位板模式的屏幕回传延迟。
+这个目录是独立于现有 `server.py` / `static/tablet.html` 的重构实现，目标是降低移动端远程模式的屏幕回传延迟。
 
-旧版数位板路径是：
+旧版移动端远程路径是：
 
 ```text
 mss 截屏 -> Pillow JPEG 编码 -> WebSocket binary frame -> 浏览器解码 JPEG -> canvas 绘制
@@ -11,8 +11,8 @@ mss 截屏 -> Pillow JPEG 编码 -> WebSocket binary frame -> 浏览器解码 JP
 新版改成：
 
 ```text
-mss 截屏 -> aiortc VideoStreamTrack -> WebRTC 视频轨 -> iPad video 元素
-iPad Pointer Events -> 本地 stroke buffer -> WebRTC DataChannel -> 服务端 stroke 回放 -> Win32 SendInput
+mss 截屏 -> aiortc VideoStreamTrack -> WebRTC 视频轨 -> 移动端 video 元素
+移动端 Pointer Events -> 本地 stroke buffer -> WebRTC DataChannel -> 服务端 stroke 回放 -> Win32 SendInput
 ```
 
 ## 为什么会更低延迟
@@ -48,10 +48,10 @@ start_webrtc_tablet.bat
 启动后终端会打印：
 
 ```text
-Open on iPad: http://<电脑局域网 IP>:8790/?token=<token>
+Open on mobile device: http://<电脑局域网 IP>:8790/?token=<token>
 ```
 
-在 iPad 浏览器中打开这个地址即可。
+在手机或平板浏览器中打开这个地址即可。
 
 ## 参数
 
@@ -85,4 +85,4 @@ http://电脑IP:8790/?token=xxx&fps=60&maxWidth=1280&monitor=1
 - 仍然是鼠标事件注入，不是 Windows Ink/HID 笔设备，因此没有真实压感。
 - 当前只做 LAN 内 WebRTC 信令，没有 STUN/TURN 配置；跨公网连接要再加信令和 TURN。
 - aiortc 的编码路径通常是软件编码，最终延迟取决于 CPU、分辨率和浏览器协商到的 codec。若要进一步降低延迟，下一步应迁移到 Windows.Graphics.Capture / DXGI + 硬件 H.264 编码。
-- 当前版本专注数位板，不包含手机语音输入功能。
+- 当前版本专注移动端远程，不包含手机语音输入功能。

@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title iPad Whiteboard Bridge
+title Mobile Remote Bridge
 cd /d "%~dp0"
 where python >nul 2>nul
 if errorlevel 1 (

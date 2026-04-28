@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <link rel="icon" href="data:," />
+    <title>Mobile FPS Controller</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: rgba(17, 24, 39, 0.72);
+        --panel-strong: rgba(24, 34, 50, 0.9);
+        --line: rgba(255, 255, 255, 0.16);
+        --text: #f8fafc;
+        --muted: #95a3b7;
+        --accent: #4ade80;
+        --danger: #fb7185;
+        --button-size: clamp(54px, 8.5vw, 74px);
+        --small-button-size: clamp(46px, 7vw, 58px);
+        --stick-size: clamp(132px, 23vw, 188px);
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px) 0 0 / 42px 42px,
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px) 0 0 / 42px 42px,
+          var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        touch-action: none;
+        overscroll-behavior: none;
+      }
+
+      #app {
+        position: fixed;
+        inset: 0;
+        min-width: 100vw;
+        min-height: 100vh;
+        padding:
+          max(10px, env(safe-area-inset-top))
+          max(12px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom))
+          max(12px, env(safe-area-inset-left));
+      }
+
+      #lookPad {
+        position: absolute;
+        inset: 0;
+        touch-action: none;
+      }
+
+      .topbar {
+        position: absolute;
+        top: max(10px, env(safe-area-inset-top));
+        left: max(12px, env(safe-area-inset-left));
+        right: max(12px, env(safe-area-inset-right));
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        pointer-events: none;
+      }
+
+      .status {
+        position: absolute;
+        left: 0;
+      }
+
+      .status,
+      .settings {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(9, 13, 20, 0.74);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        pointer-events: auto;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+
+      .dot.connected {
+        background: var(--accent);
+      }
+
+      .settings input {
+        width: 116px;
+        accent-color: var(--accent);
+      }
+
+      .settings button {
+        min-width: 42px;
+        height: 30px;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.1);
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      #resetLayoutButton {
+        display: none;
+      }
+
+      .size-editor {
+        display: none;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .size-editor input {
+        width: 94px;
+      }
+
+      body.layout-edit #resetLayoutButton {
+        display: inline-block;
+      }
+
+      body.layout-edit .size-editor {
+        display: flex;
+      }
+
+      body.fullscreen-active .status {
+        display: none;
+      }
+
+      .layout-tip {
+        position: absolute;
+        left: 50%;
+        top: calc(max(10px, env(safe-area-inset-top)) + 44px);
+        z-index: 4;
+        display: none;
+        transform: translateX(-50%);
+        padding: 6px 10px;
+        border: 1px solid rgba(74, 222, 128, 0.36);
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.86);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 900;
+        pointer-events: none;
+      }
+
+      body.layout-edit .layout-tip {
+        display: block;
+      }
+
+      #joystick {
+        position: absolute;
+        left: 15%;
+        top: 72%;
+        z-index: 3;
+        width: var(--stick-size);
+        aspect-ratio: 1;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 50% 50%, rgba(74, 222, 128, 0.14), transparent 36%),
+          rgba(15, 23, 42, 0.62);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+        touch-action: none;
+        transform: translate(-50%, -50%);
+      }
+
+      #joystick::before,
+      #joystick::after {
+        content: "";
+        position: absolute;
+        background: rgba(255, 255, 255, 0.14);
+        border-radius: 99px;
+      }
+
+      #joystick::before {
+        left: 18%;
+        right: 18%;
+        top: calc(50% - 1px);
+        height: 2px;
+      }
+
+      #joystick::after {
+        top: 18%;
+        bottom: 18%;
+        left: calc(50% - 1px);
+        width: 2px;
+      }
+
+      #stick {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 44%;
+        aspect-ratio: 1;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 50%;
+        background: rgba(248, 250, 252, 0.16);
+        transform: translate(-50%, -50%);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+      }
+
+      .controls-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+      }
+
+      .control-button {
+        position: absolute;
+        width: var(--button-size);
+        height: var(--button-size);
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        color: var(--text);
+        background: var(--panel);
+        font-size: clamp(12px, 1.9vw, 16px);
+        font-weight: 900;
+        letter-spacing: 0;
+        touch-action: none;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+        transform: translate(-50%, -50%);
+        pointer-events: auto;
+      }
+
+      .control-button.primary {
+        background: rgba(190, 24, 93, 0.42);
+      }
+
+      .control-button.small {
+        width: var(--small-button-size);
+        height: var(--small-button-size);
+        font-size: clamp(10px, 1.55vw, 13px);
+      }
+
+      .control-button.active {
+        border-color: rgba(74, 222, 128, 0.78);
+        background: var(--panel-strong);
+        transform: translate(-50%, calc(-50% + 1px));
+      }
+
+      body.layout-edit .layout-control {
+        outline: 2px solid rgba(74, 222, 128, 0.68);
+        outline-offset: 4px;
+        cursor: grab;
+      }
+
+      body.layout-edit .layout-control.selected {
+        outline-color: rgba(250, 204, 21, 0.9);
+      }
+
+      .look-mark {
+        position: absolute;
+        right: 28%;
+        top: 50%;
+        z-index: 1;
+        width: 88px;
+        height: 88px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 50%;
+        transform: translate(50%, -50%);
+        opacity: 0.7;
+        pointer-events: none;
+      }
+
+      .look-mark::before,
+      .look-mark::after {
+        content: "";
+        position: absolute;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .look-mark::before {
+        left: 18px;
+        right: 18px;
+        top: 43px;
+        height: 2px;
+      }
+
+      .look-mark::after {
+        top: 18px;
+        bottom: 18px;
+        left: 43px;
+        width: 2px;
+      }
+
+      @media (orientation: portrait) {
+        #app::after {
+          content: "Rotate";
+          position: absolute;
+          inset: 0;
+          z-index: 10;
+          display: grid;
+          place-items: center;
+          background: rgba(11, 15, 20, 0.94);
+          color: var(--text);
+          font-size: 24px;
+          font-weight: 900;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app">
+      <section id="lookPad" aria-label="Look"></section>
+      <div class="look-mark"></div>
+
+      <div class="topbar">
+        <div class="status"><span id="dot" class="dot"></span><span id="status">Offline</span></div>
+        <div class="settings">
+          <span id="gainLabel">1.0x</span>
+          <input id="gainInput" type="range" min="1" max="30" step="0.1" value="1" aria-label="Look sensitivity" />
+          <div class="size-editor">
+            <span id="sizeLabel">SIZE</span>
+            <input id="sizeInput" type="range" min="42" max="220" step="2" value="74" aria-label="Control size" />
+          </div>
+          <button id="fullscreenButton" type="button">FULL</button>
+          <button id="layoutButton" type="button">EDIT</button>
+          <button id="resetLayoutButton" type="button">RESET</button>
+          <button id="panicButton" type="button">SAFE</button>
+        </div>
+      </div>
+      <div class="layout-tip">Drag controls, then tap SAVE</div>
+
+      <section id="joystick" class="layout-control" data-layout-id="joystick" aria-label="Move">
+        <div id="stick"></div>
+      </section>
+
+      <section class="controls-layer" aria-label="Actions">
+        <button class="control-button layout-control" type="button" data-layout-id="ads" data-kind="mouse" data-code="right">ADS</button>
+        <button class="control-button primary layout-control" type="button" data-layout-id="fire" data-kind="mouse" data-code="left">FIRE</button>
+        <button class="control-button layout-control" type="button" data-layout-id="shift" data-kind="key" data-code="ShiftLeft">SHIFT</button>
+        <button class="control-button layout-control" type="button" data-layout-id="jump" data-kind="key" data-code="Space">JUMP</button>
+        <button class="control-button layout-control" type="button" data-layout-id="ctrl" data-kind="key" data-code="ControlLeft">CTRL</button>
+        <button class="control-button small layout-control" type="button" data-layout-id="reload" data-kind="key" data-code="KeyR">R</button>
+        <button class="control-button small layout-control" type="button" data-layout-id="use" data-kind="key" data-code="KeyE">E</button>
+        <button class="control-button small layout-control" type="button" data-layout-id="melee" data-kind="key" data-code="KeyF">F</button>
+        <button class="control-button small layout-control" type="button" data-layout-id="tab" data-kind="key" data-code="Tab">TAB</button>
+        <button class="control-button small layout-control" type="button" data-layout-id="esc" data-kind="key" data-code="Escape">ESC</button>
+      </section>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+      const dot = document.querySelector("#dot");
+      const statusEl = document.querySelector("#status");
+      const lookPad = document.querySelector("#lookPad");
+      const joystick = document.querySelector("#joystick");
+      const stick = document.querySelector("#stick");
+      const gainInput = document.querySelector("#gainInput");
+      const gainLabel = document.querySelector("#gainLabel");
+      const sizeInput = document.querySelector("#sizeInput");
+      const sizeLabel = document.querySelector("#sizeLabel");
+      const fullscreenButton = document.querySelector("#fullscreenButton");
+      const layoutButton = document.querySelector("#layoutButton");
+      const resetLayoutButton = document.querySelector("#resetLayoutButton");
+      const panicButton = document.querySelector("#panicButton");
+      const layoutControls = Array.from(document.querySelectorAll(".layout-control"));
+
+      const LAYOUT_STORAGE_KEY = "mobile-fps-controller-layout-v1";
+      const DEFAULT_LAYOUT = {
+        joystick: { x: 15, y: 72, size: 164 },
+        ads: { x: 15, y: 24, size: 72 },
+        fire: { x: 80, y: 24, size: 72 },
+        reload: { x: 64, y: 47, size: 54 },
+        jump: { x: 72, y: 50, size: 72 },
+        shift: { x: 84, y: 48, size: 72 },
+        use: { x: 64, y: 62, size: 54 },
+        ctrl: { x: 76, y: 64, size: 72 },
+        melee: { x: 88, y: 64, size: 54 },
+        tab: { x: 9, y: 14, size: 54 },
+        esc: { x: 9, y: 29, size: 54 },
+      };
+
+      const state = {
+        ws: null,
+        reconnectTimer: null,
+        sequence: 0,
+        lookPointerId: null,
+        lookLast: null,
+        stickPointerId: null,
+        moveKeys: new Set(),
+        pressedKeys: new Set(),
+        pressedMouse: new Set(),
+        gain: Number(gainInput.value),
+        layoutEdit: false,
+        layoutDrag: null,
+        layout: loadLayout(),
+        selectedLayoutId: "fire",
+      };
+
+      function setStatus(text, connected = false) {
+        statusEl.textContent = text;
+        dot.classList.toggle("connected", connected);
+      }
+
+      function wsUrl() {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = new URL(`${protocol}//${location.host}/control`);
+        url.searchParams.set("token", token);
+        return url.toString();
+      }
+
+      function connect() {
+        if (state.ws) {
+          state.ws.close();
+        }
+        let opened = false;
+        setStatus("Connecting", false);
+        state.ws = new WebSocket(wsUrl());
+        state.ws.addEventListener("open", () => {
+          opened = true;
+          setStatus("Online", true);
+          send({ type: "release_all" });
+        });
+        state.ws.addEventListener("message", (event) => {
+          const message = JSON.parse(event.data);
+          if (message.type === "error") {
+            setStatus("Input error", false);
+          }
+        });
+        state.ws.addEventListener("close", () => {
+          clearLocalState();
+          setStatus(opened ? "Offline" : "Check URL", false);
+          scheduleReconnect();
+        });
+        state.ws.addEventListener("error", () => setStatus(opened ? "Error" : "Check URL", false));
+      }
+
+      function scheduleReconnect() {
+        if (state.reconnectTimer) {
+          return;
+        }
+        state.reconnectTimer = setTimeout(() => {
+          state.reconnectTimer = null;
+          connect();
+        }, 700);
+      }
+
+      function isOpen() {
+        return state.ws && state.ws.readyState === WebSocket.OPEN;
+      }
+
+      function send(message) {
+        if (!isOpen()) {
+          return;
+        }
+        if (state.ws.bufferedAmount > 65536 && message.type === "look") {
+          return;
+        }
+        message.seq = ++state.sequence;
+        message.t = Math.round(performance.now());
+        state.ws.send(JSON.stringify(message));
+      }
+
+      function sendLook(dx, dy) {
+        const scaledDx = dx * state.gain;
+        const scaledDy = dy * state.gain;
+        if (Math.abs(scaledDx) < 0.01 && Math.abs(scaledDy) < 0.01) {
+          return;
+        }
+        send({ type: "look", dx: scaledDx, dy: scaledDy });
+      }
+
+      function sendKey(code, down) {
+        if (!code) {
+          return;
+        }
+        if (down && state.pressedKeys.has(code)) {
+          return;
+        }
+        if (!down && !state.pressedKeys.has(code)) {
+          return;
+        }
+        send({ type: "key", code, down });
+        if (down) {
+          state.pressedKeys.add(code);
+        } else {
+          state.pressedKeys.delete(code);
+        }
+      }
+
+      function sendMouse(button, down) {
+        if (!button) {
+          return;
+        }
+        if (down && state.pressedMouse.has(button)) {
+          return;
+        }
+        if (!down && !state.pressedMouse.has(button)) {
+          return;
+        }
+        send({ type: "mouse", button, down });
+        if (down) {
+          state.pressedMouse.add(button);
+        } else {
+          state.pressedMouse.delete(button);
+        }
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function loadLayout() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
+          const layout = cloneDefaultLayout();
+          for (const [id, point] of Object.entries(stored)) {
+            if (!layout[id] || !point || typeof point !== "object") {
+              continue;
+            }
+            layout[id] = {
+              ...layout[id],
+              x: Number.isFinite(Number(point.x)) ? Number(point.x) : layout[id].x,
+              y: Number.isFinite(Number(point.y)) ? Number(point.y) : layout[id].y,
+              size: Number.isFinite(Number(point.size)) ? Number(point.size) : layout[id].size,
+            };
+          }
+          return layout;
+        } catch (_) {
+          return cloneDefaultLayout();
+        }
+      }
+
+      function cloneDefaultLayout() {
+        return Object.fromEntries(Object.entries(DEFAULT_LAYOUT).map(([id, point]) => [id, { ...point }]));
+      }
+
+      function saveLayout() {
+        localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
+      }
+
+      function applyLayout() {
+        for (const element of layoutControls) {
+          const id = element.dataset.layoutId;
+          const point = state.layout[id] || DEFAULT_LAYOUT[id];
+          if (!point) {
+            continue;
+          }
+          element.style.left = `${point.x}%`;
+          element.style.top = `${point.y}%`;
+          element.style.width = `${point.size}px`;
+          element.style.height = `${point.size}px`;
+          element.classList.toggle("selected", state.layoutEdit && id === state.selectedLayoutId);
+        }
+      }
+
+      function setLayoutEdit(enabled) {
+        state.layoutEdit = enabled;
+        document.body.classList.toggle("layout-edit", enabled);
+        layoutButton.textContent = enabled ? "SAVE" : "EDIT";
+        releaseAll();
+        if (enabled) {
+          selectLayoutControl(state.selectedLayoutId || "fire");
+        }
+        if (!enabled) {
+          saveLayout();
+        }
+        applyLayout();
+      }
+
+      function resetLayout() {
+        state.layout = cloneDefaultLayout();
+        applyLayout();
+        syncSizeEditor();
+        saveLayout();
+      }
+
+      function selectLayoutControl(id) {
+        if (!state.layout[id]) {
+          return;
+        }
+        state.selectedLayoutId = id;
+        syncSizeEditor();
+        applyLayout();
+      }
+
+      function syncSizeEditor() {
+        const selected = state.layout[state.selectedLayoutId];
+        if (!selected) {
+          return;
+        }
+        sizeInput.value = String(selected.size);
+        sizeLabel.textContent = `${selected.size}px`;
+      }
+
+      function setSelectedSize(size) {
+        const selected = state.layout[state.selectedLayoutId];
+        if (!selected) {
+          return;
+        }
+        selected.size = clamp(Math.round(Number(size)), 42, 220);
+        syncSizeEditor();
+        applyLayout();
+        saveLayout();
+      }
+
+      function moveLayoutControl(element, event) {
+        const id = element.dataset.layoutId;
+        const rect = element.getBoundingClientRect();
+        const halfWidth = (rect.width / window.innerWidth) * 50;
+        const halfHeight = (rect.height / window.innerHeight) * 50;
+        const drag = state.layoutDrag && state.layoutDrag.element === element ? state.layoutDrag : null;
+        const nextX = (event.clientX / window.innerWidth) * 100 + (drag ? drag.offsetX : 0);
+        const nextY = (event.clientY / window.innerHeight) * 100 + (drag ? drag.offsetY : 0);
+        state.layout[id] = {
+          x: clamp(nextX, halfWidth, 100 - halfWidth),
+          y: clamp(nextY, halfHeight, 100 - halfHeight),
+        };
+        applyLayout();
+      }
+
+      function startLayoutDrag(event, element) {
+        if (!state.layoutEdit) {
+          return false;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const id = element.dataset.layoutId;
+        const point = state.layout[id] || DEFAULT_LAYOUT[id];
+        const pointerX = (event.clientX / window.innerWidth) * 100;
+        const pointerY = (event.clientY / window.innerHeight) * 100;
+        state.layoutDrag = {
+          pointerId: event.pointerId,
+          element,
+          offsetX: point.x - pointerX,
+          offsetY: point.y - pointerY,
+        };
+        selectLayoutControl(id);
+        try {
+          element.setPointerCapture(event.pointerId);
+        } catch (_) {}
+        moveLayoutControl(element, event);
+        return true;
+      }
+
+      function updateLayoutDrag(event) {
+        if (!state.layoutDrag || event.pointerId !== state.layoutDrag.pointerId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        moveLayoutControl(state.layoutDrag.element, event);
+      }
+
+      function finishLayoutDrag(event) {
+        if (!state.layoutDrag || event.pointerId !== state.layoutDrag.pointerId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          state.layoutDrag.element.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+        saveLayout();
+        state.layoutDrag = null;
+      }
+
+      function clearLocalState() {
+        for (const button of document.querySelectorAll(".control-button.active")) {
+          button.classList.remove("active");
+        }
+        state.lookPointerId = null;
+        state.lookLast = null;
+        state.stickPointerId = null;
+        state.moveKeys.clear();
+        state.pressedKeys.clear();
+        state.pressedMouse.clear();
+        stick.style.transform = "translate(-50%, -50%)";
+      }
+
+      function releaseAll() {
+        send({ type: "release_all" });
+        clearLocalState();
+      }
+
+      function isControlTarget(target) {
+        return Boolean(target.closest("#joystick, .control-button, .settings"));
+      }
+
+      lookPad.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (state.layoutEdit || isControlTarget(event.target) || state.lookPointerId !== null) {
+            return;
+          }
+          event.preventDefault();
+          state.lookPointerId = event.pointerId;
+          state.lookLast = { x: event.clientX, y: event.clientY };
+          try {
+            lookPad.setPointerCapture(event.pointerId);
+          } catch (_) {}
+        },
+        { passive: false },
+      );
+
+      lookPad.addEventListener(
+        "pointermove",
+        (event) => {
+          if (event.pointerId !== state.lookPointerId || !state.lookLast) {
+            return;
+          }
+          event.preventDefault();
+          const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
+          for (const item of events) {
+            const dx = item.clientX - state.lookLast.x;
+            const dy = item.clientY - state.lookLast.y;
+            state.lookLast = { x: item.clientX, y: item.clientY };
+            sendLook(dx, dy);
+          }
+        },
+        { passive: false },
+      );
+
+      function finishLook(event) {
+        if (event.pointerId !== state.lookPointerId) {
+          return;
+        }
+        event.preventDefault();
+        try {
+          lookPad.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+        state.lookPointerId = null;
+        state.lookLast = null;
+      }
+
+      lookPad.addEventListener("pointerup", finishLook, { passive: false });
+      lookPad.addEventListener("pointercancel", finishLook, { passive: false });
+      lookPad.addEventListener("lostpointercapture", finishLook);
+
+      function joystickVector(event) {
+        const rect = joystick.getBoundingClientRect();
+        const radius = Math.max(1, rect.width / 2);
+        const centerX = rect.left + radius;
+        const centerY = rect.top + radius;
+        let x = (event.clientX - centerX) / radius;
+        let y = (event.clientY - centerY) / radius;
+        const length = Math.hypot(x, y);
+        if (length > 1) {
+          x /= length;
+          y /= length;
+        }
+        return { x, y };
+      }
+
+      function keysFromVector(vector) {
+        const keys = new Set();
+        const deadzone = 0.24;
+        if (vector.y < -deadzone) {
+          keys.add("KeyW");
+        } else if (vector.y > deadzone) {
+          keys.add("KeyS");
+        }
+        if (vector.x < -deadzone) {
+          keys.add("KeyA");
+        } else if (vector.x > deadzone) {
+          keys.add("KeyD");
+        }
+        return keys;
+      }
+
+      function updateMoveKeys(nextKeys) {
+        for (const code of state.moveKeys) {
+          if (!nextKeys.has(code)) {
+            sendKey(code, false);
+          }
+        }
+        for (const code of nextKeys) {
+          if (!state.moveKeys.has(code)) {
+            sendKey(code, true);
+          }
+        }
+        state.moveKeys = nextKeys;
+      }
+
+      function updateStick(event) {
+        const vector = joystickVector(event);
+        const maxOffset = joystick.getBoundingClientRect().width * 0.27;
+        stick.style.transform = `translate(calc(-50% + ${vector.x * maxOffset}px), calc(-50% + ${vector.y * maxOffset}px))`;
+        updateMoveKeys(keysFromVector(vector));
+      }
+
+      joystick.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (startLayoutDrag(event, joystick)) {
+            return;
+          }
+          if (state.stickPointerId !== null) {
+            return;
+          }
+          event.preventDefault();
+          state.stickPointerId = event.pointerId;
+          try {
+            joystick.setPointerCapture(event.pointerId);
+          } catch (_) {}
+          updateStick(event);
+        },
+        { passive: false },
+      );
+
+      joystick.addEventListener(
+        "pointermove",
+        (event) => {
+          if (state.layoutEdit) {
+            return;
+          }
+          if (event.pointerId !== state.stickPointerId) {
+            return;
+          }
+          event.preventDefault();
+          updateStick(event);
+        },
+        { passive: false },
+      );
+
+      function finishStick(event) {
+        if (event.pointerId !== state.stickPointerId) {
+          return;
+        }
+        event.preventDefault();
+        try {
+          joystick.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+        state.stickPointerId = null;
+        stick.style.transform = "translate(-50%, -50%)";
+        updateMoveKeys(new Set());
+      }
+
+      joystick.addEventListener("pointerup", finishStick, { passive: false });
+      joystick.addEventListener("pointercancel", finishStick, { passive: false });
+      joystick.addEventListener("lostpointercapture", finishStick);
+
+      for (const button of document.querySelectorAll(".control-button")) {
+        const kind = button.dataset.kind;
+        const code = button.dataset.code;
+        const press = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (startLayoutDrag(event, button)) {
+            return;
+          }
+          button.classList.add("active");
+          try {
+            button.setPointerCapture(event.pointerId);
+          } catch (_) {}
+          if (kind === "key") {
+            sendKey(code, true);
+          } else if (kind === "mouse") {
+            sendMouse(code, true);
+          }
+        };
+        const release = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (state.layoutEdit) {
+            finishLayoutDrag(event);
+            return;
+          }
+          button.classList.remove("active");
+          try {
+            button.releasePointerCapture(event.pointerId);
+          } catch (_) {}
+          if (kind === "key") {
+            sendKey(code, false);
+          } else if (kind === "mouse") {
+            sendMouse(code, false);
+          }
+        };
+        button.addEventListener("pointerdown", press, { passive: false });
+        button.addEventListener("pointerup", release, { passive: false });
+        button.addEventListener("pointercancel", release, { passive: false });
+        button.addEventListener("lostpointercapture", release);
+      }
+
+      gainInput.addEventListener("input", (event) => {
+        state.gain = Number(event.target.value);
+        gainLabel.textContent = `${state.gain.toFixed(2).replace(/0$/, "").replace(/\.0$/, ".0")}x`;
+      });
+
+      sizeInput.addEventListener("input", (event) => {
+        setSelectedSize(event.target.value);
+      });
+
+      fullscreenButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.exitFullscreen) {
+          await document.exitFullscreen().catch(() => {});
+        }
+      });
+
+      document.addEventListener("fullscreenchange", () => {
+        document.body.classList.toggle("fullscreen-active", Boolean(document.fullscreenElement));
+      });
+
+      layoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        setLayoutEdit(!state.layoutEdit);
+      });
+
+      resetLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        resetLayout();
+      });
+
+      panicButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        releaseAll();
+      });
+
+      document.addEventListener("pointermove", updateLayoutDrag, { passive: false });
+      document.addEventListener("pointerup", finishLayoutDrag, { passive: false });
+      document.addEventListener("pointercancel", finishLayoutDrag, { passive: false });
+      window.addEventListener("blur", releaseAll);
+      window.addEventListener("pagehide", releaseAll);
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          releaseAll();
+        }
+      });
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+      window.addEventListener("selectstart", (event) => event.preventDefault());
+      window.addEventListener("dragstart", (event) => event.preventDefault());
+      window.addEventListener("gesturestart", (event) => event.preventDefault());
+      window.addEventListener("gesturechange", (event) => event.preventDefault());
+      window.addEventListener("gestureend", (event) => event.preventDefault());
+
+      setStatus("Offline", false);
+      syncSizeEditor();
+      applyLayout();
+      connect();
+    </script>
+  </body>
+</html>

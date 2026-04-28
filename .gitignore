@@ -4,3 +4,5 @@ __pycache__/
 .dart_tool/
 .packages
 build/
+*.exe
+*.zip

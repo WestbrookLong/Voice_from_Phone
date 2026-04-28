@@ -5,11 +5,13 @@ import json
 import secrets
 import socket
 import sys
+from io import BytesIO
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parent
@@ -102,6 +104,17 @@ def monitor_rect(monitor_id: int) -> dict[str, int]:
             }
     except Exception:
         return virtual_screen_rect()
+
+
+def capture_monitor_jpeg(monitor: dict[str, int], quality: int = 72) -> bytes:
+    import mss
+
+    with mss.mss() as sct:
+        shot = sct.grab(monitor)
+        image = Image.frombytes("RGB", shot.size, shot.rgb)
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=max(35, min(90, quality)), optimize=False)
+        return buffer.getvalue()
 
 
 def move_mouse_to_screen_point(x: int, y: int) -> None:
@@ -256,6 +269,23 @@ async def health(_: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def snapshot(request: web.Request) -> web.Response:
+    app = request.app
+    if request.query.get("token") != app["token"]:
+        raise web.HTTPUnauthorized(text="invalid token")
+    quality = int(request.query.get("quality", "72"))
+    frame = await asyncio.to_thread(capture_monitor_jpeg, app["monitor_rect"], quality)
+    return web.Response(
+        body=frame,
+        content_type="image/jpeg",
+        headers={
+            **no_cache_headers(),
+            "X-Monitor-Width": str(app["monitor_rect"]["width"]),
+            "X-Monitor-Height": str(app["monitor_rect"]["height"]),
+        },
+    )
+
+
 async def pointer(request: web.Request) -> web.WebSocketResponse:
     app = request.app
     if request.query.get("token") != app["token"]:
@@ -306,13 +336,14 @@ def create_app(token: str, monitor_id: int, lan_ip: str | None = None, port: int
     app["port"] = port or 8791
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
+    app.router.add_get("/snapshot", snapshot)
     app.router.add_get("/pointer", pointer)
     app.router.add_static("/static", STATIC_DIR)
     return app
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Local iPad whiteboard to Windows mouse bridge.")
+    parser = argparse.ArgumentParser(description="Local mobile remote to Windows mouse bridge.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8791)
     parser.add_argument("--token", default=None)
@@ -326,8 +357,8 @@ def main() -> None:
     token = get_or_create_token(args.token, reset_token=args.new_token)
     app = create_app(token=token, monitor_id=args.monitor, lan_ip=get_lan_ip(), port=args.port)
     lan_ip = get_lan_ip()
-    print("iPad whiteboard bridge is running.", flush=True)
-    print(f"Open on iPad: http://{lan_ip}:{args.port}/?token={token}", flush=True)
+    print("Mobile remote bridge is running.", flush=True)
+    print(f"Open on mobile device: http://{lan_ip}:{args.port}/?token={token}", flush=True)
     print(f"Mapping target: monitor={args.monitor}, rect={app['monitor_rect']}", flush=True)
     print("Switch tools on the PC app manually; this page only maps pointer strokes.", flush=True)
     try:

@@ -65,7 +65,7 @@ class WhiteboardServerThread(threading.Thread):
 class WhiteboardClient(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("iPad Whiteboard Bridge")
+        self.title("Mobile Remote Bridge")
         self.geometry("760x470")
         self.minsize(680, 430)
 
@@ -90,10 +90,10 @@ class WhiteboardClient(tk.Tk):
         root = ttk.Frame(self, padding=18)
         root.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(root, text="iPad Whiteboard Bridge", font=("Microsoft YaHei UI", 18, "bold")).pack(anchor=tk.W)
+        ttk.Label(root, text="Mobile Remote Bridge", font=("Microsoft YaHei UI", 18, "bold")).pack(anchor=tk.W)
         ttk.Label(
             root,
-            text="Use the exact URL or QR code shown here. The iPad canvas sends pen strokes to the current PC screen.",
+            text="Use the exact URL or QR code shown here. The mobile canvas sends pointer strokes to the current PC screen.",
             foreground="#555555",
         ).pack(anchor=tk.W, pady=(4, 16))
 
@@ -108,7 +108,7 @@ class WhiteboardClient(tk.Tk):
         ttk.Button(form, text="Regenerate", command=self._regenerate_token).grid(row=1, column=4, padx=(8, 0), pady=4)
         form.columnconfigure(1, weight=1)
 
-        ttk.Label(root, text="iPad whiteboard URL").pack(anchor=tk.W, pady=(16, 4))
+        ttk.Label(root, text="Mobile remote URL").pack(anchor=tk.W, pady=(16, 4))
         url_row = ttk.Frame(root)
         url_row.pack(fill=tk.X)
         ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -121,7 +121,7 @@ class WhiteboardClient(tk.Tk):
         self.qr_label.pack(side=tk.LEFT)
         ttk.Label(
             qr_panel,
-            text="Open this exact URL on the iPad. If the iPad says Check URL or Link Expired, refresh from this QR/code.",
+            text="Open this exact URL on the mobile device. If it says Check URL or Link Expired, refresh from this QR/code.",
             foreground="#666666",
             wraplength=360,
         ).pack(side=tk.LEFT, padx=(14, 0), anchor=tk.N)

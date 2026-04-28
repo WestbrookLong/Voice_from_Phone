@@ -1,6 +1,6 @@
-# Whiteboard Bridge iPad App
+# Whiteboard Bridge Mobile App
 
-Native Flutter iPad client for the Windows whiteboard pointer bridge in
+Native Flutter mobile client for the Windows whiteboard pointer bridge in
 `../tablet_whiteboard`.
 
 The app does not embed a browser and does not stream the PC screen. It draws on a
@@ -10,7 +10,7 @@ over WebSocket.
 ## Behavior
 
 - Pen draws black strokes locally.
-- Eraser only erases the local iPad canvas.
+- Eraser only erases the local mobile canvas.
 - Clear only clears the local canvas.
 - Every stroke maps to PC mouse down, move, and up events.
 - Switch tools in the PC drawing app manually.
@@ -34,12 +34,12 @@ The PC window prints a URL like:
 http://10.28.101.46:8791/?token=...
 ```
 
-Paste that URL into the iPad app's Connect dialog.
+Paste that URL into the mobile app's Connect dialog.
 
-## iPad install
+## Mobile install
 
 This repository is on Windows, so it can generate and validate the Flutter iOS
-project, but it cannot produce a signed `.ipa`. To install on an iPad, open this
+project, but it cannot produce a signed `.ipa`. To install on an iPad or iPhone, open this
 folder on macOS with Xcode installed:
 
 ```bash
