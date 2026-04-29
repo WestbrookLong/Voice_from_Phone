@@ -27,6 +27,42 @@ LOCAL_PROJECTS_DIR = ROOT / "local_projects"
 LOCAL_PROJECTS_DIR.mkdir(exist_ok=True)
 
 
+MIKTEX_CANDIDATES = [
+    Path(r"C:\Program Files\MiKTeX\miktex\bin\x64"),
+    Path(r"C:\Program Files\MiKTeX 2.9\miktex\bin\x64"),
+    Path(r"C:\Program Files (x86)\MiKTeX 2.9\miktex\bin"),
+    Path(r"C:\ProgramData\MiKTeX\miktex\bin\x64"),
+    Path.home() / r"AppData\Local\Programs\MiKTeX\miktex\bin\x64",
+    Path.home() / r"AppData\Local\MiKTeX\miktex\bin\x64",
+]
+
+
+def find_miktex_bin() -> Path | None:
+    """Search common MiKTeX installation directories."""
+    for p in MIKTEX_CANDIDATES:
+        if (p / "latexmk.exe").exists() or (p / "pdflatex.exe").exists():
+            return p
+    # Also try Windows registry hint
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\MiKTeX.org\MiKTeX") as key:
+            i = 0
+            while True:
+                try:
+                    subkey_name = winreg.EnumKey(key, i)
+                    with winreg.OpenKey(key, subkey_name) as subkey:
+                        install_root, _ = winreg.QueryValueEx(subkey, "Install Root")
+                        candidate = Path(install_root) / "miktex" / "bin" / "x64"
+                        if (candidate / "latexmk.exe").exists() or (candidate / "pdflatex.exe").exists():
+                            return candidate
+                except OSError:
+                    break
+                i += 1
+    except Exception:
+        pass
+    return None
+
+
 def get_lan_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -106,6 +142,7 @@ class LocalBridge:
         project_id: str,
         project_dir: Path,
         cloud_base_url: str,
+        miktex_bin: Path | None = None,
     ) -> None:
         self.project_id = project_id
         self.project_dir = project_dir
@@ -115,6 +152,7 @@ class LocalBridge:
         self.last_text: str | None = None
         self.last_compile_time = 0.0
         self.session: aiohttp.ClientSession | None = None
+        self.miktex_bin = miktex_bin
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
@@ -173,6 +211,14 @@ class LocalBridge:
             except Exception as exc:
                 print(f"[images] download error for {filename}: {exc}", flush=True)
 
+    def _resolve_exe(self, name: str) -> str | None:
+        """Find executable, preferring custom miktex bin path."""
+        if self.miktex_bin and self.miktex_bin.exists():
+            candidate = self.miktex_bin / (name + ".exe")
+            if candidate.exists():
+                return str(candidate)
+        return shutil.which(name)
+
     async def compile(self) -> dict[str, Any]:
         """Run latexmk and return PDF + errors."""
         await self.sync_from_cloud()
@@ -182,13 +228,14 @@ class LocalBridge:
         if not tex_path.exists():
             return {"ok": False, "errors": [{"line": 0, "message": "main.tex not found", "severity": "error"}]}
 
-        # Find latexmk
-        latexmk = shutil.which("latexmk")
+        latexmk = self._resolve_exe("latexmk")
         if latexmk is None:
-            # Fallback to pdflatex
-            pdflatex = shutil.which("pdflatex")
+            pdflatex = self._resolve_exe("pdflatex")
             if pdflatex is None:
-                return {"ok": False, "errors": [{"line": 0, "message": "latexmk/pdflatex not found. Please install MiKTeX.", "severity": "error"}]}
+                hint = ""
+                if self.miktex_bin:
+                    hint = f" (checked {self.miktex_bin})"
+                return {"ok": False, "errors": [{"line": 0, "message": f"latexmk/pdflatex not found.{hint} 请检查 MiKTeX 安装路径或系统 PATH。", "severity": "error"}]}
             cmd = [pdflatex, "-interaction=nonstopmode", "-file-line-error", "main.tex"]
         else:
             cmd = [latexmk, "-pdf", "-interaction=nonstopmode", "-file-line-error", "-synctex=1", "main.tex"]
@@ -286,6 +333,12 @@ class DesktopClient(tk.Tk):
         self.qr_image: ImageTk.PhotoImage | None = None
         self.bridge: LocalBridge | None = None
 
+        # Detect MiKTeX
+        detected = find_miktex_bin()
+        self.miktex_bin_var = tk.StringVar(value=str(detected) if detected else "")
+        self.miktex_status_var = tk.StringVar()
+        self._update_miktex_status()
+
         self._build_ui()
         self.after(0, self._apply_window_chrome)
         self.after(250, self._apply_window_chrome)
@@ -356,6 +409,13 @@ class DesktopClient(tk.Tk):
 
         ttk.Label(row2, text="本地目录", style="Meta.TLabel").grid(row=0, column=3, sticky=tk.W, padx=(18, 0))
         ttk.Entry(row2, textvariable=self.project_dir_var, style="Input.TEntry").grid(row=1, column=3, sticky=tk.EW, padx=(18, 0), pady=(6, 0))
+
+        row3 = ttk.Frame(settings, style="Card.TFrame")
+        row3.grid(row=3, column=0, columnspan=4, sticky=tk.EW, pady=(10, 0))
+        ttk.Label(row3, text="MiKTeX 路径 (可选)", style="Meta.TLabel").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(row3, textvariable=self.miktex_bin_var, style="Input.TEntry").grid(row=1, column=0, sticky=tk.EW, pady=(6, 0))
+        ttk.Label(row3, textvariable=self.miktex_status_var, style="FineCard.TLabel").grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=(6, 0))
+        row3.columnconfigure(0, weight=1)
 
         content = ttk.Frame(root, style="App.TFrame")
         content.pack(fill=tk.BOTH, expand=True)
@@ -537,8 +597,27 @@ class DesktopClient(tk.Tk):
         self._stop_server()
         self.destroy()
 
+    def _update_miktex_status(self) -> None:
+        path_str = self.miktex_bin_var.get().strip()
+        if not path_str:
+            # Try auto-detect again
+            detected = find_miktex_bin()
+            if detected:
+                self.miktex_bin_var.set(str(detected))
+                path_str = str(detected)
+            else:
+                self.miktex_status_var.set("未检测到 MiKTeX，请手动填写 bin 目录路径或配置系统 PATH")
+                return
+        p = Path(path_str)
+        if (p / "latexmk.exe").exists() or (p / "pdflatex.exe").exists():
+            self.miktex_status_var.set("✓ MiKTeX 已识别")
+        else:
+            self.miktex_status_var.set("× 该路径下未找到 latexmk.exe / pdflatex.exe")
+
     def _create_app(self, token: str, project_id: str, project_dir: Path, cloud_url: str) -> web.Application:
-        bridge = LocalBridge(project_id=project_id, project_dir=project_dir, cloud_base_url=cloud_url)
+        miktex_str = self.miktex_bin_var.get().strip()
+        miktex_bin = Path(miktex_str) if miktex_str else None
+        bridge = LocalBridge(project_id=project_id, project_dir=project_dir, cloud_base_url=cloud_url, miktex_bin=miktex_bin)
         self.bridge = bridge
 
         async def index(request: web.Request) -> web.StreamResponse:

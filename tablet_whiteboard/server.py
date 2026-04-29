@@ -5,6 +5,7 @@ import json
 import secrets
 import socket
 import sys
+from collections import deque
 from io import BytesIO
 from ctypes import wintypes
 from pathlib import Path
@@ -195,6 +196,62 @@ def parse_pointer_message(raw: str) -> list[dict[str, Any]]:
     raise ValueError("unsupported message type")
 
 
+class MovePacer:
+    def __init__(self, monitor: dict[str, int], interval_seconds: float = 0.002, max_queue: int = 4096) -> None:
+        self.monitor = monitor
+        self.interval_seconds = interval_seconds
+        self.max_queue = max_queue
+        self.queue: deque[dict[str, Any]] = deque()
+        self.wake = asyncio.Event()
+        self.idle = asyncio.Event()
+        self.idle.set()
+        self.closed = False
+        self.task = asyncio.create_task(self._run())
+
+    def enqueue(self, event: dict[str, Any]) -> None:
+        if self.closed:
+            return
+        if len(self.queue) >= self.max_queue:
+            self.queue.popleft()
+        self.queue.append(event)
+        self.idle.clear()
+        self.wake.set()
+
+    async def flush(self) -> None:
+        if self.closed:
+            return
+        self.wake.set()
+        await self.idle.wait()
+
+    async def close(self) -> None:
+        self.closed = True
+        self.queue.clear()
+        self.wake.set()
+        self.task.cancel()
+        try:
+            await self.task
+        except asyncio.CancelledError:
+            pass
+
+    async def _run(self) -> None:
+        while True:
+            if not self.queue:
+                self.idle.set()
+                self.wake.clear()
+                await self.wake.wait()
+                if self.closed:
+                    return
+                continue
+
+            self.idle.clear()
+            event = self.queue.popleft()
+            try:
+                inject_pointer_event(event, self.monitor)
+            except Exception as exc:
+                print(f"[whiteboard move pacer error] {exc}", flush=True)
+            await asyncio.sleep(self.interval_seconds)
+
+
 def no_cache_headers() -> dict[str, str]:
     return {
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -328,6 +385,7 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
 
     peer = request.remote or "unknown"
     mouse_is_down = False
+    move_pacer = MovePacer(monitor)
     print(f"[whiteboard pointer] connected: {peer}", flush=True)
     try:
         async for msg in ws:
@@ -337,6 +395,10 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
                 events = parse_pointer_message(msg.data)
                 for event in events:
                     action = event.get("action")
+                    if action == "move":
+                        move_pacer.enqueue(event)
+                        continue
+                    await move_pacer.flush()
                     if action == "down" and mouse_is_down:
                         left_mouse_up()
                         mouse_is_down = False
@@ -349,6 +411,7 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
                 print(f"[whiteboard pointer error] {exc}", flush=True)
                 await ws.send_json({"type": "error", "message": str(exc)})
     finally:
+        await move_pacer.close()
         if mouse_is_down:
             try:
                 left_mouse_up()

@@ -857,8 +857,8 @@
             stroke.points[1] = point;
             this.active.pathLength = viewDistance(stroke.points[0], point);
             redraw(stroke);
-            this.transport.sendMoveNow(ratio, event);
             this.active.lastRatio = ratio;
+            this.transport.sendMoveNow(ratio, event);
           } else {
             const tailDistance = viewDistance(this.active.lastPoint, point);
             if (tailDistance > 0.35) {
@@ -1821,6 +1821,9 @@
 
       canvas.addEventListener("pointerdown", handleCanvasPointerDown, { passive: false });
       canvas.addEventListener("pointermove", handleCanvasPointerMove, { passive: false });
+      if ("onpointerrawupdate" in window) {
+        canvas.addEventListener("pointerrawupdate", handleCanvasPointerMove, { passive: false });
+      }
       canvas.addEventListener("pointerup", handleCanvasPointerEnd, { passive: false });
       canvas.addEventListener("pointercancel", handleCanvasPointerEnd, { passive: false });
       canvas.addEventListener("lostpointercapture", (event) => engine.forceFinish(event));

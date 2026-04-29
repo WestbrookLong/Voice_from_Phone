@@ -1,23 +1,33 @@
-# Whiteboard Bridge Mobile App
+# Whiteboard Bridge iPad App
 
-Native Flutter mobile client for the Windows whiteboard pointer bridge in
-`../tablet_whiteboard`.
+This is the native iPad client for `../tablet_whiteboard`. It does not embed the
+Safari whiteboard page. The app talks directly to the existing PC bridge through
+the same endpoints:
 
-The app does not embed a browser and does not stream the PC screen. It draws on a
-local white canvas immediately, then sends normalized pointer events to the PC
-over WebSocket.
+- `GET /snapshot`
+- `WS /screen`
+- `WS /pointer`
 
-## Behavior
+## Current feature set
 
-- Pen draws black strokes locally.
-- Eraser only erases the local mobile canvas.
-- Clear only clears the local canvas.
-- Every stroke maps to PC mouse down, move, and up events.
-- Switch tools in the PC drawing app manually.
-- Coordinates are fixed proportional mapping to the PC monitor returned by the server.
-- Fast repeated strokes force-finish the previous stroke before starting the next one.
-- Move events are batched in 8 ms windows; down and up events are sent immediately.
-- If the app goes inactive while a stroke is active, it sends a final mouse-up event.
+- Pen, straight line, eraser, and local undo.
+- Pen color picker and pen thickness popover on the pen button.
+- Local eraser clears only the iPad stroke layer; PC shot and screen stream stay
+  as the bottom background.
+- Floating square Pen, Line, Eraser, and Undo buttons. Each button can be dragged
+  independently.
+- Settings panel changes the selected floating button's size and opacity only.
+- Pen, Line, Eraser, and Undo taps pass through as PC clicks at the same mapped
+  position. PC Shot, Stream, Area, Settings, Color, and Clear do not pass through.
+- PC Shot snapshot background.
+- Optional screen stream background.
+- Hide/show PC background.
+- Editable drawing area. Inside the area the app draws locally and sends pointer
+  input. Outside the area it only sends pointer input to the PC.
+- Two-finger pinch zoom. Snapshot/screen stream and local strokes zoom together;
+  PC coordinates are inverse-mapped to the zoomed view.
+- High-rate Flutter pointer handling with 8 ms WebSocket move batches, matching
+  the current PC bridge protocol.
 
 ## PC side
 
@@ -28,19 +38,19 @@ cd D:\Users\WESTBROOK\Projects\Voice_input\tablet_whiteboard
 start_whiteboard.bat
 ```
 
-The PC window prints a URL like:
+The PC window shows a URL like:
 
 ```text
 http://10.28.101.46:8791/?token=...
 ```
 
-Paste that URL into the mobile app's Connect dialog.
+Open the iPad app and paste that URL into the Connect dialog.
 
-## Mobile install
+## iPad install
 
-This repository is on Windows, so it can generate and validate the Flutter iOS
-project, but it cannot produce a signed `.ipa`. To install on an iPad or iPhone, open this
-folder on macOS with Xcode installed:
+This repository is on Windows, so it can validate Flutter/Dart code but cannot
+produce a signed iPad build. To install on an iPad, open this folder on macOS
+with Flutter and Xcode installed:
 
 ```bash
 cd ipad_whiteboard_app
@@ -48,5 +58,9 @@ flutter pub get
 flutter run -d <your-ipad-device-id>
 ```
 
-For sharing as a downloadable app, archive/sign it from Xcode and distribute via
-TestFlight, Apple Developer ad hoc distribution, or an MDM/enterprise channel.
+For a downloadable build, archive/sign the iOS Runner target from Xcode and
+distribute it through TestFlight, ad hoc distribution, enterprise/MDM, or a
+developer-device install.
+
+The iOS `Info.plist` already allows local network HTTP/WebSocket access for the
+PC bridge.
