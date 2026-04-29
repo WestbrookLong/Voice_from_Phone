@@ -286,6 +286,36 @@ async def snapshot(request: web.Request) -> web.Response:
     )
 
 
+async def screen(request: web.Request) -> web.WebSocketResponse:
+    app = request.app
+    if request.query.get("token") != app["token"]:
+        raise web.HTTPUnauthorized(text="invalid token")
+
+    fps = max(1, min(int(request.query.get("fps", "12")), 24))
+    quality = max(30, min(int(request.query.get("quality", "58")), 85))
+    interval = 1 / fps
+
+    ws = web.WebSocketResponse(heartbeat=20, max_msg_size=16 * 1024 * 1024)
+    await ws.prepare(request)
+    peer = request.remote or "unknown"
+    print(f"[whiteboard screen] connected: {peer}", flush=True)
+    try:
+        await ws.send_json({"type": "screen_meta", "monitor": app["monitor_rect"], "fps": fps, "quality": quality})
+        while not ws.closed:
+            started = asyncio.get_running_loop().time()
+            frame = await asyncio.to_thread(capture_monitor_jpeg, app["monitor_rect"], quality)
+            await ws.send_bytes(frame)
+            elapsed = asyncio.get_running_loop().time() - started
+            await asyncio.sleep(max(0.001, interval - elapsed))
+    except (asyncio.CancelledError, ConnectionResetError, RuntimeError):
+        pass
+    except Exception as exc:
+        print(f"[whiteboard screen error] {exc}", flush=True)
+    finally:
+        print(f"[whiteboard screen] disconnected: {peer}", flush=True)
+    return ws
+
+
 async def pointer(request: web.Request) -> web.WebSocketResponse:
     app = request.app
     if request.query.get("token") != app["token"]:
@@ -337,6 +367,7 @@ def create_app(token: str, monitor_id: int, lan_ip: str | None = None, port: int
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
     app.router.add_get("/snapshot", snapshot)
+    app.router.add_get("/screen", screen)
     app.router.add_get("/pointer", pointer)
     app.router.add_static("/static", STATIC_DIR)
     return app

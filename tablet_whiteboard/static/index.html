@@ -74,6 +74,53 @@
         backdrop-filter: blur(14px);
       }
 
+      .draw-area-overlay {
+        position: fixed;
+        z-index: 4;
+        border: 2px dashed rgba(25, 113, 194, 0.88);
+        background: rgba(25, 113, 194, 0.06);
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.06);
+        pointer-events: none;
+      }
+
+      .draw-area-overlay[hidden] {
+        display: none;
+      }
+
+      .draw-area-overlay.editing {
+        pointer-events: auto;
+        touch-action: none;
+      }
+
+      .draw-handle {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border: 2px solid #1971c2;
+        border-radius: 5px;
+        background: #fff;
+      }
+
+      .draw-handle[data-handle="nw"] {
+        left: -10px;
+        top: -10px;
+      }
+
+      .draw-handle[data-handle="ne"] {
+        right: -10px;
+        top: -10px;
+      }
+
+      .draw-handle[data-handle="sw"] {
+        left: -10px;
+        bottom: -10px;
+      }
+
+      .draw-handle[data-handle="se"] {
+        right: -10px;
+        bottom: -10px;
+      }
+
       .tool-layer {
         position: fixed;
         inset: 0;
@@ -99,6 +146,31 @@
       .tool-button svg {
         width: 62%;
         height: 62%;
+        pointer-events: none;
+      }
+
+      .pen-size-toggle {
+        position: absolute;
+        right: 2px;
+        bottom: 2px;
+        display: grid;
+        place-items: center;
+        width: 15px;
+        height: 15px;
+        border-radius: 5px;
+        color: inherit;
+        background: rgba(255, 255, 255, 0.82);
+        font-size: 11px;
+        line-height: 1;
+        pointer-events: auto;
+      }
+
+      .tool-button.active .pen-size-toggle {
+        color: #111;
+      }
+
+      .tool-button:not(.active) .pen-size-toggle {
+        display: none;
         pointer-events: none;
       }
 
@@ -202,6 +274,22 @@
         display: none;
       }
 
+      .pen-size-panel {
+        position: fixed;
+        z-index: 7;
+        width: min(250px, calc(100vw - 24px));
+        padding: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+        backdrop-filter: blur(14px);
+      }
+
+      .pen-size-panel[hidden] {
+        display: none;
+      }
+
       .settings-row {
         display: grid;
         grid-template-columns: 86px 1fr 46px;
@@ -293,12 +381,19 @@
     <main id="stage">
       <canvas id="ink"></canvas>
     </main>
+    <div id="drawAreaOverlay" class="draw-area-overlay" hidden>
+      <span class="draw-handle" data-handle="nw"></span>
+      <span class="draw-handle" data-handle="ne"></span>
+      <span class="draw-handle" data-handle="sw"></span>
+      <span class="draw-handle" data-handle="se"></span>
+    </div>
     <div id="toolLayer" class="tool-layer">
       <button id="penButton" class="tool-button active" data-tool="pen" type="button" aria-label="Pen" title="Pen">
         <svg viewBox="0 0 48 48" aria-hidden="true">
           <path class="icon-stroke" d="M10 33 8 40l7-2 23-23-5-5L10 33Z" />
           <path class="icon-stroke" d="M29 14l5 5" />
         </svg>
+        <span id="penSizeToggle" class="pen-size-toggle" aria-label="Pen size">&#9662;</span>
       </button>
       <button id="lineButton" class="tool-button" data-tool="line" type="button" aria-label="Line" title="Line">
         <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -325,7 +420,9 @@
       </div>
       <div class="group">
         <button id="snapshotButton" type="button">PC Shot</button>
+        <button id="streamButton" type="button">Stream Off</button>
         <button id="hideSnapshotButton" type="button" disabled>Hide PC</button>
+        <button id="areaButton" type="button">Area</button>
         <button id="settingsButton" type="button">Settings</button>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">Offline</span></div>
@@ -334,13 +431,21 @@
       <div id="settingsTarget" class="settings-title">Pen selected</div>
       <label class="settings-row">
         Size
-        <input id="buttonSizeInput" type="range" min="34" max="76" value="42" />
+        <input id="buttonSizeInput" type="range" min="24" max="76" value="42" />
         <output id="buttonSizeOutput">42</output>
       </label>
       <label class="settings-row">
         Opacity
         <input id="toolbarOpacityInput" type="range" min="35" max="100" value="94" />
         <output id="toolbarOpacityOutput">94%</output>
+      </label>
+    </section>
+    <section id="penSizePanel" class="pen-size-panel" hidden>
+      <div class="settings-title">Pen thickness</div>
+      <label class="settings-row">
+        Width
+        <input id="penSizeInput" type="range" min="1" max="36" value="5" />
+        <output id="penSizeOutput">5px</output>
       </label>
     </section>
     <button id="colorButton" class="color-button" type="button" aria-label="Pen color" title="Pen color">
@@ -361,10 +466,15 @@
       const canvas = document.querySelector("#ink");
       const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
       const stage = document.querySelector("#stage");
+      const drawAreaOverlay = document.querySelector("#drawAreaOverlay");
       const toolbar = document.querySelector(".toolbar");
       const toolLayer = document.querySelector("#toolLayer");
       const settingsPanel = document.querySelector("#settingsPanel");
       const penButton = document.querySelector("#penButton");
+      const penSizeToggle = document.querySelector("#penSizeToggle");
+      const penSizePanel = document.querySelector("#penSizePanel");
+      const penSizeInput = document.querySelector("#penSizeInput");
+      const penSizeOutput = document.querySelector("#penSizeOutput");
       const lineButton = document.querySelector("#lineButton");
       const eraserButton = document.querySelector("#eraserButton");
       const undoButton = document.querySelector("#undoButton");
@@ -372,7 +482,9 @@
       const passthroughButtons = [penButton, lineButton, eraserButton, undoButton];
       const clearButton = document.querySelector("#clearButton");
       const snapshotButton = document.querySelector("#snapshotButton");
+      const streamButton = document.querySelector("#streamButton");
       const hideSnapshotButton = document.querySelector("#hideSnapshotButton");
+      const areaButton = document.querySelector("#areaButton");
       const settingsButton = document.querySelector("#settingsButton");
       const settingsTarget = document.querySelector("#settingsTarget");
       const buttonSizeInput = document.querySelector("#buttonSizeInput");
@@ -392,6 +504,8 @@
       const buildId = "whiteboard-floating-tools-20260429-2";
       const settingsKey = "whiteboard.floatingToolSettings.v1";
       const colorKey = "whiteboard.penColor.v1";
+      const penSizeKey = "whiteboard.penSize.v1";
+      const drawAreaKey = "whiteboard.drawArea.v1";
       const defaultSettings = {
         tools: {
           pen: { x: 0, y: 16, size: 42, opacity: 94 },
@@ -406,9 +520,18 @@
         tool: "pen",
         selectedControl: "pen",
         color: localStorage.getItem(colorKey) || "#111111",
-        size: 5,
+        size: clamp(savedNumber(localStorage.getItem(penSizeKey), 5), 1, 36),
         snapshot: null,
+        screenFrame: null,
+        screenStreamEnabled: false,
         snapshotVisible: false,
+        drawAreaEdit: false,
+        drawArea: loadDrawArea(),
+        view: {
+          zoom: 1,
+          center: { x: 0.5, y: 0.5 },
+          rect: { left: 0, top: 0, width: 1, height: 1 },
+        },
         dpr: window.devicePixelRatio || 1,
         strokes: [],
         undone: [],
@@ -430,6 +553,27 @@
         return Number.isFinite(number) ? number : fallback;
       }
 
+      function loadDrawArea() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(drawAreaKey) || "{}");
+          const area = {
+            x: clamp(savedNumber(saved.x, 0.05), 0, 0.95),
+            y: clamp(savedNumber(saved.y, 0.05), 0, 0.95),
+            width: clamp(savedNumber(saved.width, 0.9), 0.05, 1),
+            height: clamp(savedNumber(saved.height, 0.9), 0.05, 1),
+          };
+          area.width = Math.min(area.width, 1 - area.x);
+          area.height = Math.min(area.height, 1 - area.y);
+          return area;
+        } catch (_) {
+          return { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
+        }
+      }
+
+      function saveDrawArea() {
+        localStorage.setItem(drawAreaKey, JSON.stringify(state.drawArea));
+      }
+
       function loadFloatingSettings() {
         try {
           const saved = JSON.parse(localStorage.getItem(settingsKey) || "{}");
@@ -439,7 +583,7 @@
             tools[tool] = {
               x: clamp(savedNumber(savedTool.x, tools[tool].x), 0, 100),
               y: clamp(savedNumber(savedTool.y, tools[tool].y), 0, 100),
-              size: clamp(savedNumber(savedTool.size, savedNumber(saved.buttonSize, tools[tool].size)), 34, 76),
+              size: clamp(savedNumber(savedTool.size, savedNumber(saved.buttonSize, tools[tool].size)), 24, 76),
               opacity: clamp(savedNumber(savedTool.opacity, savedNumber(saved.opacity, tools[tool].opacity)), 35, 100),
             };
           }
@@ -459,6 +603,15 @@
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
         const url = new URL(`${protocol}//${location.host}/pointer`);
         url.searchParams.set("token", token);
+        return url.toString();
+      }
+
+      function screenWsUrl() {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = new URL(`${protocol}//${location.host}/screen`);
+        url.searchParams.set("token", token);
+        url.searchParams.set("fps", "12");
+        url.searchParams.set("quality", "58");
         return url.toString();
       }
 
@@ -612,11 +765,12 @@
             this.forceFinish(event);
           }
 
-          const localPoint = canvasPoint(event);
-          const ratio = pointerRatio(event);
+          const localPoint = pointerRatio(event);
+          const ratio = localPoint;
           this.active = {
             pointerId: event.pointerId,
-            stroke: createStroke(localPoint),
+            stroke: isInsideDrawArea(localPoint) ? createStroke(localPoint) : null,
+            remoteOnly: !isInsideDrawArea(localPoint),
             lastPoint: localPoint,
             lastRatio: ratio,
             pathLength: 0,
@@ -626,6 +780,11 @@
           try {
             canvas.setPointerCapture(event.pointerId);
           } catch (_) {}
+
+          if (this.active.remoteOnly) {
+            this.transport.sendPriority("down", ratio, event);
+            return;
+          }
 
           if (this.active.stroke.tool !== "line") {
             if (this.active.stroke.tool === "eraser") {
@@ -653,14 +812,20 @@
           if (!this.shouldUseLocalMove(event)) {
             return;
           }
-          const point = canvasPoint(event);
+          const point = pointerRatio(event);
           const ratio = pointerRatio(event);
+          if (this.active.remoteOnly) {
+            this.active.lastRatio = ratio;
+            this.active.moveCount += 1;
+            this.transport.queueMove(ratio, event);
+            return;
+          }
           const stroke = this.active.stroke;
           if (stroke.tool === "line") {
             stroke.points[1] = point;
             redraw(stroke);
-          } else if (distance(this.active.lastPoint, point) >= 0.35) {
-            this.active.pathLength += distance(this.active.lastPoint, point);
+          } else if (viewDistance(this.active.lastPoint, point) >= 0.35) {
+            this.active.pathLength += viewDistance(this.active.lastPoint, point);
             stroke.points.push(point);
             if (stroke.tool === "eraser") {
               redraw(stroke);
@@ -679,17 +844,23 @@
           if (!this.active || event.pointerId !== this.active.pointerId) {
             return;
           }
-          const point = canvasPoint(event);
+          const point = pointerRatio(event);
           const ratio = pointerRatio(event);
+          if (this.active.remoteOnly) {
+            this.active.lastRatio = ratio;
+            this.transport.sendPriority("up", ratio, event);
+            this.releaseActive();
+            return;
+          }
           const stroke = this.active.stroke;
           if (stroke.tool === "line") {
             stroke.points[1] = point;
-            this.active.pathLength = distance(stroke.points[0], point);
+            this.active.pathLength = viewDistance(stroke.points[0], point);
             redraw(stroke);
             this.transport.sendMoveNow(ratio, event);
             this.active.lastRatio = ratio;
           } else {
-            const tailDistance = distance(this.active.lastPoint, point);
+            const tailDistance = viewDistance(this.active.lastPoint, point);
             if (tailDistance > 0.35) {
               this.active.pathLength += tailDistance;
               stroke.points.push(point);
@@ -713,14 +884,16 @@
         normalizeShortStroke(event, finalPoint) {
           const stroke = this.active.stroke;
           const minimumPixels = Math.max(state.size * state.dpr * 1.4, 8 * state.dpr);
-          const strokeDistance = Math.max(this.active.pathLength, distance(stroke.points[0], finalPoint));
+          const strokeDistance = Math.max(this.active.pathLength, viewDistance(stroke.points[0], finalPoint));
           if (strokeDistance >= minimumPixels || this.active.moveCount >= 2) {
             return;
           }
 
           const start = stroke.points[0];
-          let dx = finalPoint.x - start.x;
-          let dy = finalPoint.y - start.y;
+          const startView = viewPointFromRatio(start);
+          const finalView = viewPointFromRatio(finalPoint);
+          let dx = finalView.x - startView.x;
+          let dy = finalView.y - startView.y;
           const length = Math.hypot(dx, dy);
           if (length < 0.01) {
             dx = minimumPixels;
@@ -730,20 +903,19 @@
             dx *= scale;
             dy *= scale;
           }
-          const endPoint = {
-            x: clamp(start.x + dx, 0, canvas.width),
-            y: clamp(start.y + dy, 0, canvas.height),
-          };
+          const endPoint = ratioFromCanvasPoint({
+            x: startView.x + dx,
+            y: startView.y + dy,
+          });
           stroke.points.push(endPoint);
           if (stroke.tool === "eraser") {
             redraw(stroke);
           } else {
             drawSegment(start, endPoint, stroke);
           }
-          const ratio = ratioFromCanvasPoint(endPoint);
           this.active.lastPoint = endPoint;
-          this.active.lastRatio = ratio;
-          this.transport.sendMoveNow(ratio, event);
+          this.active.lastRatio = endPoint;
+          this.transport.sendMoveNow(endPoint, event);
         }
 
         forceFinish(event) {
@@ -796,6 +968,10 @@
       const engine = new StrokeEngine(transport);
       const strokeCanvas = document.createElement("canvas");
       const strokeCtx = strokeCanvas.getContext("2d");
+      const touchPoints = new Map();
+      let pinchState = null;
+      let pendingTouchStart = null;
+      let screenWs = null;
 
       function resizeStage() {
         state.dpr = window.devicePixelRatio || 1;
@@ -820,8 +996,199 @@
           canvas.height = pixelHeight;
           strokeCanvas.width = pixelWidth;
           strokeCanvas.height = pixelHeight;
-          redraw();
         }
+        computeViewRect();
+        redraw();
+        updateDrawAreaOverlay();
+      }
+
+      function clampImageOffset(offset, viewSize, imageSize) {
+        if (imageSize <= viewSize) {
+          return (viewSize - imageSize) / 2;
+        }
+        return clamp(offset, viewSize - imageSize, 0);
+      }
+
+      function computeViewRect() {
+        const zoom = state.view.zoom;
+        const width = canvas.width * zoom;
+        const height = canvas.height * zoom;
+        const left = zoom <= 1
+          ? (canvas.width - width) / 2
+          : clampImageOffset(canvas.width / 2 - state.view.center.x * width, canvas.width, width);
+        const top = zoom <= 1
+          ? (canvas.height - height) / 2
+          : clampImageOffset(canvas.height / 2 - state.view.center.y * height, canvas.height, height);
+        state.view.rect = { left, top, width, height };
+      }
+
+      function setZoomAround(nextZoom, focusRatio, focusClientPoint) {
+        const previousZoom = state.view.zoom;
+        const zoom = Math.round(clamp(nextZoom, 1, 4) * 100) / 100;
+        if (zoom === previousZoom && zoom === 1) {
+          return;
+        }
+        state.view.zoom = zoom;
+        if (zoom <= 1) {
+          state.view.center = { x: 0.5, y: 0.5 };
+        } else {
+          const focusCanvasPoint = clientToCanvasPoint(focusClientPoint.x, focusClientPoint.y);
+          const width = canvas.width * zoom;
+          const height = canvas.height * zoom;
+          state.view.center = {
+            x: clamp(focusRatio.x + (canvas.width / 2 - focusCanvasPoint.x) / width, 0, 1),
+            y: clamp(focusRatio.y + (canvas.height / 2 - focusCanvasPoint.y) / height, 0, 1),
+          };
+        }
+        computeViewRect();
+        redraw();
+        updateDrawAreaOverlay();
+      }
+
+      function twoTouchPoints() {
+        return Array.from(touchPoints.values()).slice(0, 2);
+      }
+
+      function midpoint(points) {
+        return {
+          x: (points[0].clientX + points[1].clientX) / 2,
+          y: (points[0].clientY + points[1].clientY) / 2,
+        };
+      }
+
+      function touchDistance(points) {
+        return Math.hypot(points[0].clientX - points[1].clientX, points[0].clientY - points[1].clientY);
+      }
+
+      function beginPinchZoom(event) {
+        const points = twoTouchPoints();
+        if (points.length < 2) {
+          return;
+        }
+        clearPendingTouchStart();
+        engine.forceFinish(event);
+        const center = midpoint(points);
+        pinchState = {
+          startDistance: Math.max(1, touchDistance(points)),
+          startZoom: state.view.zoom,
+          focusRatio: pointerRatioFromClient(center.x, center.y),
+        };
+      }
+
+      function eventSnapshot(event) {
+        return {
+          pointerId: event.pointerId,
+          pointerType: event.pointerType || "touch",
+          clientX: event.clientX,
+          clientY: event.clientY,
+          pressure: event.pressure || 0,
+          preventDefault() {},
+        };
+      }
+
+      function clearPendingTouchStart() {
+        if (!pendingTouchStart) {
+          return;
+        }
+        clearTimeout(pendingTouchStart.timer);
+        pendingTouchStart = null;
+      }
+
+      function startPendingTouchStroke() {
+        if (!pendingTouchStart || pinchState || touchPoints.size !== 1) {
+          clearPendingTouchStart();
+          return false;
+        }
+        const event = pendingTouchStart.event;
+        clearPendingTouchStart();
+        engine.start(event);
+        return true;
+      }
+
+      function updatePinchZoom() {
+        if (!pinchState || touchPoints.size < 2) {
+          return;
+        }
+        const points = twoTouchPoints();
+        const center = midpoint(points);
+        const scale = touchDistance(points) / pinchState.startDistance;
+        setZoomAround(pinchState.startZoom * scale, pinchState.focusRatio, center);
+      }
+
+      function handleCanvasPointerDown(event) {
+        event.preventDefault();
+        if (event.pointerType === "touch") {
+          touchPoints.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch (_) {}
+          if (touchPoints.size === 2) {
+            beginPinchZoom(event);
+            return;
+          }
+          if (touchPoints.size > 1) {
+            return;
+          }
+          clearPendingTouchStart();
+          pendingTouchStart = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            event: eventSnapshot(event),
+            timer: setTimeout(startPendingTouchStroke, 90),
+          };
+          return;
+        }
+        engine.start(event);
+      }
+
+      function handleCanvasPointerMove(event) {
+        event.preventDefault();
+        if (event.pointerType === "touch") {
+          if (touchPoints.has(event.pointerId)) {
+            touchPoints.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          }
+          if (pinchState) {
+            updatePinchZoom();
+            return;
+          }
+          if (touchPoints.size > 1) {
+            return;
+          }
+          if (pendingTouchStart && pendingTouchStart.pointerId === event.pointerId) {
+            pendingTouchStart.event = eventSnapshot(event);
+            const moved = Math.hypot(event.clientX - pendingTouchStart.startX, event.clientY - pendingTouchStart.startY);
+            if (moved >= 6 && startPendingTouchStroke()) {
+              engine.move(event);
+            }
+            return;
+          }
+        }
+        engine.move(event);
+      }
+
+      function handleCanvasPointerEnd(event) {
+        event.preventDefault();
+        if (event.pointerType === "touch") {
+          const wasPinching = Boolean(pinchState);
+          touchPoints.delete(event.pointerId);
+          if (pendingTouchStart && pendingTouchStart.pointerId === event.pointerId) {
+            const pendingEvent = pendingTouchStart.event;
+            clearPendingTouchStart();
+            if (!wasPinching) {
+              engine.start(pendingEvent);
+              engine.finish(eventSnapshot(event));
+            }
+            return;
+          }
+          if (touchPoints.size < 2) {
+            pinchState = null;
+          }
+          if (wasPinching) {
+            return;
+          }
+        }
+        engine.finish(event);
       }
 
       function createStroke(point) {
@@ -848,7 +1215,14 @@
       function redraw(previewStroke = null) {
         drawPaper();
         drawSnapshot();
-        drawStrokeLayer(previewStroke);
+        drawStrokeLayer(previewStroke || activePreviewStroke());
+      }
+
+      function activePreviewStroke() {
+        if (!engine.active || engine.active.remoteOnly) {
+          return null;
+        }
+        return engine.active.stroke;
       }
 
       function drawStrokeLayer(previewStroke = null) {
@@ -874,12 +1248,14 @@
       }
 
       function drawSnapshot() {
-        if (!state.snapshotVisible || !state.snapshot) {
+        const frame = state.screenStreamEnabled && state.screenFrame ? state.screenFrame : state.snapshot;
+        if (!state.snapshotVisible || !frame) {
           return;
         }
         ctx.save();
         ctx.globalAlpha = 0.82;
-        ctx.drawImage(state.snapshot, 0, 0, canvas.width, canvas.height);
+        const rect = state.view.rect;
+        ctx.drawImage(frame, rect.left, rect.top, rect.width, rect.height);
         ctx.restore();
       }
 
@@ -897,28 +1273,31 @@
       }
 
       function drawSegment(from, to, stroke, targetCtx = ctx) {
+        const fromView = viewPointFromRatio(from);
+        const toView = viewPointFromRatio(to);
         targetCtx.save();
         targetCtx.lineCap = "round";
         targetCtx.lineJoin = "round";
         targetCtx.globalAlpha = stroke.alpha;
         targetCtx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
         targetCtx.strokeStyle = stroke.color;
-        targetCtx.lineWidth = Math.max(1, stroke.size * state.dpr);
+        targetCtx.lineWidth = Math.max(1, stroke.size * state.dpr * state.view.zoom);
         targetCtx.beginPath();
-        targetCtx.moveTo(from.x, from.y);
-        targetCtx.lineTo(to.x, to.y);
+        targetCtx.moveTo(fromView.x, fromView.y);
+        targetCtx.lineTo(toView.x, toView.y);
         targetCtx.stroke();
         targetCtx.restore();
       }
 
       function drawDot(point, stroke, targetCtx = ctx) {
+        const viewPoint = viewPointFromRatio(point);
         targetCtx.save();
         targetCtx.globalAlpha = stroke.alpha;
         targetCtx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
         targetCtx.fillStyle = stroke.color;
-        const radius = Math.max(1, stroke.size * state.dpr) / 2;
+        const radius = Math.max(1, stroke.size * state.dpr * state.view.zoom) / 2;
         targetCtx.beginPath();
-        targetCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        targetCtx.arc(viewPoint.x, viewPoint.y, radius, 0, Math.PI * 2);
         targetCtx.fill();
         targetCtx.restore();
       }
@@ -956,7 +1335,7 @@
       }
 
       function updateHistoryButtons() {
-        hideSnapshotButton.disabled = !state.snapshot;
+        hideSnapshotButton.disabled = !state.snapshot && !state.screenFrame;
         hideSnapshotButton.textContent = state.snapshotVisible ? "Hide PC" : "Show PC";
       }
 
@@ -986,6 +1365,60 @@
         }
       }
 
+      function connectScreenStream() {
+        disconnectScreenStream();
+        screenWs = new WebSocket(screenWsUrl());
+        screenWs.binaryType = "blob";
+        screenWs.addEventListener("message", async (event) => {
+          if (typeof event.data === "string") {
+            const message = JSON.parse(event.data);
+            if (message.type === "screen_meta" && message.monitor) {
+              state.monitor = message.monitor;
+              resizeStage();
+              applyFloatingSettings();
+            }
+            return;
+          }
+          try {
+            const image = await createImageBitmap(event.data);
+            if (state.screenFrame && state.screenFrame.close) {
+              state.screenFrame.close();
+            }
+            state.screenFrame = image;
+            state.snapshotVisible = true;
+            redraw();
+            updateHistoryButtons();
+          } catch (_) {}
+        });
+        screenWs.addEventListener("close", () => {
+          if (state.screenStreamEnabled) {
+            setTimeout(connectScreenStream, 800);
+          }
+        });
+      }
+
+      function disconnectScreenStream() {
+        if (screenWs) {
+          const ws = screenWs;
+          screenWs = null;
+          ws.close();
+        }
+      }
+
+      function toggleScreenStream() {
+        state.screenStreamEnabled = !state.screenStreamEnabled;
+        streamButton.textContent = state.screenStreamEnabled ? "Stream On" : "Stream Off";
+        streamButton.classList.toggle("active", state.screenStreamEnabled);
+        state.snapshotVisible = true;
+        if (state.screenStreamEnabled) {
+          connectScreenStream();
+        } else {
+          disconnectScreenStream();
+          redraw();
+          updateHistoryButtons();
+        }
+      }
+
       function toggleSnapshot() {
         if (!state.snapshot) {
           return;
@@ -1000,35 +1433,81 @@
         return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
       }
 
-      function canvasPoint(event) {
+      function clientToCanvasPoint(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
         return {
-          x: clamp((event.clientX - rect.left) * state.dpr, 0, canvas.width),
-          y: clamp((event.clientY - rect.top) * state.dpr, 0, canvas.height),
+          x: clamp((clientX - rect.left) * state.dpr, 0, canvas.width),
+          y: clamp((clientY - rect.top) * state.dpr, 0, canvas.height),
         };
       }
 
       function pointerRatio(event) {
-        const rect = canvas.getBoundingClientRect();
-        return {
-          x: clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1),
-          y: clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1),
-        };
+        return pointerRatioFromClient(event.clientX, event.clientY);
       }
 
       function ratioFromCanvasPoint(point) {
+        const rect = state.view.rect;
         return {
-          x: clamp(point.x / Math.max(1, canvas.width), 0, 1),
-          y: clamp(point.y / Math.max(1, canvas.height), 0, 1),
+          x: clamp((point.x - rect.left) / Math.max(1, rect.width), 0, 1),
+          y: clamp((point.y - rect.top) / Math.max(1, rect.height), 0, 1),
         };
       }
 
       function pointerRatioFromClient(clientX, clientY) {
-        const rect = canvas.getBoundingClientRect();
+        return ratioFromCanvasPoint(clientToCanvasPoint(clientX, clientY));
+      }
+
+      function viewPointFromRatio(point) {
+        const rect = state.view.rect;
         return {
-          x: clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1),
-          y: clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1),
+          x: rect.left + point.x * rect.width,
+          y: rect.top + point.y * rect.height,
         };
+      }
+
+      function viewDistance(left, right) {
+        return distance(viewPointFromRatio(left), viewPointFromRatio(right));
+      }
+
+      function isInsideDrawArea(point) {
+        const area = state.drawArea;
+        return (
+          point.x >= area.x &&
+          point.x <= area.x + area.width &&
+          point.y >= area.y &&
+          point.y <= area.y + area.height
+        );
+      }
+
+      function drawAreaClientRect() {
+        const canvasRect = canvas.getBoundingClientRect();
+        const view = state.view.rect;
+        const area = state.drawArea;
+        return {
+          left: canvasRect.left + (view.left + area.x * view.width) / state.dpr,
+          top: canvasRect.top + (view.top + area.y * view.height) / state.dpr,
+          width: (area.width * view.width) / state.dpr,
+          height: (area.height * view.height) / state.dpr,
+        };
+      }
+
+      function updateDrawAreaOverlay() {
+        if (drawAreaOverlay.hidden) {
+          return;
+        }
+        const rect = drawAreaClientRect();
+        drawAreaOverlay.style.left = `${rect.left}px`;
+        drawAreaOverlay.style.top = `${rect.top}px`;
+        drawAreaOverlay.style.width = `${rect.width}px`;
+        drawAreaOverlay.style.height = `${rect.height}px`;
+        drawAreaOverlay.classList.toggle("editing", state.drawAreaEdit);
+      }
+
+      function setDrawAreaEdit(enabled) {
+        state.drawAreaEdit = enabled;
+        drawAreaOverlay.hidden = !enabled;
+        areaButton.classList.toggle("active", enabled);
+        updateDrawAreaOverlay();
       }
 
       function sendRemoteClickAt(clientX, clientY, sourceEvent) {
@@ -1056,7 +1535,9 @@
             applyToolButtonStyle(button);
             placeToolButton(button);
           }
+          updateDrawAreaOverlay();
           positionSettingsPanel();
+          positionPenSizePanel();
         });
       }
 
@@ -1136,6 +1617,21 @@
         settingsPanel.style.top = `${top}px`;
       }
 
+      function positionPenSizePanel() {
+        if (penSizePanel.hidden) {
+          return;
+        }
+        const safe = 12;
+        const penRect = penButton.getBoundingClientRect();
+        const left = clamp(penRect.left, safe, Math.max(safe, window.innerWidth - penSizePanel.offsetWidth - safe));
+        const belowTop = penRect.bottom + 8;
+        const top = belowTop + penSizePanel.offsetHeight <= window.innerHeight - safe
+          ? belowTop
+          : Math.max(safe, penRect.top - penSizePanel.offsetHeight - 8);
+        penSizePanel.style.left = `${left}px`;
+        penSizePanel.style.top = `${top}px`;
+      }
+
       function updateFloatingSetting(key, value) {
         const control = state.selectedControl;
         state.floatingSettings.tools[control] = {
@@ -1157,6 +1653,93 @@
         for (const swatch of colorSwatches) {
           swatch.classList.toggle("active", swatch.dataset.color.toLowerCase() === color.toLowerCase());
         }
+      }
+
+      function setPenSize(size) {
+        state.size = clamp(Number(size) || 5, 1, 36);
+        localStorage.setItem(penSizeKey, String(state.size));
+        penSizeInput.value = String(state.size);
+        penSizeOutput.textContent = `${state.size}px`;
+      }
+
+      function normalizeDrawArea(area) {
+        const minSize = 0.04;
+        const normalized = {
+          x: clamp(area.x, 0, 1 - minSize),
+          y: clamp(area.y, 0, 1 - minSize),
+          width: clamp(area.width, minSize, 1),
+          height: clamp(area.height, minSize, 1),
+        };
+        if (normalized.x + normalized.width > 1) {
+          normalized.width = 1 - normalized.x;
+        }
+        if (normalized.y + normalized.height > 1) {
+          normalized.height = 1 - normalized.y;
+        }
+        return normalized;
+      }
+
+      function installDrawAreaEditor() {
+        let edit = null;
+        drawAreaOverlay.addEventListener("pointerdown", (event) => {
+          if (!state.drawAreaEdit) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          edit = {
+            pointerId: event.pointerId,
+            handle: event.target.dataset.handle || "move",
+            startX: event.clientX,
+            startY: event.clientY,
+            area: { ...state.drawArea },
+          };
+          try {
+            drawAreaOverlay.setPointerCapture(event.pointerId);
+          } catch (_) {}
+        });
+        drawAreaOverlay.addEventListener("pointermove", (event) => {
+          if (!edit || edit.pointerId !== event.pointerId) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          const dx = ((event.clientX - edit.startX) * state.dpr) / Math.max(1, state.view.rect.width);
+          const dy = ((event.clientY - edit.startY) * state.dpr) / Math.max(1, state.view.rect.height);
+          const next = { ...edit.area };
+          if (edit.handle === "move") {
+            next.x += dx;
+            next.y += dy;
+          } else {
+            if (edit.handle.includes("w")) {
+              next.x += dx;
+              next.width -= dx;
+            }
+            if (edit.handle.includes("e")) {
+              next.width += dx;
+            }
+            if (edit.handle.includes("n")) {
+              next.y += dy;
+              next.height -= dy;
+            }
+            if (edit.handle.includes("s")) {
+              next.height += dy;
+            }
+          }
+          state.drawArea = normalizeDrawArea(next);
+          updateDrawAreaOverlay();
+        });
+        const finish = (event) => {
+          if (!edit || edit.pointerId !== event.pointerId) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          saveDrawArea();
+          edit = null;
+        };
+        drawAreaOverlay.addEventListener("pointerup", finish);
+        drawAreaOverlay.addEventListener("pointercancel", finish);
       }
 
       function installFloatingToolButton(button) {
@@ -1236,18 +1819,21 @@
         return Math.hypot(left.x - right.x, left.y - right.y);
       }
 
-      canvas.addEventListener("pointerdown", (event) => engine.start(event), { passive: false });
-      canvas.addEventListener("pointermove", (event) => engine.move(event), { passive: false });
-      canvas.addEventListener("pointerup", (event) => engine.finish(event), { passive: false });
-      canvas.addEventListener("pointercancel", (event) => engine.finish(event), { passive: false });
+      canvas.addEventListener("pointerdown", handleCanvasPointerDown, { passive: false });
+      canvas.addEventListener("pointermove", handleCanvasPointerMove, { passive: false });
+      canvas.addEventListener("pointerup", handleCanvasPointerEnd, { passive: false });
+      canvas.addEventListener("pointercancel", handleCanvasPointerEnd, { passive: false });
       canvas.addEventListener("lostpointercapture", (event) => engine.forceFinish(event));
 
       for (const button of passthroughButtons) {
         installFloatingToolButton(button);
       }
+      installDrawAreaEditor();
       clearButton.addEventListener("click", clearAll);
       snapshotButton.addEventListener("click", loadSnapshot);
+      streamButton.addEventListener("click", toggleScreenStream);
       hideSnapshotButton.addEventListener("click", toggleSnapshot);
+      areaButton.addEventListener("click", () => setDrawAreaEdit(!state.drawAreaEdit));
       settingsButton.addEventListener("click", () => {
         settingsPanel.hidden = !settingsPanel.hidden;
         settingsButton.classList.toggle("active", !settingsPanel.hidden);
@@ -1256,6 +1842,24 @@
 
       buttonSizeInput.addEventListener("input", (event) => updateFloatingSetting("size", event.target.value));
       toolbarOpacityInput.addEventListener("input", (event) => updateFloatingSetting("opacity", event.target.value));
+
+      penSizeToggle.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      penSizeToggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.tool !== "pen") {
+          return;
+        }
+        penSizePanel.hidden = !penSizePanel.hidden;
+        positionPenSizePanel();
+      });
+      penSizeInput.addEventListener("pointerdown", (event) => event.stopPropagation());
+      penSizeInput.addEventListener("pointermove", (event) => event.stopPropagation());
+      penSizeInput.addEventListener("pointerup", (event) => event.stopPropagation());
+      penSizeInput.addEventListener("input", (event) => setPenSize(event.target.value));
 
       colorButton.addEventListener("pointerdown", (event) => event.stopPropagation());
       colorButton.addEventListener("click", (event) => {
@@ -1290,16 +1894,27 @@
       window.addEventListener("resize", () => {
         resizeStage();
         applyFloatingSettings();
+        updateDrawAreaOverlay();
       });
       window.addEventListener("orientationchange", () => {
         setTimeout(() => {
           resizeStage();
           applyFloatingSettings();
+          updateDrawAreaOverlay();
         }, 180);
       });
-      window.addEventListener("blur", (event) => engine.forceFinish(event));
+      window.addEventListener("blur", (event) => {
+        clearPendingTouchStart();
+        touchPoints.clear();
+        pinchState = null;
+        engine.forceFinish(event);
+      });
+      window.addEventListener("beforeunload", () => disconnectScreenStream());
       document.addEventListener("visibilitychange", (event) => {
         if (document.hidden) {
+          clearPendingTouchStart();
+          touchPoints.clear();
+          pinchState = null;
           engine.forceFinish(event);
         }
       });
@@ -1313,6 +1928,7 @@
       updateHistoryButtons();
       resizeStage();
       applyFloatingSettings();
+      setPenSize(state.size);
       setPenColor(state.color);
       redraw();
       transport.connect();
