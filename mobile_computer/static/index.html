@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <link rel="icon" href="data:," />
+    <title>Mobile Computer</title>
+    <style>
+      :root {
+        --bg: #080b0f;
+        --panel: rgba(12, 16, 22, 0.78);
+        --panel-strong: rgba(24, 31, 41, 0.92);
+        --line: rgba(255, 255, 255, 0.16);
+        --text: #f4f7fb;
+        --muted: #9aa7b5;
+        --accent: #67e8f9;
+        --active: #9befc2;
+        --danger: #fb7185;
+        --button: clamp(48px, 8.5vw, 66px);
+        --small-button: clamp(42px, 7vw, 54px);
+        --stick: clamp(122px, 22vw, 176px);
+        --control-opacity: 1;
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        touch-action: none;
+        overscroll-behavior: none;
+      }
+
+      #surface {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px) 0 0 / 42px 42px,
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px) 0 0 / 42px 42px,
+          radial-gradient(circle at 50% 44%, rgba(103, 232, 249, 0.12), transparent 18rem),
+          var(--bg);
+        touch-action: none;
+      }
+
+      .shade {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 18%, transparent 70%, rgba(0, 0, 0, 0.58)),
+          linear-gradient(90deg, rgba(0, 0, 0, 0.46), transparent 28%, transparent 72%, rgba(0, 0, 0, 0.46));
+      }
+
+      .topbar {
+        position: fixed;
+        left: max(12px, env(safe-area-inset-left));
+        right: max(12px, env(safe-area-inset-right));
+        top: max(10px, env(safe-area-inset-top));
+        z-index: 6;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        pointer-events: none;
+      }
+
+      .status,
+      .top-actions,
+      .layout-panel {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--muted);
+        backdrop-filter: blur(14px);
+        font-size: 12px;
+        font-weight: 850;
+        pointer-events: auto;
+      }
+
+      .status {
+        min-height: 36px;
+        padding: 7px 10px;
+      }
+
+      body.hide-status .status {
+        display: none;
+      }
+
+      .top-actions {
+        min-height: 36px;
+        padding: 5px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+
+      .dot.connected {
+        background: var(--active);
+      }
+
+      button {
+        border: 1px solid var(--line);
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.1);
+        font: 900 13px/1 "Segoe UI", system-ui, sans-serif;
+        letter-spacing: 0;
+        touch-action: none;
+      }
+
+      .mode-button,
+      .safe-button,
+      .settings-button,
+      .layout-panel button {
+        height: 32px;
+        min-width: 58px;
+        border-radius: 7px;
+        padding: 0 10px;
+      }
+
+      .mode-button.on,
+      .settings-button.on {
+        color: #071014;
+        background: var(--accent);
+      }
+
+      .layout-panel {
+        position: fixed;
+        left: 50%;
+        top: calc(max(10px, env(safe-area-inset-top)) + 50px);
+        z-index: 7;
+        display: none;
+        transform: translateX(-50%);
+        padding: 7px;
+        background: rgba(8, 12, 18, 0.9);
+        border-color: rgba(103, 232, 249, 0.32);
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: min(94vw, 560px);
+      }
+
+      body.layout-edit .layout-panel {
+        display: flex;
+      }
+
+      .layout-panel .delete-button {
+        background: rgba(251, 113, 133, 0.22);
+      }
+
+      .layout-panel .done-button {
+        color: #071014;
+        background: var(--active);
+      }
+
+      .setting-field {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+        padding: 0 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 7px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .setting-field input[type="range"] {
+        width: 96px;
+        accent-color: var(--accent);
+      }
+
+      .setting-field input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
+      }
+
+      .controls {
+        position: fixed;
+        inset: 0;
+        z-index: 4;
+        pointer-events: none;
+      }
+
+      .control-button {
+        position: absolute;
+        width: var(--button);
+        height: var(--button);
+        border-radius: 50%;
+        background: var(--panel);
+        backdrop-filter: blur(14px);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+        transform: translate(-50%, -50%);
+        pointer-events: auto;
+        opacity: var(--control-opacity);
+      }
+
+      .control-button.small {
+        width: var(--small-button);
+        height: var(--small-button);
+        font-size: 12px;
+      }
+
+      .control-button.wide {
+        width: calc(var(--button) * 1.35);
+        border-radius: 18px;
+      }
+
+      .control-button.primary {
+        color: #071014;
+        background: rgba(155, 239, 194, 0.88);
+      }
+
+      .control-button.active {
+        border-color: rgba(103, 232, 249, 0.85);
+        background: var(--panel-strong);
+        transform: translate(-50%, calc(-50% + 1px));
+      }
+
+      .layout-control.hidden {
+        display: none;
+      }
+
+      body.layout-edit .layout-control {
+        outline: 2px solid rgba(103, 232, 249, 0.72);
+        outline-offset: 4px;
+      }
+
+      body.layout-edit .layout-control.selected {
+        outline-color: rgba(251, 191, 36, 0.95);
+      }
+
+      .delete-handle {
+        position: absolute;
+        right: -10px;
+        top: -10px;
+        z-index: 8;
+        display: none;
+        width: 28px;
+        height: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        border-radius: 50%;
+        color: #fff;
+        background: rgba(251, 113, 133, 0.94);
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+        font: 950 18px/1 "Segoe UI", system-ui, sans-serif;
+        pointer-events: auto;
+      }
+
+      body.layout-edit .control-button:not(.hidden) .delete-handle {
+        display: grid;
+        place-items: center;
+      }
+
+      #joystick {
+        position: absolute;
+        left: 50%;
+        top: 54%;
+        width: var(--stick);
+        aspect-ratio: 1;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 50% 50%, rgba(103, 232, 249, 0.16), transparent 38%),
+          rgba(8, 12, 18, 0.66);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(12px);
+        transform: translate(-50%, -50%);
+        pointer-events: auto;
+        touch-action: none;
+        opacity: var(--control-opacity);
+      }
+
+      #joystick::before,
+      #joystick::after {
+        content: "";
+        position: absolute;
+        background: rgba(255, 255, 255, 0.16);
+        border-radius: 99px;
+      }
+
+      #joystick::before {
+        left: 18%;
+        right: 18%;
+        top: calc(50% - 1px);
+        height: 2px;
+      }
+
+      #joystick::after {
+        top: 18%;
+        bottom: 18%;
+        left: calc(50% - 1px);
+        width: 2px;
+      }
+
+      #stick {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 42%;
+        aspect-ratio: 1;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.16);
+        transform: translate(-50%, -50%);
+      }
+
+      .keyboard-button {
+        position: fixed;
+        right: max(14px, env(safe-area-inset-right));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        z-index: 6;
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        color: #071014;
+        background: var(--accent);
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.36);
+        font-size: 26px;
+        pointer-events: auto;
+        opacity: var(--control-opacity);
+      }
+
+      body.layout-edit .keyboard-button {
+        opacity: 0.42;
+      }
+
+      #keyboardSink {
+        position: fixed;
+        left: max(8px, env(safe-area-inset-left));
+        bottom: max(8px, env(safe-area-inset-bottom));
+        z-index: 6;
+        width: 2px;
+        height: 2px;
+        opacity: 0.01;
+        border: 0;
+        outline: 0;
+        resize: none;
+        color: transparent;
+        background: transparent;
+        pointer-events: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+
+      @media (orientation: portrait) {
+        :root {
+          --button: clamp(46px, 14vw, 58px);
+          --small-button: clamp(39px, 12vw, 50px);
+          --stick: clamp(116px, 36vw, 156px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section id="surface" aria-label="phone controller surface"></section>
+    <div class="shade"></div>
+
+    <div class="topbar">
+      <div class="status"><span id="dot" class="dot"></span><span id="status">连接中</span></div>
+      <div class="top-actions">
+        <button id="imeButton" class="mode-button" type="button">键盘</button>
+        <button id="settingsButton" class="settings-button" type="button">设置</button>
+        <button id="safeButton" class="safe-button" type="button">释放</button>
+      </div>
+    </div>
+
+    <div id="layoutPanel" class="layout-panel">
+      <label class="setting-field">透明度 <input id="opacityInput" type="range" min="0.25" max="1" step="0.05" value="1" /></label>
+      <label class="setting-field"><input id="hideStatusInput" type="checkbox" /> 隐藏状态</label>
+      <button id="deleteLayoutButton" class="delete-button" type="button">删除</button>
+      <button id="resetLayoutButton" type="button">重置</button>
+      <button id="doneLayoutButton" class="done-button" type="button">完成</button>
+    </div>
+
+    <section class="controls" aria-label="virtual controls">
+      <button class="control-button primary layout-control" data-layout-id="left" data-kind="mouse" data-code="left" type="button">左键</button>
+      <button class="control-button layout-control" data-layout-id="right" data-kind="mouse" data-code="right" type="button">右键</button>
+      <button class="control-button layout-control" data-layout-id="shift" data-kind="key" data-code="ShiftLeft" type="button">Shift</button>
+      <button class="control-button layout-control" data-layout-id="ctrl" data-kind="key" data-code="ControlLeft" type="button">Ctrl</button>
+      <button class="control-button small layout-control" data-layout-id="alt" data-kind="key" data-code="AltLeft" type="button">Alt</button>
+      <button class="control-button small layout-control" data-layout-id="tab" data-kind="key" data-code="Tab" type="button">Tab</button>
+      <button class="control-button small layout-control" data-layout-id="esc" data-kind="key" data-code="Escape" type="button">Esc</button>
+      <button class="control-button small layout-control" data-layout-id="backspace" data-kind="key" data-code="Backspace" type="button">Bksp</button>
+      <button class="control-button small layout-control" data-layout-id="win" data-kind="key" data-code="MetaLeft" type="button">Win</button>
+      <button class="control-button wide layout-control" data-layout-id="space" data-kind="key" data-code="Space" type="button">Space</button>
+      <button class="control-button small layout-control" data-layout-id="wheelUp" data-kind="wheel" data-delta="120" type="button">滚上</button>
+      <button class="control-button small layout-control" data-layout-id="wheelDown" data-kind="wheel" data-delta="-120" type="button">滚下</button>
+      <button class="control-button small layout-control" data-layout-id="middle" data-kind="mouse" data-code="middle" type="button">中键</button>
+      <button class="control-button small layout-control" data-layout-id="arrowUp" data-kind="key" data-code="ArrowUp" type="button">↑</button>
+      <button class="control-button small layout-control" data-layout-id="arrowLeft" data-kind="key" data-code="ArrowLeft" type="button">←</button>
+      <button class="control-button small layout-control" data-layout-id="arrowRight" data-kind="key" data-code="ArrowRight" type="button">→</button>
+      <button class="control-button small layout-control" data-layout-id="arrowDown" data-kind="key" data-code="ArrowDown" type="button">↓</button>
+
+      <section id="joystick" class="layout-control hidden" data-layout-id="joystick" aria-label="mouse joystick">
+        <div id="stick"></div>
+      </section>
+    </section>
+
+    <button id="keyboardButton" class="keyboard-button" type="button" aria-label="唤醒键盘">⌨</button>
+    <textarea id="keyboardSink" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text"></textarea>
+
+    <script>
+      const dot = document.querySelector("#dot");
+      const statusEl = document.querySelector("#status");
+      const imeButton = document.querySelector("#imeButton");
+      const settingsButton = document.querySelector("#settingsButton");
+      const safeButton = document.querySelector("#safeButton");
+      const deleteLayoutButton = document.querySelector("#deleteLayoutButton");
+      const resetLayoutButton = document.querySelector("#resetLayoutButton");
+      const doneLayoutButton = document.querySelector("#doneLayoutButton");
+      const opacityInput = document.querySelector("#opacityInput");
+      const hideStatusInput = document.querySelector("#hideStatusInput");
+      const keyboardButton = document.querySelector("#keyboardButton");
+      const keyboardSink = document.querySelector("#keyboardSink");
+      const joystick = document.querySelector("#joystick");
+      const stick = document.querySelector("#stick");
+      const layoutControls = Array.from(document.querySelectorAll(".layout-control"));
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+
+      const LAYOUT_STORAGE_KEY = "mobile-computer-control-layout-v1";
+      const SETTINGS_STORAGE_KEY = "mobile-computer-control-settings-v1";
+      const DEFAULT_LAYOUT = {
+        left: { x: 22, y: 18, hidden: false },
+        right: { x: 78, y: 18, hidden: false },
+        shift: { x: 22, y: 35, hidden: false },
+        ctrl: { x: 78, y: 35, hidden: false },
+        alt: { x: 37, y: 29, hidden: false },
+        tab: { x: 63, y: 29, hidden: false },
+        esc: { x: 37, y: 74, hidden: false },
+        backspace: { x: 63, y: 74, hidden: false },
+        win: { x: 50, y: 62, hidden: false },
+        space: { x: 50, y: 42, hidden: false },
+        wheelUp: { x: 25, y: 64, hidden: false },
+        wheelDown: { x: 75, y: 64, hidden: false },
+        middle: { x: 50, y: 72, hidden: false },
+        arrowUp: { x: 50, y: 23, hidden: false },
+        arrowLeft: { x: 42, y: 33, hidden: false },
+        arrowRight: { x: 58, y: 33, hidden: false },
+        arrowDown: { x: 50, y: 51, hidden: false },
+        joystick: { x: 50, y: 54, hidden: true },
+      };
+
+      let controlWs = null;
+      let seq = 0;
+      let joystickPointerId = null;
+      let joystickVector = { x: 0, y: 0 };
+      let joystickFrame = null;
+      let imeMode = false;
+      let composing = false;
+      let layoutEdit = false;
+      let selectedLayoutId = "left";
+      let layoutDrag = null;
+      let layout = loadLayout();
+      let settings = loadSettings();
+      const pressedKeys = new Set();
+      const pressedMouse = new Set();
+
+      function cloneDefaultLayout() {
+        return Object.fromEntries(Object.entries(DEFAULT_LAYOUT).map(([id, value]) => [id, { ...value }]));
+      }
+
+      function loadLayout() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
+          const next = cloneDefaultLayout();
+          for (const [id, item] of Object.entries(stored)) {
+            if (!next[id] || !item || typeof item !== "object") continue;
+            next[id] = {
+              x: Number.isFinite(Number(item.x)) ? Number(item.x) : next[id].x,
+              y: Number.isFinite(Number(item.y)) ? Number(item.y) : next[id].y,
+              hidden: Boolean(item.hidden),
+            };
+          }
+          next.joystick.hidden = true;
+          return next;
+        } catch (_) {
+          return cloneDefaultLayout();
+        }
+      }
+
+      function saveLayout() {
+        localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+      }
+
+      function loadSettings() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
+          return {
+            opacity: Math.max(0.25, Math.min(1, Number(stored.opacity) || 1)),
+            hideStatus: Boolean(stored.hideStatus),
+          };
+        } catch (_) {
+          return { opacity: 1, hideStatus: false };
+        }
+      }
+
+      function saveSettings() {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      }
+
+      function applySettings() {
+        document.documentElement.style.setProperty("--control-opacity", String(settings.opacity));
+        document.body.classList.toggle("hide-status", settings.hideStatus);
+        opacityInput.value = String(settings.opacity);
+        hideStatusInput.checked = settings.hideStatus;
+      }
+
+      function layoutElement(id) {
+        return layoutControls.find((element) => element.dataset.layoutId === id);
+      }
+
+      function applyLayout() {
+        for (const element of layoutControls) {
+          const id = element.dataset.layoutId;
+          const item = layout[id] || DEFAULT_LAYOUT[id];
+          if (!item) continue;
+          if (id === "joystick") {
+            item.hidden = true;
+            layout[id] = item;
+          }
+          element.style.left = `${item.x}%`;
+          element.style.top = `${item.y}%`;
+          element.classList.toggle("hidden", Boolean(item.hidden));
+          element.classList.toggle("selected", layoutEdit && id === selectedLayoutId);
+        }
+        deleteLayoutButton.disabled = selectedLayoutId === "joystick" || Boolean(layout[selectedLayoutId]?.hidden);
+      }
+
+      function installDeleteHandles() {
+        for (const element of document.querySelectorAll(".control-button.layout-control")) {
+          if (element.querySelector(".delete-handle")) continue;
+          const handle = document.createElement("button");
+          handle.className = "delete-handle";
+          handle.type = "button";
+          handle.textContent = "×";
+          handle.setAttribute("aria-label", "删除按键");
+          handle.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }, { passive: false });
+          handle.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const id = element.dataset.layoutId;
+            if (!id || id === "joystick" || !layout[id]) return;
+            layout[id].hidden = true;
+            if (selectedLayoutId === id) {
+              selectedLayoutId = firstVisibleLayoutId();
+            }
+            saveLayout();
+            applyLayout();
+          });
+          element.appendChild(handle);
+        }
+      }
+
+      function selectLayoutControl(id) {
+        if (!layout[id] || layout[id].hidden) return;
+        selectedLayoutId = id;
+        applyLayout();
+      }
+
+      function firstVisibleLayoutId() {
+        const found = Object.keys(layout).find((id) => id !== "joystick" && !layout[id].hidden);
+        return found || "left";
+      }
+
+      function setLayoutEdit(enabled) {
+        layoutEdit = enabled;
+        document.body.classList.toggle("layout-edit", enabled);
+        settingsButton.classList.toggle("on", enabled);
+        settingsButton.textContent = enabled ? "编辑中" : "设置";
+        releaseAll();
+        keyboardSink.blur();
+        if (enabled && (!layout[selectedLayoutId] || layout[selectedLayoutId].hidden)) {
+          selectedLayoutId = firstVisibleLayoutId();
+        }
+        if (!enabled) {
+          saveLayout();
+        }
+        applyLayout();
+      }
+
+      function resetLayout() {
+        layout = cloneDefaultLayout();
+        selectedLayoutId = "left";
+        saveLayout();
+        applyLayout();
+      }
+
+      function deleteSelectedControl() {
+        if (selectedLayoutId === "joystick" || !layout[selectedLayoutId]) return;
+        layout[selectedLayoutId].hidden = true;
+        selectedLayoutId = firstVisibleLayoutId();
+        saveLayout();
+        applyLayout();
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function startLayoutDrag(event, element) {
+        if (!layoutEdit) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        const id = element.dataset.layoutId;
+        if (!id || layout[id]?.hidden) return true;
+        selectLayoutControl(id);
+        const item = layout[id] || DEFAULT_LAYOUT[id];
+        layoutDrag = {
+          pointerId: event.pointerId,
+          element,
+          id,
+          offsetX: item.x - (event.clientX / window.innerWidth) * 100,
+          offsetY: item.y - (event.clientY / window.innerHeight) * 100,
+        };
+        try {
+          element.setPointerCapture(event.pointerId);
+        } catch (_) {}
+        moveLayoutControl(event);
+        return true;
+      }
+
+      function moveLayoutControl(event) {
+        if (!layoutDrag || event.pointerId !== layoutDrag.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = layoutDrag.element.getBoundingClientRect();
+        const halfWidth = (rect.width / window.innerWidth) * 50;
+        const halfHeight = (rect.height / window.innerHeight) * 50;
+        layout[layoutDrag.id] = {
+          ...layout[layoutDrag.id],
+          x: clamp((event.clientX / window.innerWidth) * 100 + layoutDrag.offsetX, halfWidth, 100 - halfWidth),
+          y: clamp((event.clientY / window.innerHeight) * 100 + layoutDrag.offsetY, halfHeight, 100 - halfHeight),
+        };
+        applyLayout();
+      }
+
+      function finishLayoutDrag(event) {
+        if (!layoutDrag || event.pointerId !== layoutDrag.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          layoutDrag.element.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+        layoutDrag = null;
+        saveLayout();
+      }
+
+      function setStatus(text, connected = false) {
+        statusEl.textContent = text;
+        dot.classList.toggle("connected", connected);
+      }
+
+      function wsUrl(path, query = {}) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = new URL(`${protocol}//${location.host}${path}`);
+        url.searchParams.set("token", token);
+        Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, value));
+        return url.toString();
+      }
+
+      function connectControl() {
+        if (controlWs) controlWs.close();
+        controlWs = new WebSocket(wsUrl("/control"));
+        controlWs.addEventListener("open", () => {
+          setStatus("控制在线", true);
+          sendControl({ type: "release_all" });
+        });
+        controlWs.addEventListener("message", (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === "error") setStatus("控制错误", false);
+          } catch (_) {}
+        });
+        controlWs.addEventListener("close", () => {
+          clearLocalPresses();
+          setStatus("控制重连中", false);
+          setTimeout(connectControl, 900);
+        });
+      }
+
+      function sendControl(message) {
+        if (!controlWs || controlWs.readyState !== WebSocket.OPEN) return;
+        message.token = token;
+        message.seq = ++seq;
+        controlWs.send(JSON.stringify(message));
+      }
+
+      function sendKey(code, down) {
+        if (!code) return;
+        if (down && pressedKeys.has(code)) return;
+        if (!down && !pressedKeys.has(code)) return;
+        sendControl({ type: "key", code, down });
+        if (down) pressedKeys.add(code);
+        else pressedKeys.delete(code);
+      }
+
+      function sendMouse(button, down) {
+        if (!button) return;
+        if (down && pressedMouse.has(button)) return;
+        if (!down && !pressedMouse.has(button)) return;
+        sendControl({ type: "mouse", button, down });
+        if (down) pressedMouse.add(button);
+        else pressedMouse.delete(button);
+      }
+
+      function clearLocalPresses() {
+        pressedKeys.clear();
+        pressedMouse.clear();
+        document.querySelectorAll(".control-button.active").forEach((button) => button.classList.remove("active"));
+        stick.style.transform = "translate(-50%, -50%)";
+      }
+
+      function releaseAll() {
+        sendControl({ type: "release_all" });
+        clearLocalPresses();
+      }
+
+      function updateJoystick(event) {
+        const rect = joystick.getBoundingClientRect();
+        const radius = Math.max(1, rect.width / 2);
+        const centerX = rect.left + radius;
+        const centerY = rect.top + radius;
+        let x = (event.clientX - centerX) / radius;
+        let y = (event.clientY - centerY) / radius;
+        const length = Math.hypot(x, y);
+        if (length > 1) {
+          x /= length;
+          y /= length;
+        }
+        joystickVector = { x, y };
+        const maxOffset = rect.width * 0.28;
+        stick.style.transform = `translate(calc(-50% + ${x * maxOffset}px), calc(-50% + ${y * maxOffset}px))`;
+      }
+
+      function joystickLoop() {
+        if (joystickPointerId === null) {
+          joystickFrame = null;
+          return;
+        }
+        const strength = Math.min(1, Math.hypot(joystickVector.x, joystickVector.y));
+        if (strength > 0.06) {
+          sendControl({
+            type: "look",
+            dx: joystickVector.x * 18 * strength,
+            dy: joystickVector.y * 18 * strength,
+          });
+        }
+        joystickFrame = requestAnimationFrame(joystickLoop);
+      }
+
+      joystick.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, joystick)) return;
+        if (joystickPointerId !== null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        joystickPointerId = event.pointerId;
+        joystick.setPointerCapture(event.pointerId);
+        updateJoystick(event);
+        if (!joystickFrame) joystickFrame = requestAnimationFrame(joystickLoop);
+      }, { passive: false });
+
+      joystick.addEventListener("pointermove", (event) => {
+        if (layoutEdit) return;
+        if (event.pointerId !== joystickPointerId) return;
+        event.preventDefault();
+        updateJoystick(event);
+      }, { passive: false });
+
+      function finishJoystick(event) {
+        if (event.pointerId !== joystickPointerId) return;
+        event.preventDefault();
+        try { joystick.releasePointerCapture(event.pointerId); } catch (_) {}
+        joystickPointerId = null;
+        joystickVector = { x: 0, y: 0 };
+        stick.style.transform = "translate(-50%, -50%)";
+      }
+
+      joystick.addEventListener("pointerup", finishJoystick, { passive: false });
+      joystick.addEventListener("pointercancel", finishJoystick, { passive: false });
+
+      for (const button of document.querySelectorAll(".control-button")) {
+        const kind = button.dataset.kind;
+        const code = button.dataset.code;
+        const wheelDelta = Number(button.dataset.delta || 0);
+        button.addEventListener("pointerdown", (event) => {
+          if (startLayoutDrag(event, button)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          button.classList.add("active");
+          try { button.setPointerCapture(event.pointerId); } catch (_) {}
+          if (kind === "key") sendKey(code, true);
+          if (kind === "mouse") sendMouse(code, true);
+          if (kind === "wheel") sendControl({ type: "wheel", delta: wheelDelta });
+        }, { passive: false });
+        const release = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (layoutEdit) {
+            finishLayoutDrag(event);
+            return;
+          }
+          button.classList.remove("active");
+          try { button.releasePointerCapture(event.pointerId); } catch (_) {}
+          if (kind === "key") sendKey(code, false);
+          if (kind === "mouse") sendMouse(code, false);
+        };
+        button.addEventListener("pointerup", release, { passive: false });
+        button.addEventListener("pointercancel", release, { passive: false });
+        button.addEventListener("lostpointercapture", release);
+      }
+
+      function sendKeyboardText(text) {
+        if (!text) return;
+        sendControl({ type: imeMode ? "ime_text" : "keyboard_text", text });
+      }
+
+      function sendKeyboardSpecial(code) {
+        sendControl({ type: "tap_key", code });
+      }
+
+      keyboardSink.addEventListener("beforeinput", (event) => {
+        if (layoutEdit || composing) return;
+        if (event.inputType === "insertText" || event.inputType === "insertCompositionText" || event.inputType === "insertFromComposition") {
+          event.preventDefault();
+          sendKeyboardText(event.data || "");
+          keyboardSink.value = "";
+          return;
+        }
+        if (event.inputType === "deleteContentBackward") {
+          event.preventDefault();
+          sendKeyboardSpecial("Backspace");
+          keyboardSink.value = "";
+        }
+      });
+
+      keyboardSink.addEventListener("input", () => {
+        if (layoutEdit || composing) return;
+        const text = keyboardSink.value;
+        keyboardSink.value = "";
+        sendKeyboardText(text);
+      });
+
+      keyboardSink.addEventListener("keydown", (event) => {
+        if (layoutEdit) return;
+        const special = {
+          Backspace: "Backspace",
+          Enter: "Enter",
+          Tab: "Tab",
+          Escape: "Escape",
+          ArrowLeft: "ArrowLeft",
+          ArrowRight: "ArrowRight",
+          ArrowUp: "ArrowUp",
+          ArrowDown: "ArrowDown",
+          Delete: "Delete",
+        }[event.key];
+        if (!special) return;
+        event.preventDefault();
+        sendKeyboardSpecial(special);
+        keyboardSink.value = "";
+      });
+
+      keyboardSink.addEventListener("compositionstart", () => {
+        composing = true;
+      });
+
+      keyboardSink.addEventListener("compositionend", (event) => {
+        composing = false;
+        if (!layoutEdit) {
+          sendKeyboardText(event.data || keyboardSink.value);
+        }
+        keyboardSink.value = "";
+      });
+
+      keyboardButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (!layoutEdit) keyboardSink.focus();
+      });
+
+      imeButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (layoutEdit) return;
+        imeMode = !imeMode;
+        imeButton.classList.toggle("on", imeMode);
+        imeButton.textContent = imeMode ? "输入法" : "键盘";
+        keyboardSink.focus();
+      });
+
+      settingsButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        setLayoutEdit(!layoutEdit);
+      });
+
+      deleteLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        deleteSelectedControl();
+      });
+
+      resetLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        resetLayout();
+      });
+
+      opacityInput.addEventListener("input", (event) => {
+        settings.opacity = Math.max(0.25, Math.min(1, Number(event.target.value) || 1));
+        applySettings();
+        saveSettings();
+      });
+
+      hideStatusInput.addEventListener("change", (event) => {
+        settings.hideStatus = event.target.checked;
+        applySettings();
+        saveSettings();
+      });
+
+      doneLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        setLayoutEdit(false);
+      });
+
+      safeButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        releaseAll();
+      });
+
+      document.addEventListener("pointermove", moveLayoutControl, { passive: false });
+      document.addEventListener("pointerup", finishLayoutDrag, { passive: false });
+      document.addEventListener("pointercancel", finishLayoutDrag, { passive: false });
+      window.addEventListener("blur", releaseAll);
+      window.addEventListener("pagehide", releaseAll);
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) releaseAll();
+      });
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+      window.addEventListener("selectstart", (event) => {
+        if (event.target !== keyboardSink) event.preventDefault();
+      });
+      window.addEventListener("dragstart", (event) => event.preventDefault());
+      window.addEventListener("gesturestart", (event) => event.preventDefault());
+      window.addEventListener("gesturechange", (event) => event.preventDefault());
+      window.addEventListener("gestureend", (event) => event.preventDefault());
+
+      installDeleteHandles();
+      applyLayout();
+      applySettings();
+      connectControl();
+    </script>
+  </body>
+</html>

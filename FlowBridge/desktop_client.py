@@ -1,6 +1,8 @@
 import asyncio
+import ctypes
 import queue
 import secrets
+import sys
 import threading
 import time
 import tkinter as tk
@@ -73,8 +75,39 @@ class DesktopClient(tk.Tk):
         self.qr_image: ImageTk.PhotoImage | None = None
 
         self._build_ui()
+        self.after(0, self._apply_window_chrome)
+        self.after(250, self._apply_window_chrome)
         self.after(200, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _apply_window_chrome(self) -> None:
+        if sys.platform != "win32":
+            return
+
+        try:
+            hwnd = ctypes.c_void_p(self.winfo_id())
+            dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+
+            def colorref(hex_color: str) -> int:
+                value = hex_color.lstrip("#")
+                red = int(value[0:2], 16)
+                green = int(value[2:4], 16)
+                blue = int(value[4:6], 16)
+                return red | (green << 8) | (blue << 16)
+
+            def set_dwm_attribute(attribute: int, value: int) -> None:
+                data = ctypes.c_int(value)
+                dwmapi.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(data), ctypes.sizeof(data))
+
+            # Windows 10/11 dark title bar. Attribute 20 is current; 19 is kept as fallback.
+            set_dwm_attribute(20, 1)
+            set_dwm_attribute(19, 1)
+            set_dwm_attribute(34, colorref("#1e1f22"))  # border
+            set_dwm_attribute(35, colorref("#1e1f22"))  # caption/title bar
+            set_dwm_attribute(36, colorref("#d7d9de"))  # title text
+        except Exception:
+            # Older Windows builds may not support these DWM attributes.
+            return
 
     def _build_ui(self) -> None:
         self._configure_style()

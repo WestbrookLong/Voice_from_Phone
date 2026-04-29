@@ -1,0 +1,1770 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <title>移动端远程</title>
+    <style>
+      :root {
+        --bg: #11130f;
+        --panel: rgba(20, 24, 18, 0.82);
+        --ink: #f6f0df;
+        --muted: #b8b09f;
+        --accent: #b6e36d;
+        --danger: #ff725e;
+        --control-opacity: 1;
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        color: var(--ink);
+        background: radial-gradient(circle at 20% 10%, #28371d, transparent 30rem), var(--bg);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #screen {
+        position: fixed;
+        left: 0;
+        top: var(--stage-top, 0px);
+        width: var(--stage-width, 100vw);
+        height: var(--stage-height, 100vh);
+        display: block;
+        background: #000;
+        cursor: crosshair;
+        touch-action: none;
+      }
+
+      #inkOverlay {
+        position: fixed;
+        left: 0;
+        top: var(--stage-top, 0px);
+        width: var(--stage-width, 100vw);
+        height: var(--stage-height, 100vh);
+        display: block;
+        pointer-events: none;
+        touch-action: none;
+      }
+
+      .hud {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        top: max(14px, env(safe-area-inset-top));
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 12px;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 999px;
+        background: var(--panel);
+        backdrop-filter: blur(16px);
+        user-select: none;
+        pointer-events: none;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+
+      .dot.connected {
+        background: var(--accent);
+      }
+
+      #status {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      body.hide-status .hud {
+        display: none;
+      }
+
+      .hint {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        right: max(14px, env(safe-area-inset-right));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        padding: 10px 12px;
+        border-radius: 18px;
+        color: var(--muted);
+        background: var(--panel);
+        backdrop-filter: blur(16px);
+        font-size: 13px;
+        line-height: 1.35;
+        pointer-events: none;
+      }
+
+      body.keyboard-open .hint {
+        display: none;
+      }
+
+      body.keyboard-open .hud {
+        display: none;
+      }
+
+      body.keyboard-open .mode-button,
+      body.keyboard-open .echo-button,
+      body.keyboard-open .echo-clear-button {
+        display: none;
+      }
+
+      .keyboard-button {
+        position: fixed;
+        left: 88%;
+        top: 86%;
+        z-index: 5;
+        width: 62px;
+        height: 62px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 22px;
+        color: var(--ink);
+        background: rgba(182, 227, 109, 0.92);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 28px;
+        font-weight: 800;
+        touch-action: manipulation;
+        transform: translate(-50%, -50%);
+      }
+
+      .mouse-button {
+        position: fixed;
+        z-index: 5;
+        width: 68px;
+        height: 58px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        color: #11130f;
+        background: rgba(182, 227, 109, 0.94);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 15px;
+        font-weight: 950;
+        touch-action: manipulation;
+        transform: translate(-50%, -50%);
+      }
+
+      .mouse-button.secondary {
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+      }
+
+      .mouse-button.active {
+        border-color: rgba(182, 227, 109, 0.88);
+        transform: translate(-50%, calc(-50% + 1px));
+      }
+
+      .zoom-controls {
+        position: fixed;
+        left: 92%;
+        top: 16%;
+        z-index: 5;
+        display: grid;
+        gap: 8px;
+        touch-action: manipulation;
+        transform: translate(-50%, -50%);
+      }
+
+      .zoom-button {
+        width: 54px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 19px;
+        color: #11130f;
+        background: rgba(246, 240, 223, 0.9);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 26px;
+        font-weight: 950;
+        line-height: 1;
+        touch-action: manipulation;
+      }
+
+      .fullscreen-button {
+        font-size: 13px;
+        line-height: 1.05;
+      }
+
+      body.fullscreen-view .hud,
+      body.fullscreen-view .hint,
+      body.fullscreen-view .keyboard-button,
+      body.fullscreen-view .mouse-button,
+      body.fullscreen-view .settings-button,
+      body.fullscreen-view .layout-panel,
+      body.fullscreen-view .mode-button,
+      body.fullscreen-view .echo-button,
+      body.fullscreen-view .echo-clear-button,
+      body.fullscreen-view .input-panel,
+      body.fullscreen-view #zoomInButton,
+      body.fullscreen-view #zoomOutButton {
+        display: none !important;
+      }
+
+      .mode-button {
+        position: fixed;
+        left: 10%;
+        top: 90%;
+        z-index: 5;
+        min-width: 108px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        padding: 0 16px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 16px;
+        font-weight: 900;
+        touch-action: manipulation;
+        transform: translate(-50%, -50%);
+      }
+
+      .mode-button.wheel {
+        color: #11130f;
+        background: rgba(182, 227, 109, 0.94);
+      }
+
+      .mode-button.touch-click {
+        color: #11130f;
+        background: rgba(126, 214, 255, 0.94);
+      }
+
+      .echo-button {
+        position: fixed;
+        left: 25%;
+        top: 90%;
+        z-index: 5;
+        min-width: 108px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        padding: 0 16px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 16px;
+        font-weight: 900;
+        touch-action: manipulation;
+        transform: translate(-50%, -50%);
+      }
+
+      .echo-button.on {
+        color: #11130f;
+        background: rgba(126, 214, 255, 0.94);
+      }
+
+      .echo-clear-button {
+        position: fixed;
+        left: 43%;
+        top: 90%;
+        z-index: 5;
+        min-width: 132px;
+        height: 54px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 20px;
+        padding: 0 16px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 16px;
+        font-weight: 900;
+        touch-action: manipulation;
+        transform: translate(-50%, -50%);
+      }
+
+      .settings-button {
+        position: fixed;
+        left: max(16px, env(safe-area-inset-left));
+        top: calc(max(14px, env(safe-area-inset-top)) + 50px);
+        z-index: 6;
+        min-width: 74px;
+        height: 42px;
+        border: 1px solid rgba(246, 240, 223, 0.22);
+        border-radius: 16px;
+        padding: 0 12px;
+        color: var(--ink);
+        background: rgba(20, 24, 18, 0.86);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+        font-size: 14px;
+        font-weight: 900;
+        touch-action: manipulation;
+      }
+
+      .settings-button.on {
+        color: #11130f;
+        background: rgba(182, 227, 109, 0.94);
+      }
+
+      .layout-panel {
+        position: fixed;
+        left: 50%;
+        top: max(16px, env(safe-area-inset-top));
+        z-index: 7;
+        display: none;
+        gap: 8px;
+        align-items: center;
+        padding: 7px;
+        border: 1px solid rgba(182, 227, 109, 0.34);
+        border-radius: 12px;
+        background: rgba(20, 24, 18, 0.88);
+        backdrop-filter: blur(16px);
+        transform: translateX(-50%);
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: min(94vw, 620px);
+      }
+
+      body.layout-edit .layout-panel {
+        display: flex;
+      }
+
+      .layout-panel button {
+        min-width: 62px;
+        height: 32px;
+        border: 1px solid rgba(246, 240, 223, 0.18);
+        border-radius: 9px;
+        color: var(--ink);
+        background: rgba(246, 240, 223, 0.12);
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .layout-panel .delete-button {
+        background: rgba(255, 114, 94, 0.22);
+      }
+
+      .layout-panel .done-button {
+        color: #11130f;
+        background: rgba(182, 227, 109, 0.94);
+      }
+
+      .setting-field {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+        padding: 0 8px;
+        border: 1px solid rgba(246, 240, 223, 0.12);
+        border-radius: 9px;
+        color: var(--muted);
+        background: rgba(246, 240, 223, 0.08);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .setting-field input[type="range"] {
+        width: 96px;
+        accent-color: var(--accent);
+      }
+
+      .setting-field input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
+      }
+
+      .layout-control {
+        opacity: var(--control-opacity);
+      }
+
+      .layout-control.hidden {
+        display: none !important;
+      }
+
+      body.layout-edit .layout-control {
+        outline: 2px solid rgba(182, 227, 109, 0.75);
+        outline-offset: 4px;
+      }
+
+      body.layout-edit .layout-control.selected {
+        outline-color: rgba(255, 210, 92, 0.95);
+      }
+
+      .delete-handle {
+        position: absolute;
+        right: -10px;
+        top: -10px;
+        z-index: 8;
+        display: none;
+        width: 28px;
+        height: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        border-radius: 50%;
+        color: #fff;
+        background: rgba(255, 114, 94, 0.94);
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+        font: 950 18px/1 "Segoe UI", system-ui, sans-serif;
+        pointer-events: auto;
+      }
+
+      body.layout-edit .layout-control:not(.hidden) > .delete-handle {
+        display: grid;
+        place-items: center;
+      }
+
+      .echo-clear-button.frame {
+        color: #11130f;
+        background: rgba(255, 210, 92, 0.94);
+      }
+
+      .input-panel {
+        position: fixed;
+        left: max(14px, env(safe-area-inset-left));
+        right: max(14px, env(safe-area-inset-right));
+        bottom: calc(max(86px, env(safe-area-inset-bottom) + 86px));
+        z-index: 4;
+        display: none;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 22px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+      }
+
+      .input-panel.open {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        align-items: stretch;
+      }
+
+      body.keyboard-open .input-panel.open {
+        bottom: max(6px, env(safe-area-inset-bottom));
+      }
+
+      #textInput {
+        min-height: 52px;
+        max-height: 130px;
+        resize: vertical;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 16px;
+        outline: none;
+        padding: 10px 12px;
+        color: var(--ink);
+        background: rgba(0, 0, 0, 0.34);
+        font-size: 18px;
+        line-height: 1.35;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+
+      .input-panel button {
+        min-width: 62px;
+        border: 1px solid rgba(246, 240, 223, 0.16);
+        border-radius: 16px;
+        color: var(--ink);
+        background: rgba(246, 240, 223, 0.12);
+        font-size: 15px;
+        font-weight: 800;
+        touch-action: manipulation;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="screen"></canvas>
+    <canvas id="inkOverlay"></canvas>
+    <div class="hud">
+      <span id="dot" class="dot"></span>
+      <span id="status">连接中</span>
+    </div>
+    <div id="inputPanel" class="input-panel">
+      <textarea id="textInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="在这里输入，会注入到电脑当前文字光标处"></textarea>
+      <button id="clearText" type="button">清空</button>
+      <button id="closeKeyboard" type="button">收起</button>
+    </div>
+    <button id="keyboardButton" class="keyboard-button layout-control" data-layout-id="keyboard" type="button" aria-label="打开键盘">⌨</button>
+    <button id="leftMouseButton" class="mouse-button layout-control" data-layout-id="leftMouse" type="button">左键</button>
+    <button id="rightMouseButton" class="mouse-button secondary layout-control" data-layout-id="rightMouse" type="button">右键</button>
+    <button id="settingsButton" class="settings-button" type="button">设置</button>
+    <div id="layoutPanel" class="layout-panel">
+      <label class="setting-field">透明度 <input id="opacityInput" type="range" min="0.25" max="1" step="0.05" value="1" /></label>
+      <label class="setting-field"><input id="hideStatusInput" type="checkbox" /> 隐藏状态</label>
+      <button id="deleteLayoutButton" class="delete-button" type="button">删除</button>
+      <button id="resetLayoutButton" type="button">重置</button>
+      <button id="doneLayoutButton" class="done-button" type="button">完成</button>
+    </div>
+    <div id="zoomControls" class="zoom-controls layout-control" data-layout-id="zoomControls" aria-label="缩放控制">
+      <button id="zoomInButton" class="zoom-button" type="button" aria-label="放大">+</button>
+      <button id="zoomOutButton" class="zoom-button" type="button" aria-label="缩小">-</button>
+      <button id="fullscreenButton" class="zoom-button fullscreen-button" type="button" aria-label="全屏">全屏</button>
+    </div>
+    <button id="modeButton" class="mode-button layout-control" data-layout-id="mode" type="button">移动模式</button>
+    <button id="echoButton" class="echo-button layout-control" data-layout-id="echo" type="button">蒙版关</button>
+    <button id="echoClearButton" class="echo-clear-button layout-control" data-layout-id="echoClear" type="button">自动淡出</button>
+
+    <script>
+      const canvas = document.querySelector("#screen");
+      const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      const inkCanvas = document.querySelector("#inkOverlay");
+      const inkCtx = inkCanvas.getContext("2d", { alpha: true, desynchronized: true });
+      const dot = document.querySelector("#dot");
+      const statusEl = document.querySelector("#status");
+      const leftMouseButton = document.querySelector("#leftMouseButton");
+      const rightMouseButton = document.querySelector("#rightMouseButton");
+      const keyboardButton = document.querySelector("#keyboardButton");
+      const settingsButton = document.querySelector("#settingsButton");
+      const deleteLayoutButton = document.querySelector("#deleteLayoutButton");
+      const resetLayoutButton = document.querySelector("#resetLayoutButton");
+      const doneLayoutButton = document.querySelector("#doneLayoutButton");
+      const opacityInput = document.querySelector("#opacityInput");
+      const hideStatusInput = document.querySelector("#hideStatusInput");
+      const layoutControls = Array.from(document.querySelectorAll(".layout-control"));
+      const zoomInButton = document.querySelector("#zoomInButton");
+      const zoomOutButton = document.querySelector("#zoomOutButton");
+      const fullscreenButton = document.querySelector("#fullscreenButton");
+      const inputPanel = document.querySelector("#inputPanel");
+      const textInput = document.querySelector("#textInput");
+      const clearTextButton = document.querySelector("#clearText");
+      const closeKeyboardButton = document.querySelector("#closeKeyboard");
+      const modeButton = document.querySelector("#modeButton");
+      const echoButton = document.querySelector("#echoButton");
+      const echoClearButton = document.querySelector("#echoClearButton");
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+      const monitorId = params.get("monitor") || "1";
+      const fps = params.get("fps") || "24";
+      const quality = params.get("quality") || "58";
+      const buildId = "tablet-20260428-portrait-backspace";
+
+      let screenWs = null;
+      let pointerWs = null;
+      let textWs = null;
+      let controlWs = null;
+      let textSeq = 0;
+      let controlSeq = 0;
+      let lastSentText = "";
+      let textQueue = [];
+      let monitor = null;
+      let imageRect = { left: 0, top: 0, width: 0, height: 0 };
+      let zoomLevel = 1;
+      let zoomCenter = { x: 0.5, y: 0.5 };
+      let lastPointerRatio = { x: 0.5, y: 0.5 };
+      let activePointerId = null;
+      let activePointerType = null;
+      let stageWidth = 0;
+      let stageHeight = 0;
+      let keyboardLayoutOpen = false;
+      let layoutResizeTimer = null;
+      let lastExplicitBackspaceAt = 0;
+      const touches = new Map();
+      let wheelMode = false;
+      let forcedWheelMode = false;
+      let touchClickMode = false;
+      let fullscreenView = false;
+      let layoutEdit = false;
+      let selectedLayoutId = "leftMouse";
+      let layoutDrag = null;
+      let localEchoEnabled = false;
+      let echoClearMode = "fade";
+      let hasPendingEcho = false;
+      let echoFadeRunning = false;
+      let activeEchoPoint = null;
+      let activeEchoStroke = null;
+      let localEchoStrokes = [];
+      let screenFrameCounter = 0;
+      let lastProcessedMove = null;
+      let singleFingerWheelPointerId = null;
+      let lastSingleFingerWheelY = null;
+      let lastTwoFingerCenter = null;
+      let wheelRemainder = 0;
+      const LAYOUT_STORAGE_KEY = "mobile-computer-tablet-layout-v1";
+      const SETTINGS_STORAGE_KEY = "mobile-computer-tablet-settings-v1";
+      const DEFAULT_LAYOUT = {
+        leftMouse: { x: 82, y: 67, hidden: false },
+        rightMouse: { x: 92, y: 67, hidden: false },
+        keyboard: { x: 88, y: 86, hidden: false },
+        zoomControls: { x: 92, y: 16, hidden: false },
+        mode: { x: 10, y: 90, hidden: false },
+        echo: { x: 25, y: 90, hidden: false },
+        echoClear: { x: 43, y: 90, hidden: false },
+      };
+      let layout = loadLayout();
+      let settings = loadSettings();
+
+      function setStatus(text, connected = false) {
+        statusEl.textContent = `${text} | ${buildId}`;
+        dot.classList.toggle("connected", connected);
+      }
+
+      function wsUrl(path, query = {}) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = new URL(`${protocol}//${location.host}${path}`);
+        url.searchParams.set("token", token);
+        Object.entries(query).forEach(([key, value]) => url.searchParams.set(key, value));
+        return url.toString();
+      }
+
+      function viewportMetrics() {
+        const visualViewport = window.visualViewport;
+        return {
+          width: visualViewport ? visualViewport.width : window.innerWidth,
+          height: visualViewport ? visualViewport.height : window.innerHeight,
+          offsetTop: visualViewport ? visualViewport.offsetTop : 0,
+        };
+      }
+
+      function resizeCanvas() {
+        if (keyboardLayoutOpen) {
+          const viewport = viewportMetrics();
+          const panelHeight = inputPanel.classList.contains("open") ? inputPanel.getBoundingClientRect().height : 0;
+          const reservedBottom = panelHeight + 10;
+          const isPortrait = window.innerHeight >= window.innerWidth;
+          const availableHeight = Math.max(160, Math.floor(viewport.height - reservedBottom));
+          stageWidth = Math.max(1, Math.floor(viewport.width));
+          if (isPortrait) {
+            const screenAspectHeight = monitor
+              ? Math.ceil(stageWidth * monitor.height / Math.max(1, monitor.width))
+              : Math.ceil(stageWidth * 9 / 16);
+            stageHeight = Math.max(availableHeight, screenAspectHeight);
+            const stageTop = Math.floor(viewport.offsetTop + Math.min(0, availableHeight - stageHeight));
+            document.documentElement.style.setProperty("--stage-top", `${stageTop}px`);
+          } else {
+            stageHeight = availableHeight;
+            document.documentElement.style.setProperty("--stage-top", `${Math.max(0, Math.floor(viewport.offsetTop))}px`);
+          }
+          document.documentElement.style.setProperty("--stage-width", `${stageWidth}px`);
+          document.documentElement.style.setProperty("--stage-height", `${stageHeight}px`);
+        } else if (!stageWidth || !stageHeight) {
+          stageWidth = window.innerWidth;
+          stageHeight = window.innerHeight;
+          document.documentElement.style.setProperty("--stage-top", "0px");
+          document.documentElement.style.setProperty("--stage-width", `${stageWidth}px`);
+          document.documentElement.style.setProperty("--stage-height", `${stageHeight}px`);
+        }
+        const dpr = window.devicePixelRatio || 1;
+        const width = Math.floor(stageWidth * dpr);
+        const height = Math.floor(stageHeight * dpr);
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        if (inkCanvas.width !== width || inkCanvas.height !== height) {
+          inkCanvas.width = width;
+          inkCanvas.height = height;
+        }
+      }
+
+      function scheduleKeyboardLayoutUpdate() {
+        resizeCanvas();
+        if (layoutResizeTimer) {
+          clearTimeout(layoutResizeTimer);
+        }
+        layoutResizeTimer = setTimeout(() => {
+          resizeCanvas();
+          layoutResizeTimer = null;
+        }, 320);
+      }
+
+      function openKeyboardPanel() {
+        keyboardLayoutOpen = true;
+        document.body.classList.add("keyboard-open");
+        inputPanel.classList.add("open");
+        scheduleKeyboardLayoutUpdate();
+        textInput.focus();
+        setTimeout(scheduleKeyboardLayoutUpdate, 120);
+        setTimeout(scheduleKeyboardLayoutUpdate, 420);
+      }
+
+      function closeKeyboardPanel() {
+        keyboardLayoutOpen = false;
+        document.body.classList.remove("keyboard-open");
+        inputPanel.classList.remove("open");
+        textInput.blur();
+        stageWidth = 0;
+        stageHeight = 0;
+        resizeCanvas();
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function cloneDefaultLayout() {
+        return Object.fromEntries(Object.entries(DEFAULT_LAYOUT).map(([id, value]) => [id, { ...value }]));
+      }
+
+      function loadLayout() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
+          const next = cloneDefaultLayout();
+          for (const [id, item] of Object.entries(stored)) {
+            if (!next[id] || !item || typeof item !== "object") continue;
+            next[id] = {
+              x: Number.isFinite(Number(item.x)) ? Number(item.x) : next[id].x,
+              y: Number.isFinite(Number(item.y)) ? Number(item.y) : next[id].y,
+              hidden: Boolean(item.hidden),
+            };
+          }
+          return next;
+        } catch (_) {
+          return cloneDefaultLayout();
+        }
+      }
+
+      function saveLayout() {
+        localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+      }
+
+      function loadSettings() {
+        try {
+          const stored = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || "{}");
+          return {
+            opacity: Math.max(0.25, Math.min(1, Number(stored.opacity) || 1)),
+            hideStatus: Boolean(stored.hideStatus),
+          };
+        } catch (_) {
+          return { opacity: 1, hideStatus: false };
+        }
+      }
+
+      function saveSettings() {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      }
+
+      function applySettings() {
+        document.documentElement.style.setProperty("--control-opacity", String(settings.opacity));
+        document.body.classList.toggle("hide-status", settings.hideStatus);
+        opacityInput.value = String(settings.opacity);
+        hideStatusInput.checked = settings.hideStatus;
+      }
+
+      function applyLayout() {
+        for (const element of layoutControls) {
+          const id = element.dataset.layoutId;
+          const item = layout[id] || DEFAULT_LAYOUT[id];
+          if (!item) continue;
+          element.style.left = `${item.x}%`;
+          element.style.top = `${item.y}%`;
+          element.style.right = "auto";
+          element.style.bottom = "auto";
+          element.classList.toggle("hidden", Boolean(item.hidden));
+          element.classList.toggle("selected", layoutEdit && id === selectedLayoutId);
+        }
+        deleteLayoutButton.disabled = Boolean(layout[selectedLayoutId]?.hidden);
+      }
+
+      function firstVisibleLayoutId() {
+        return Object.keys(layout).find((id) => !layout[id].hidden) || "leftMouse";
+      }
+
+      function selectLayoutControl(id) {
+        if (!layout[id] || layout[id].hidden) return;
+        selectedLayoutId = id;
+        applyLayout();
+      }
+
+      function setLayoutEdit(enabled) {
+        layoutEdit = enabled;
+        document.body.classList.toggle("layout-edit", enabled);
+        settingsButton.classList.toggle("on", enabled);
+        settingsButton.textContent = enabled ? "编辑中" : "设置";
+        if (enabled && (!layout[selectedLayoutId] || layout[selectedLayoutId].hidden)) {
+          selectedLayoutId = firstVisibleLayoutId();
+        }
+        if (!enabled) {
+          saveLayout();
+        }
+        applyLayout();
+      }
+
+      function resetLayout() {
+        layout = cloneDefaultLayout();
+        selectedLayoutId = "leftMouse";
+        saveLayout();
+        applyLayout();
+      }
+
+      function deleteSelectedControl() {
+        if (!layout[selectedLayoutId]) return;
+        layout[selectedLayoutId].hidden = true;
+        selectedLayoutId = firstVisibleLayoutId();
+        saveLayout();
+        applyLayout();
+      }
+
+      function startLayoutDrag(event, element) {
+        if (!layoutEdit) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        const id = element.dataset.layoutId;
+        if (!id || layout[id]?.hidden) return true;
+        selectLayoutControl(id);
+        const item = layout[id] || DEFAULT_LAYOUT[id];
+        layoutDrag = {
+          pointerId: event.pointerId,
+          element,
+          id,
+          offsetX: item.x - (event.clientX / window.innerWidth) * 100,
+          offsetY: item.y - (event.clientY / window.innerHeight) * 100,
+        };
+        try {
+          element.setPointerCapture(event.pointerId);
+        } catch (_) {}
+        moveLayoutControl(event);
+        return true;
+      }
+
+      function moveLayoutControl(event) {
+        if (!layoutDrag || event.pointerId !== layoutDrag.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = layoutDrag.element.getBoundingClientRect();
+        const halfWidth = (rect.width / window.innerWidth) * 50;
+        const halfHeight = (rect.height / window.innerHeight) * 50;
+        layout[layoutDrag.id] = {
+          ...layout[layoutDrag.id],
+          x: clamp((event.clientX / window.innerWidth) * 100 + layoutDrag.offsetX, halfWidth, 100 - halfWidth),
+          y: clamp((event.clientY / window.innerHeight) * 100 + layoutDrag.offsetY, halfHeight, 100 - halfHeight),
+        };
+        applyLayout();
+      }
+
+      function finishLayoutDrag(event) {
+        if (!layoutDrag || event.pointerId !== layoutDrag.pointerId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          layoutDrag.element.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+        layoutDrag = null;
+        saveLayout();
+      }
+
+      function installDeleteHandles() {
+        for (const element of layoutControls) {
+          if (element.querySelector(".delete-handle")) continue;
+          const handle = document.createElement("button");
+          handle.className = "delete-handle";
+          handle.type = "button";
+          handle.textContent = "×";
+          handle.setAttribute("aria-label", "删除按键");
+          handle.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }, { passive: false });
+          handle.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const id = element.dataset.layoutId;
+            if (!id || !layout[id]) return;
+            layout[id].hidden = true;
+            if (selectedLayoutId === id) {
+              selectedLayoutId = firstVisibleLayoutId();
+            }
+            saveLayout();
+            applyLayout();
+          });
+          element.appendChild(handle);
+        }
+      }
+
+      function clampImageOffset(offset, viewSize, imageSize) {
+        if (imageSize <= viewSize) {
+          return (viewSize - imageSize) / 2;
+        }
+        return clamp(offset, viewSize - imageSize, 0);
+      }
+
+      function computeImageRect(imageWidth, imageHeight) {
+        const viewWidth = canvas.width;
+        const viewHeight = canvas.height;
+        const scale = Math.min(viewWidth / imageWidth, viewHeight / imageHeight);
+        const width = imageWidth * scale * zoomLevel;
+        const height = imageHeight * scale * zoomLevel;
+        const left = zoomLevel <= 1
+          ? (viewWidth - width) / 2
+          : clampImageOffset(viewWidth / 2 - zoomCenter.x * width, viewWidth, width);
+        const top = zoomLevel <= 1
+          ? (viewHeight - height) / 2
+          : clampImageOffset(viewHeight / 2 - zoomCenter.y * height, viewHeight, height);
+        imageRect = {
+          left,
+          top,
+          width,
+          height,
+        };
+      }
+
+      async function drawFrame(blob) {
+        screenFrameCounter += 1;
+        resizeCanvas();
+        const bitmap = await createImageBitmap(blob);
+        computeImageRect(bitmap.width, bitmap.height);
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, imageRect.left, imageRect.top, imageRect.width, imageRect.height);
+        bitmap.close();
+        if (localEchoEnabled && echoClearMode === "frame") {
+          pruneFrameEchoStrokes();
+          redrawFrameEchoStrokes();
+        }
+      }
+
+      function connectScreen() {
+        if (screenWs) {
+          screenWs.close();
+        }
+        screenWs = new WebSocket(wsUrl("/screen", { monitor: monitorId, fps, quality }));
+        screenWs.binaryType = "blob";
+
+        screenWs.addEventListener("open", () => setStatus("屏幕已连接", true));
+        screenWs.addEventListener("message", async (event) => {
+          if (typeof event.data === "string") {
+            const message = JSON.parse(event.data);
+            if (message.type === "screen_meta") {
+              monitor = message.monitor;
+            }
+            return;
+          }
+          await drawFrame(event.data);
+        });
+        screenWs.addEventListener("close", () => {
+          setStatus("屏幕断开，重连中", false);
+          setTimeout(connectScreen, 800);
+        });
+        screenWs.addEventListener("error", () => setStatus("屏幕连接错误", false));
+      }
+
+      function connectPointer() {
+        if (pointerWs) {
+          pointerWs.close();
+        }
+        pointerWs = new WebSocket(wsUrl("/pointer"));
+        pointerWs.addEventListener("open", () => setStatus("已连接", true));
+        pointerWs.addEventListener("close", () => {
+          setStatus("输入断开，重连中", false);
+          setTimeout(connectPointer, 800);
+        });
+        pointerWs.addEventListener("error", () => setStatus("输入连接错误", false));
+      }
+
+      function connectText() {
+        if (textWs) {
+          textWs.close();
+        }
+        textWs = new WebSocket(wsUrl("/ws"));
+        textWs.addEventListener("open", () => {
+          flushTextQueue();
+        });
+        textWs.addEventListener("close", () => {
+          setTimeout(connectText, 800);
+        });
+      }
+
+      function connectControl() {
+        if (controlWs) {
+          controlWs.close();
+        }
+        controlWs = new WebSocket(wsUrl("/control"));
+        controlWs.addEventListener("close", () => {
+          setTimeout(connectControl, 800);
+        });
+      }
+
+      function sendControlMessage(message) {
+        if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        message.token = token;
+        message.seq = ++controlSeq;
+        controlWs.send(JSON.stringify(message));
+      }
+
+      function setMouseButton(button, down) {
+        sendControlMessage({ type: "mouse", button, down });
+      }
+
+      function sendTextMessage(message) {
+        if (!textWs || textWs.readyState !== WebSocket.OPEN) {
+          textQueue.push(message);
+          return;
+        }
+        textWs.send(JSON.stringify(message));
+      }
+
+      function flushTextQueue() {
+        const pending = textQueue;
+        textQueue = [];
+        pending.forEach(sendTextMessage);
+      }
+
+      function syncTextInput() {
+        if (textInput.value === lastSentText) {
+          return;
+        }
+        lastSentText = textInput.value;
+        sendTextMessage({
+          type: "sync_text",
+          token,
+          seq: ++textSeq,
+          text: textInput.value,
+        });
+      }
+
+      function resetTextSession() {
+        sendTextMessage({
+          type: "reset_session",
+          token,
+          seq: ++textSeq,
+        });
+      }
+
+      function sendExplicitBackspace() {
+        sendTextMessage({
+          type: "ops",
+          token,
+          seq: ++textSeq,
+          ops: [{ type: "backspace", count: 1 }],
+        });
+      }
+
+      function maybeSendEmptyBackspace(event) {
+        const isKeyboardBackspace = event.key === "Backspace";
+        const isInputBackspace = event.inputType === "deleteContentBackward";
+        if (!isKeyboardBackspace && !isInputBackspace) {
+          return;
+        }
+        if (textInput.value.length > 0 || textInput.selectionStart !== 0 || textInput.selectionEnd !== 0) {
+          return;
+        }
+        const now = performance.now();
+        if (now - lastExplicitBackspaceAt < 80) {
+          event.preventDefault();
+          return;
+        }
+        lastExplicitBackspaceAt = now;
+        event.preventDefault();
+        sendExplicitBackspace();
+      }
+
+      function eventToCanvasPoint(event) {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: (event.clientX - rect.left) * dpr,
+          y: (event.clientY - rect.top) * dpr,
+        };
+      }
+
+      function eventToRatio(event) {
+        const point = eventToCanvasPoint(event);
+        const x = point.x;
+        const y = point.y;
+        const rx = (x - imageRect.left) / imageRect.width;
+        const ry = (y - imageRect.top) / imageRect.height;
+        return {
+          x: Math.max(0, Math.min(1, rx)),
+          y: Math.max(0, Math.min(1, ry)),
+        };
+      }
+
+      function setZoom(nextZoom) {
+        const previousZoom = zoomLevel;
+        zoomLevel = Math.round(clamp(nextZoom, 1, 4) * 100) / 100;
+        if (zoomLevel === previousZoom) {
+          return;
+        }
+        zoomCenter = { ...lastPointerRatio };
+        resetLocalEcho();
+      }
+
+      function drawLocalEcho(from, to) {
+        if (!localEchoEnabled || forcedWheelMode) {
+          return;
+        }
+        inkCtx.save();
+        inkCtx.lineCap = "round";
+        inkCtx.lineJoin = "round";
+        inkCtx.strokeStyle = "rgba(126, 214, 255, 0.82)";
+        inkCtx.lineWidth = Math.max(3, 4 * (window.devicePixelRatio || 1));
+        inkCtx.beginPath();
+        inkCtx.moveTo(from.x, from.y);
+        inkCtx.lineTo(to.x, to.y);
+        inkCtx.stroke();
+        inkCtx.restore();
+        hasPendingEcho = true;
+        if (echoClearMode === "frame" && activeEchoStroke) {
+          activeEchoStroke.segments.push({ from, to });
+        }
+      }
+
+      function renderLocalEchoDot(point) {
+        const radius = Math.max(2.2, 2.8 * (window.devicePixelRatio || 1));
+        inkCtx.save();
+        inkCtx.fillStyle = "rgba(126, 214, 255, 0.82)";
+        inkCtx.beginPath();
+        inkCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        inkCtx.fill();
+        inkCtx.restore();
+      }
+
+      function drawLocalEchoDot(point) {
+        if (!localEchoEnabled || forcedWheelMode) {
+          return;
+        }
+        renderLocalEchoDot(point);
+        hasPendingEcho = true;
+        if (echoClearMode === "frame" && activeEchoStroke) {
+          activeEchoStroke.segments.push({ from: point, to: point, dot: true });
+        }
+      }
+
+      function startLocalEchoStroke(point) {
+        activeEchoPoint = point;
+        if (!localEchoEnabled || forcedWheelMode) {
+          return;
+        }
+        if (echoClearMode === "frame") {
+          activeEchoStroke = {
+            segments: [],
+            endFrame: null,
+          };
+          localEchoStrokes.push(activeEchoStroke);
+        }
+        drawLocalEchoDot(point);
+      }
+
+      function endLocalEchoStroke() {
+        activeEchoPoint = null;
+        if (activeEchoStroke) {
+          activeEchoStroke.endFrame = screenFrameCounter;
+          activeEchoStroke = null;
+        }
+      }
+
+      function forceEndActivePointer(event) {
+        if (activePointerId === null) {
+          return;
+        }
+        sendPointer(touchClickMode ? "up" : "move", event);
+        try {
+          canvas.releasePointerCapture(activePointerId);
+        } catch (_) {
+          // Safari may release capture implicitly or reject stale ids.
+        }
+        activePointerId = null;
+        activePointerType = null;
+        endLocalEchoStroke();
+      }
+
+      function drawEchoSegment(segment) {
+        if (segment.dot) {
+          renderLocalEchoDot(segment.from);
+          return;
+        }
+        inkCtx.save();
+        inkCtx.lineCap = "round";
+        inkCtx.lineJoin = "round";
+        inkCtx.strokeStyle = "rgba(126, 214, 255, 0.82)";
+        inkCtx.lineWidth = Math.max(3, 4 * (window.devicePixelRatio || 1));
+        inkCtx.beginPath();
+        inkCtx.moveTo(segment.from.x, segment.from.y);
+        inkCtx.lineTo(segment.to.x, segment.to.y);
+        inkCtx.stroke();
+        inkCtx.restore();
+      }
+
+      function pruneFrameEchoStrokes() {
+        localEchoStrokes = localEchoStrokes.filter((stroke) => {
+          if (stroke === activeEchoStroke || stroke.endFrame === null) {
+            return true;
+          }
+          return screenFrameCounter - stroke.endFrame < 3;
+        });
+        hasPendingEcho = localEchoStrokes.length > 0;
+      }
+
+      function redrawFrameEchoStrokes() {
+        inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+        for (const stroke of localEchoStrokes) {
+          for (const segment of stroke.segments) {
+            drawEchoSegment(segment);
+          }
+        }
+      }
+
+      function fadeLocalEcho() {
+        if (!localEchoEnabled || echoClearMode !== "fade") {
+          echoFadeRunning = false;
+          return;
+        }
+        inkCtx.save();
+        inkCtx.globalCompositeOperation = "destination-out";
+        inkCtx.fillStyle = "rgba(0, 0, 0, 0.055)";
+        inkCtx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
+        inkCtx.restore();
+        requestAnimationFrame(fadeLocalEcho);
+      }
+
+      function clearLocalEchoPixels() {
+        inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
+        hasPendingEcho = false;
+        localEchoStrokes = [];
+        activeEchoStroke = null;
+      }
+
+      function resetLocalEcho() {
+        clearLocalEchoPixels();
+        activeEchoPoint = null;
+      }
+
+      function setLocalEcho(enabled) {
+        localEchoEnabled = enabled;
+        echoButton.textContent = enabled ? "蒙版开" : "蒙版关";
+        echoButton.classList.toggle("on", enabled);
+        resetLocalEcho();
+        if (enabled && echoClearMode === "fade" && !echoFadeRunning) {
+          echoFadeRunning = true;
+          requestAnimationFrame(fadeLocalEcho);
+        }
+      }
+
+      function setEchoClearMode(mode) {
+        echoClearMode = mode;
+        echoClearButton.textContent = mode === "frame" ? "等屏幕响应" : "自动淡出";
+        echoClearButton.classList.toggle("frame", mode === "frame");
+        resetLocalEcho();
+        if (localEchoEnabled && mode === "fade" && !echoFadeRunning) {
+          echoFadeRunning = true;
+          requestAnimationFrame(fadeLocalEcho);
+        }
+      }
+
+      function sendPointer(action, event) {
+        if (!monitor || !pointerWs || pointerWs.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        const point = eventToRatio(event);
+        lastPointerRatio = point;
+        pointerWs.send(JSON.stringify({
+          type: "pointer",
+          token,
+          action,
+          x: point.x,
+          y: point.y,
+          pressure: event.pressure || 0,
+          pointerType: event.pointerType,
+          monitor,
+        }));
+      }
+
+      function sendWheel(delta) {
+        if (!monitor || !pointerWs || pointerWs.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        pointerWs.send(JSON.stringify({
+          type: "pointer",
+          token,
+          action: "wheel",
+          x: 0.5,
+          y: 0.5,
+          delta,
+          monitor,
+        }));
+      }
+
+      function shouldProcessMove(event) {
+        const now = performance.now();
+        if (
+          lastProcessedMove &&
+          lastProcessedMove.pointerId === event.pointerId &&
+          lastProcessedMove.x === event.clientX &&
+          lastProcessedMove.y === event.clientY &&
+          now - lastProcessedMove.time < 8
+        ) {
+          return false;
+        }
+        lastProcessedMove = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          time: now,
+        };
+        return true;
+      }
+
+      function processActivePointerMove(event) {
+        if (!shouldProcessMove(event)) {
+          return;
+        }
+        const point = eventToCanvasPoint(event);
+        if (activeEchoPoint) {
+          drawLocalEcho(activeEchoPoint, point);
+        }
+        activeEchoPoint = point;
+        sendPointer("move", event);
+      }
+
+      function twoFingerCenter() {
+        if (touches.size !== 2) {
+          return null;
+        }
+        const points = Array.from(touches.values());
+        return {
+          x: (points[0].clientX + points[1].clientX) / 2,
+          y: (points[0].clientY + points[1].clientY) / 2,
+        };
+      }
+
+      function updateWheelFromTouches() {
+        if (!wheelMode) {
+          return;
+        }
+        const center = twoFingerCenter();
+        if (!center) {
+          return;
+        }
+        if (!lastTwoFingerCenter) {
+          lastTwoFingerCenter = center;
+          return;
+        }
+
+        const dy = center.y - lastTwoFingerCenter.y;
+        lastTwoFingerCenter = center;
+        wheelRemainder += dy * 5;
+
+        const step = 120;
+        if (Math.abs(wheelRemainder) >= step) {
+          const delta = Math.trunc(wheelRemainder / step) * step;
+          wheelRemainder -= delta;
+          sendWheel(delta);
+        }
+      }
+
+      function updateWheelFromSingleTouch(event) {
+        if (lastSingleFingerWheelY === null) {
+          lastSingleFingerWheelY = event.clientY;
+          return;
+        }
+        const dy = event.clientY - lastSingleFingerWheelY;
+        lastSingleFingerWheelY = event.clientY;
+        wheelRemainder += dy * 5;
+
+        const step = 120;
+        if (Math.abs(wheelRemainder) >= step) {
+          const delta = Math.trunc(wheelRemainder / step) * step;
+          wheelRemainder -= delta;
+          sendWheel(delta);
+        }
+      }
+
+      function setForcedWheelMode(enabled) {
+        forcedWheelMode = enabled;
+        touchClickMode = false;
+        modeButton.textContent = enabled ? "滚轮模式" : "移动模式";
+        modeButton.classList.toggle("wheel", enabled);
+        modeButton.classList.remove("touch-click");
+        forceEndActivePointer({ clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
+        touches.clear();
+        wheelMode = false;
+        singleFingerWheelPointerId = null;
+        lastSingleFingerWheelY = null;
+        lastTwoFingerCenter = null;
+        wheelRemainder = 0;
+      }
+
+      function setTouchClickMode(enabled) {
+        touchClickMode = enabled;
+        forcedWheelMode = false;
+        modeButton.textContent = enabled ? "触摸点击" : "移动模式";
+        modeButton.classList.toggle("touch-click", enabled);
+        modeButton.classList.remove("wheel");
+        forceEndActivePointer({ clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
+        touches.clear();
+        wheelMode = false;
+        singleFingerWheelPointerId = null;
+        lastSingleFingerWheelY = null;
+        lastTwoFingerCenter = null;
+        wheelRemainder = 0;
+      }
+
+      function cyclePointerMode() {
+        if (!forcedWheelMode && !touchClickMode) {
+          setForcedWheelMode(true);
+        } else if (forcedWheelMode) {
+          setTouchClickMode(true);
+        } else {
+          setTouchClickMode(false);
+        }
+      }
+
+      function setFullscreenView(enabled) {
+        fullscreenView = enabled;
+        document.body.classList.toggle("fullscreen-view", enabled);
+        fullscreenButton.textContent = enabled ? "退出" : "全屏";
+        fullscreenButton.setAttribute("aria-label", enabled ? "退出全屏" : "全屏");
+        if (enabled) {
+          closeKeyboardPanel();
+        }
+      }
+
+      async function toggleFullscreenView() {
+        const next = !fullscreenView;
+        setFullscreenView(next);
+        try {
+          if (next && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+            await document.documentElement.requestFullscreen();
+          } else if (!next && document.fullscreenElement && document.exitFullscreen) {
+            await document.exitFullscreen();
+          }
+        } catch (_) {
+          // iPad Safari may not allow page fullscreen; the visual fullscreen mode still applies.
+        }
+      }
+
+      canvas.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            singleFingerWheelPointerId = event.pointerId;
+            lastSingleFingerWheelY = event.clientY;
+            wheelRemainder = 0;
+            canvas.setPointerCapture(event.pointerId);
+            sendPointer("move", event);
+            return;
+          }
+          touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          if (touches.size === 2) {
+            forceEndActivePointer(event);
+            wheelMode = true;
+            lastTwoFingerCenter = twoFingerCenter();
+            wheelRemainder = 0;
+            return;
+          }
+          if (touches.size === 1 && !wheelMode) {
+            forceEndActivePointer(event);
+            activePointerId = event.pointerId;
+            activePointerType = "touch";
+            startLocalEchoStroke(eventToCanvasPoint(event));
+            canvas.setPointerCapture(event.pointerId);
+            sendPointer(touchClickMode ? "down" : "move", event);
+            return;
+          }
+          return;
+        }
+        if (wheelMode) {
+          return;
+        }
+        forceEndActivePointer(event);
+        activePointerId = event.pointerId;
+        activePointerType = event.pointerType;
+        startLocalEchoStroke(eventToCanvasPoint(event));
+        canvas.setPointerCapture(event.pointerId);
+        sendPointer(touchClickMode ? "down" : "move", event);
+      });
+
+      function handlePointerMove(event) {
+        event.preventDefault();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            if (event.pointerId === singleFingerWheelPointerId) {
+              sendPointer("move", event);
+              updateWheelFromSingleTouch(event);
+            }
+            return;
+          }
+          if (touches.has(event.pointerId)) {
+            touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+          }
+          if (wheelMode) {
+            updateWheelFromTouches();
+            return;
+          }
+          if (event.pointerId === activePointerId) {
+            processActivePointerMove(event);
+          }
+          return;
+        }
+        if (event.pointerId !== activePointerId) {
+          return;
+        }
+        const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
+        for (const item of events) {
+          processActivePointerMove(item);
+        }
+      }
+
+      canvas.addEventListener("pointermove", handlePointerMove);
+      if ("onpointerrawupdate" in window) {
+        canvas.addEventListener("pointerrawupdate", handlePointerMove);
+      }
+
+      function endPointer(event) {
+        event.preventDefault();
+        if (event.pointerType === "touch") {
+          if (forcedWheelMode) {
+            if (event.pointerId === singleFingerWheelPointerId) {
+              singleFingerWheelPointerId = null;
+              lastSingleFingerWheelY = null;
+              wheelRemainder = 0;
+            }
+            return;
+          }
+          const wasActivePointer = event.pointerId === activePointerId;
+          if (wasActivePointer) {
+            sendPointer(touchClickMode ? "up" : "move", event);
+            try {
+              canvas.releasePointerCapture(event.pointerId);
+            } catch (_) {
+              // Safari may release capture implicitly.
+            }
+            activePointerId = null;
+            activePointerType = null;
+            endLocalEchoStroke();
+          }
+          touches.delete(event.pointerId);
+          if (touches.size < 2) {
+            wheelMode = false;
+            lastTwoFingerCenter = null;
+            wheelRemainder = 0;
+          }
+          return;
+        }
+        if (event.pointerId !== activePointerId) {
+          return;
+        }
+        sendPointer(touchClickMode ? "up" : "move", event);
+        try {
+          canvas.releasePointerCapture(event.pointerId);
+        } catch (_) {
+          // Safari may release capture implicitly.
+        }
+        activePointerId = null;
+        activePointerType = null;
+        endLocalEchoStroke();
+      }
+
+      canvas.addEventListener("pointerup", endPointer);
+      canvas.addEventListener("pointercancel", endPointer);
+      window.addEventListener("orientationchange", () => {
+        stageWidth = 0;
+        stageHeight = 0;
+        setTimeout(resizeCanvas, 250);
+      });
+      window.addEventListener("resize", () => {
+        if (keyboardLayoutOpen) {
+          scheduleKeyboardLayoutUpdate();
+        }
+      });
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", () => {
+          if (keyboardLayoutOpen) {
+            scheduleKeyboardLayoutUpdate();
+          }
+        });
+        window.visualViewport.addEventListener("scroll", () => {
+          if (keyboardLayoutOpen) {
+            scheduleKeyboardLayoutUpdate();
+          }
+        });
+      }
+      window.addEventListener("contextmenu", (event) => event.preventDefault());
+      window.addEventListener("selectstart", (event) => {
+        if (event.target !== textInput) {
+          event.preventDefault();
+        }
+      });
+      window.addEventListener("dragstart", (event) => event.preventDefault());
+      window.addEventListener("gesturestart", (event) => event.preventDefault());
+      window.addEventListener("gesturechange", (event) => event.preventDefault());
+      window.addEventListener("gestureend", (event) => event.preventDefault());
+      document.addEventListener("pointermove", moveLayoutControl, { passive: false });
+      document.addEventListener("pointerup", finishLayoutDrag, { passive: false });
+      document.addEventListener("pointercancel", finishLayoutDrag, { passive: false });
+
+      function bindMouseButton(element, button) {
+        element.addEventListener("pointerdown", (event) => {
+          if (startLayoutDrag(event, element)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          element.classList.add("active");
+          try {
+            element.setPointerCapture(event.pointerId);
+          } catch (_) {}
+          setMouseButton(button, true);
+        }, { passive: false });
+        const release = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (layoutEdit) {
+            finishLayoutDrag(event);
+            return;
+          }
+          element.classList.remove("active");
+          try {
+            element.releasePointerCapture(event.pointerId);
+          } catch (_) {}
+          setMouseButton(button, false);
+        };
+        element.addEventListener("pointerup", release, { passive: false });
+        element.addEventListener("pointercancel", release, { passive: false });
+        element.addEventListener("lostpointercapture", release);
+      }
+
+      bindMouseButton(leftMouseButton, "left");
+      bindMouseButton(rightMouseButton, "right");
+
+      keyboardButton.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, keyboardButton)) return;
+        event.stopPropagation();
+      });
+      keyboardButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        openKeyboardPanel();
+      });
+
+      zoomInButton.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, zoomInButton.closest(".layout-control"))) return;
+        event.stopPropagation();
+      });
+      zoomInButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        setZoom(zoomLevel + 0.35);
+      });
+
+      zoomOutButton.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, zoomOutButton.closest(".layout-control"))) return;
+        event.stopPropagation();
+      });
+      zoomOutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        setZoom(zoomLevel - 0.35);
+      });
+
+      fullscreenButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      fullscreenButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        toggleFullscreenView();
+      });
+
+      document.addEventListener("fullscreenchange", () => {
+        if (!document.fullscreenElement && fullscreenView) {
+          setFullscreenView(false);
+        }
+      });
+
+      textInput.addEventListener("pointerdown", (event) => event.stopPropagation());
+      textInput.addEventListener("keydown", maybeSendEmptyBackspace);
+      textInput.addEventListener("beforeinput", maybeSendEmptyBackspace);
+      textInput.addEventListener("input", syncTextInput);
+
+      clearTextButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        textInput.value = "";
+        lastSentText = "";
+        resetTextSession();
+        textInput.focus();
+      });
+
+      closeKeyboardButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeKeyboardPanel();
+      });
+
+      modeButton.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, modeButton)) return;
+        event.stopPropagation();
+      });
+      modeButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        cyclePointerMode();
+      });
+
+      echoButton.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, echoButton)) return;
+        event.stopPropagation();
+      });
+      echoButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        setLocalEcho(!localEchoEnabled);
+      });
+
+      echoClearButton.addEventListener("pointerdown", (event) => {
+        if (startLayoutDrag(event, echoClearButton)) return;
+        event.stopPropagation();
+      });
+      echoClearButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (layoutEdit) return;
+        setEchoClearMode(echoClearMode === "fade" ? "frame" : "fade");
+      });
+
+      settingsButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setLayoutEdit(!layoutEdit);
+      });
+
+      deleteLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteSelectedControl();
+      });
+
+      resetLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        resetLayout();
+      });
+
+      opacityInput.addEventListener("input", (event) => {
+        settings.opacity = Math.max(0.25, Math.min(1, Number(event.target.value) || 1));
+        applySettings();
+        saveSettings();
+      });
+
+      hideStatusInput.addEventListener("change", (event) => {
+        settings.hideStatus = event.target.checked;
+        applySettings();
+        saveSettings();
+      });
+
+      doneLayoutButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setLayoutEdit(false);
+      });
+
+      resizeCanvas();
+      installDeleteHandles();
+      applyLayout();
+      applySettings();
+      connectScreen();
+      connectPointer();
+      connectText();
+      connectControl();
+    </script>
+  </body>
+</html>
