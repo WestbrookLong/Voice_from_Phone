@@ -61,7 +61,6 @@
         position: fixed;
         left: max(12px, env(safe-area-inset-left));
         top: max(12px, env(safe-area-inset-top));
-        right: max(12px, env(safe-area-inset-right));
         z-index: 5;
         display: flex;
         flex-wrap: wrap;
@@ -73,6 +72,51 @@
         background: var(--panel);
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
         backdrop-filter: blur(14px);
+      }
+
+      .tool-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 6;
+        pointer-events: none;
+      }
+
+      .tool-button {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        z-index: 6;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        min-width: 0;
+        padding: 0;
+        pointer-events: auto;
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+      }
+
+      .tool-button svg {
+        width: 62%;
+        height: 62%;
+        pointer-events: none;
+      }
+
+      .tool-button .icon-stroke {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 3.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .tool-button .icon-fill {
+        fill: currentColor;
+      }
+
+      .tool-button.dragging {
+        cursor: grabbing;
+        opacity: 0.72;
       }
 
       .group {
@@ -90,20 +134,21 @@
       }
 
       button,
-      select {
-        height: 38px;
+      input[type="range"] {
+        touch-action: manipulation;
+      }
+
+      button {
+        height: 42px;
+        min-width: 42px;
         border: 1px solid rgba(0, 0, 0, 0.16);
         border-radius: 7px;
-        padding: 0 11px;
+        padding: 0 12px;
         color: #111;
         background: #fff;
         font-size: 13px;
         font-weight: 800;
         touch-action: manipulation;
-      }
-
-      button {
-        min-width: 46px;
       }
 
       button.active {
@@ -113,45 +158,6 @@
 
       button:disabled {
         opacity: 0.38;
-      }
-
-      .swatch {
-        width: 32px;
-        min-width: 32px;
-        padding: 0;
-        border-radius: 50%;
-        border: 2px solid rgba(0, 0, 0, 0.18);
-      }
-
-      .swatch.active {
-        box-shadow: 0 0 0 3px #111 inset, 0 0 0 1px #111;
-        background: var(--swatch);
-      }
-
-      #colorInput {
-        width: 38px;
-        height: 38px;
-        border: 1px solid rgba(0, 0, 0, 0.16);
-        border-radius: 7px;
-        padding: 2px;
-        background: #fff;
-      }
-
-      .size-control {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-
-      #sizeInput {
-        width: 130px;
-      }
-
-      #sizeLabel {
-        min-width: 38px;
-        color: #555;
-        font-size: 12px;
-        font-weight: 900;
       }
 
       #clearButton {
@@ -179,81 +185,234 @@
       .dot.connected {
         background: #188038;
       }
+
+      .settings-panel {
+        position: fixed;
+        z-index: 7;
+        width: min(330px, calc(100vw - 24px));
+        padding: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+        backdrop-filter: blur(14px);
+      }
+
+      .settings-panel[hidden] {
+        display: none;
+      }
+
+      .settings-row {
+        display: grid;
+        grid-template-columns: 86px 1fr 46px;
+        gap: 10px;
+        align-items: center;
+        min-height: 34px;
+        color: #333;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .settings-row output {
+        text-align: right;
+        color: #666;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .settings-title {
+        margin-bottom: 6px;
+        color: #111;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .color-button {
+        position: fixed;
+        left: max(12px, env(safe-area-inset-left));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        z-index: 6;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 46px;
+        height: 46px;
+        min-width: 46px;
+        padding: 0;
+        border-radius: 8px;
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.12);
+      }
+
+      .color-dot {
+        width: 24px;
+        height: 24px;
+        border: 2px solid rgba(0, 0, 0, 0.22);
+        border-radius: 50%;
+        background: #111;
+      }
+
+      .color-panel {
+        position: fixed;
+        left: max(12px, env(safe-area-inset-left));
+        bottom: calc(max(12px, env(safe-area-inset-bottom)) + 56px);
+        z-index: 7;
+        display: grid;
+        grid-template-columns: repeat(4, 34px);
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid rgba(0, 0, 0, 0.12);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+        backdrop-filter: blur(14px);
+      }
+
+      .color-panel[hidden] {
+        display: none;
+      }
+
+      .color-swatch,
+      #customColorInput {
+        width: 34px;
+        height: 34px;
+        min-width: 34px;
+        padding: 0;
+        border-radius: 8px;
+      }
+
+      .color-swatch.active {
+        box-shadow: 0 0 0 3px #111 inset;
+      }
+
+      #customColorInput {
+        border: 1px solid rgba(0, 0, 0, 0.16);
+        background: #fff;
+      }
     </style>
   </head>
   <body>
     <main id="stage">
       <canvas id="ink"></canvas>
     </main>
+    <div id="toolLayer" class="tool-layer">
+      <button id="penButton" class="tool-button active" data-tool="pen" type="button" aria-label="Pen" title="Pen">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path class="icon-stroke" d="M10 33 8 40l7-2 23-23-5-5L10 33Z" />
+          <path class="icon-stroke" d="M29 14l5 5" />
+        </svg>
+      </button>
+      <button id="lineButton" class="tool-button" data-tool="line" type="button" aria-label="Line" title="Line">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path class="icon-stroke" d="M9 38 39 10" />
+          <path class="icon-fill" d="M7 36h6v6H7zM35 6h6v6h-6z" />
+        </svg>
+      </button>
+      <button id="eraserButton" class="tool-button" data-tool="eraser" type="button" aria-label="Eraser" title="Eraser">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path class="icon-stroke" d="M14 32 29 17c2-2 5-2 7 0l3 3c2 2 2 5 0 7L27 39H14l-5-5 5-2Z" />
+          <path class="icon-stroke" d="M24 22l10 10M8 39h31" />
+        </svg>
+      </button>
+      <button id="undoButton" class="tool-button" data-action="undo" type="button" aria-label="Undo" title="Undo">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path class="icon-stroke" d="M19 15 9 24l10 9" />
+          <path class="icon-stroke" d="M10 24h18c7 0 11 4 11 10" />
+        </svg>
+      </button>
+    </div>
     <div class="toolbar">
       <div class="group">
-        <button id="penButton" class="active" type="button">Pen</button>
-        <button id="lineButton" type="button">Line</button>
-        <button id="highlighterButton" type="button">High</button>
-        <button id="eraserButton" type="button">Eraser</button>
-      </div>
-      <div id="swatches" class="group" aria-label="Colors"></div>
-      <div class="group">
-        <input id="colorInput" type="color" value="#111111" aria-label="Custom color" />
-        <div class="size-control">
-          <input id="sizeInput" type="range" min="1" max="36" value="5" aria-label="Stroke size" />
-          <span id="sizeLabel">5px</span>
-        </div>
-      </div>
-      <div class="group">
-        <button id="undoButton" type="button">Undo</button>
-        <button id="redoButton" type="button">Redo</button>
         <button id="clearButton" type="button">Clear</button>
       </div>
       <div class="group">
         <button id="snapshotButton" type="button">PC Shot</button>
         <button id="hideSnapshotButton" type="button" disabled>Hide PC</button>
-        <select id="paperSelect" aria-label="Paper">
-          <option value="blank">Blank</option>
-          <option value="lined">Lined</option>
-          <option value="grid">Grid</option>
-          <option value="dots">Dots</option>
-        </select>
+        <button id="settingsButton" type="button">Settings</button>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">Offline</span></div>
     </div>
+    <section id="settingsPanel" class="settings-panel" hidden>
+      <div id="settingsTarget" class="settings-title">Pen selected</div>
+      <label class="settings-row">
+        Size
+        <input id="buttonSizeInput" type="range" min="34" max="76" value="42" />
+        <output id="buttonSizeOutput">42</output>
+      </label>
+      <label class="settings-row">
+        Opacity
+        <input id="toolbarOpacityInput" type="range" min="35" max="100" value="94" />
+        <output id="toolbarOpacityOutput">94%</output>
+      </label>
+    </section>
+    <button id="colorButton" class="color-button" type="button" aria-label="Pen color" title="Pen color">
+      <span id="currentColorDot" class="color-dot"></span>
+    </button>
+    <section id="colorPanel" class="color-panel" hidden aria-label="Pen colors">
+      <button class="color-swatch" type="button" data-color="#111111" style="background: #111111" aria-label="Black"></button>
+      <button class="color-swatch" type="button" data-color="#e03131" style="background: #e03131" aria-label="Red"></button>
+      <button class="color-swatch" type="button" data-color="#f08c00" style="background: #f08c00" aria-label="Orange"></button>
+      <button class="color-swatch" type="button" data-color="#2f9e44" style="background: #2f9e44" aria-label="Green"></button>
+      <button class="color-swatch" type="button" data-color="#1971c2" style="background: #1971c2" aria-label="Blue"></button>
+      <button class="color-swatch" type="button" data-color="#7048e8" style="background: #7048e8" aria-label="Purple"></button>
+      <button class="color-swatch" type="button" data-color="#d6336c" style="background: #d6336c" aria-label="Pink"></button>
+      <input id="customColorInput" type="color" value="#111111" aria-label="Custom color" />
+    </section>
 
     <script>
       const canvas = document.querySelector("#ink");
       const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      const stage = document.querySelector("#stage");
+      const toolbar = document.querySelector(".toolbar");
+      const toolLayer = document.querySelector("#toolLayer");
+      const settingsPanel = document.querySelector("#settingsPanel");
       const penButton = document.querySelector("#penButton");
       const lineButton = document.querySelector("#lineButton");
-      const highlighterButton = document.querySelector("#highlighterButton");
       const eraserButton = document.querySelector("#eraserButton");
       const undoButton = document.querySelector("#undoButton");
-      const redoButton = document.querySelector("#redoButton");
+      const toolButtons = [penButton, lineButton, eraserButton];
+      const passthroughButtons = [penButton, lineButton, eraserButton, undoButton];
       const clearButton = document.querySelector("#clearButton");
       const snapshotButton = document.querySelector("#snapshotButton");
       const hideSnapshotButton = document.querySelector("#hideSnapshotButton");
-      const colorInput = document.querySelector("#colorInput");
-      const sizeInput = document.querySelector("#sizeInput");
-      const sizeLabel = document.querySelector("#sizeLabel");
-      const paperSelect = document.querySelector("#paperSelect");
-      const swatchesEl = document.querySelector("#swatches");
+      const settingsButton = document.querySelector("#settingsButton");
+      const settingsTarget = document.querySelector("#settingsTarget");
+      const buttonSizeInput = document.querySelector("#buttonSizeInput");
+      const toolbarOpacityInput = document.querySelector("#toolbarOpacityInput");
+      const buttonSizeOutput = document.querySelector("#buttonSizeOutput");
+      const toolbarOpacityOutput = document.querySelector("#toolbarOpacityOutput");
+      const colorButton = document.querySelector("#colorButton");
+      const colorPanel = document.querySelector("#colorPanel");
+      const currentColorDot = document.querySelector("#currentColorDot");
+      const customColorInput = document.querySelector("#customColorInput");
+      const colorSwatches = Array.from(document.querySelectorAll(".color-swatch"));
       const dot = document.querySelector("#dot");
       const statusEl = document.querySelector("#status");
 
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
-      const buildId = "whiteboard-tools-20260428-2";
-      const palette = ["#111111", "#e03131", "#f08c00", "#2f9e44", "#1971c2", "#7048e8", "#d6336c", "#868e96"];
+      const buildId = "whiteboard-floating-tools-20260429-2";
+      const settingsKey = "whiteboard.floatingToolSettings.v1";
+      const colorKey = "whiteboard.penColor.v1";
+      const defaultSettings = {
+        tools: {
+          pen: { x: 0, y: 16, size: 42, opacity: 94 },
+          line: { x: 0, y: 30, size: 42, opacity: 94 },
+          eraser: { x: 0, y: 44, size: 42, opacity: 94 },
+          undo: { x: 0, y: 58, size: 42, opacity: 94 },
+        },
+      };
 
       const state = {
         monitor: { width: 16, height: 10 },
         tool: "pen",
-        color: "#111111",
+        selectedControl: "pen",
+        color: localStorage.getItem(colorKey) || "#111111",
         size: 5,
-        paper: "blank",
         snapshot: null,
         snapshotVisible: false,
         dpr: window.devicePixelRatio || 1,
         strokes: [],
         undone: [],
+        floatingSettings: loadFloatingSettings(),
       };
 
       function setStatus(text, connected = false) {
@@ -264,6 +423,36 @@
 
       function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
+      }
+
+      function savedNumber(value, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallback;
+      }
+
+      function loadFloatingSettings() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(settingsKey) || "{}");
+          const tools = JSON.parse(JSON.stringify(defaultSettings.tools));
+          for (const tool of Object.keys(tools)) {
+            const savedTool = saved.tools && saved.tools[tool] ? saved.tools[tool] : {};
+            tools[tool] = {
+              x: clamp(savedNumber(savedTool.x, tools[tool].x), 0, 100),
+              y: clamp(savedNumber(savedTool.y, tools[tool].y), 0, 100),
+              size: clamp(savedNumber(savedTool.size, savedNumber(saved.buttonSize, tools[tool].size)), 34, 76),
+              opacity: clamp(savedNumber(savedTool.opacity, savedNumber(saved.opacity, tools[tool].opacity)), 35, 100),
+            };
+          }
+          return {
+            tools,
+          };
+        } catch (_) {
+          return JSON.parse(JSON.stringify(defaultSettings));
+        }
+      }
+
+      function saveFloatingSettings() {
+        localStorage.setItem(settingsKey, JSON.stringify(state.floatingSettings));
       }
 
       function wsUrl() {
@@ -307,6 +496,7 @@
             if (message.type === "ready" && message.monitor) {
               state.monitor = message.monitor;
               resizeStage();
+              applyFloatingSettings();
             }
           });
           this.ws.addEventListener("close", () => {
@@ -438,7 +628,11 @@
           } catch (_) {}
 
           if (this.active.stroke.tool !== "line") {
-            drawDot(localPoint, this.active.stroke);
+            if (this.active.stroke.tool === "eraser") {
+              redraw(this.active.stroke);
+            } else {
+              drawDot(localPoint, this.active.stroke);
+            }
           }
           this.transport.sendPriority("down", ratio, event);
           updateHistoryButtons();
@@ -468,7 +662,11 @@
           } else if (distance(this.active.lastPoint, point) >= 0.35) {
             this.active.pathLength += distance(this.active.lastPoint, point);
             stroke.points.push(point);
-            drawSegment(this.active.lastPoint, point, stroke);
+            if (stroke.tool === "eraser") {
+              redraw(stroke);
+            } else {
+              drawSegment(this.active.lastPoint, point, stroke);
+            }
             this.active.lastPoint = point;
           }
           this.active.lastRatio = ratio;
@@ -495,7 +693,11 @@
             if (tailDistance > 0.35) {
               this.active.pathLength += tailDistance;
               stroke.points.push(point);
-              drawSegment(this.active.lastPoint, point, stroke);
+              if (stroke.tool === "eraser") {
+                redraw(stroke);
+              } else {
+                drawSegment(this.active.lastPoint, point, stroke);
+              }
               this.active.lastPoint = point;
               this.active.lastRatio = ratio;
             }
@@ -533,7 +735,11 @@
             y: clamp(start.y + dy, 0, canvas.height),
           };
           stroke.points.push(endPoint);
-          drawSegment(start, endPoint, stroke);
+          if (stroke.tool === "eraser") {
+            redraw(stroke);
+          } else {
+            drawSegment(start, endPoint, stroke);
+          }
           const ratio = ratioFromCanvasPoint(endPoint);
           this.active.lastPoint = endPoint;
           this.active.lastRatio = ratio;
@@ -588,6 +794,8 @@
 
       const transport = new PointerTransport();
       const engine = new StrokeEngine(transport);
+      const strokeCanvas = document.createElement("canvas");
+      const strokeCtx = strokeCanvas.getContext("2d");
 
       function resizeStage() {
         state.dpr = window.devicePixelRatio || 1;
@@ -610,6 +818,8 @@
         if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
           canvas.width = pixelWidth;
           canvas.height = pixelHeight;
+          strokeCanvas.width = pixelWidth;
+          strokeCanvas.height = pixelHeight;
           redraw();
         }
       }
@@ -618,9 +828,9 @@
         const tool = state.tool;
         return {
           tool,
-          color: tool === "eraser" ? "#ffffff" : state.color,
-          size: tool === "highlighter" ? state.size * 2.2 : state.size,
-          alpha: tool === "highlighter" ? 0.34 : 1,
+          color: tool === "eraser" ? "#000000" : state.color,
+          size: tool === "eraser" ? 18 : state.size,
+          alpha: 1,
           points: tool === "line" ? [point, point] : [point],
         };
       }
@@ -638,12 +848,21 @@
       function redraw(previewStroke = null) {
         drawPaper();
         drawSnapshot();
+        drawStrokeLayer(previewStroke);
+      }
+
+      function drawStrokeLayer(previewStroke = null) {
+        strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
         for (const stroke of state.strokes) {
-          drawStroke(stroke);
+          drawStroke(stroke, strokeCtx);
         }
         if (previewStroke) {
-          drawStroke(previewStroke);
+          drawStroke(previewStroke, strokeCtx);
         }
+        ctx.save();
+        ctx.globalCompositeOperation = "source-over";
+        ctx.drawImage(strokeCanvas, 0, 0);
+        ctx.restore();
       }
 
       function drawPaper() {
@@ -651,39 +870,6 @@
         ctx.globalCompositeOperation = "source-over";
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        const step = Math.round(32 * state.dpr);
-        ctx.strokeStyle = "rgba(25, 113, 194, 0.16)";
-        ctx.fillStyle = "rgba(25, 113, 194, 0.18)";
-        ctx.lineWidth = Math.max(1, state.dpr);
-        if (state.paper === "lined") {
-          for (let y = step; y < canvas.height; y += step) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width, y);
-            ctx.stroke();
-          }
-        } else if (state.paper === "grid") {
-          for (let x = step; x < canvas.width; x += step) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, canvas.height);
-            ctx.stroke();
-          }
-          for (let y = step; y < canvas.height; y += step) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width, y);
-            ctx.stroke();
-          }
-        } else if (state.paper === "dots") {
-          for (let x = step; x < canvas.width; x += step) {
-            for (let y = step; y < canvas.height; y += step) {
-              ctx.beginPath();
-              ctx.arc(x, y, Math.max(1.2, 1.2 * state.dpr), 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-        }
         ctx.restore();
       }
 
@@ -697,69 +883,57 @@
         ctx.restore();
       }
 
-      function drawStroke(stroke) {
+      function drawStroke(stroke, targetCtx = ctx) {
         if (!stroke.points.length) {
           return;
         }
         if (stroke.points.length === 1) {
-          drawDot(stroke.points[0], stroke);
+          drawDot(stroke.points[0], stroke, targetCtx);
           return;
         }
         for (let i = 1; i < stroke.points.length; i += 1) {
-          drawSegment(stroke.points[i - 1], stroke.points[i], stroke);
+          drawSegment(stroke.points[i - 1], stroke.points[i], stroke, targetCtx);
         }
       }
 
-      function drawSegment(from, to, stroke) {
-        ctx.save();
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.globalAlpha = stroke.alpha;
-        ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = stroke.color;
-        ctx.lineWidth = Math.max(1, stroke.size * state.dpr);
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-        ctx.stroke();
-        ctx.restore();
+      function drawSegment(from, to, stroke, targetCtx = ctx) {
+        targetCtx.save();
+        targetCtx.lineCap = "round";
+        targetCtx.lineJoin = "round";
+        targetCtx.globalAlpha = stroke.alpha;
+        targetCtx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
+        targetCtx.strokeStyle = stroke.color;
+        targetCtx.lineWidth = Math.max(1, stroke.size * state.dpr);
+        targetCtx.beginPath();
+        targetCtx.moveTo(from.x, from.y);
+        targetCtx.lineTo(to.x, to.y);
+        targetCtx.stroke();
+        targetCtx.restore();
       }
 
-      function drawDot(point, stroke) {
-        ctx.save();
-        ctx.globalAlpha = stroke.alpha;
-        ctx.fillStyle = stroke.color;
+      function drawDot(point, stroke, targetCtx = ctx) {
+        targetCtx.save();
+        targetCtx.globalAlpha = stroke.alpha;
+        targetCtx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
+        targetCtx.fillStyle = stroke.color;
         const radius = Math.max(1, stroke.size * state.dpr) / 2;
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+        targetCtx.beginPath();
+        targetCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        targetCtx.fill();
+        targetCtx.restore();
       }
 
       function setTool(tool) {
         state.tool = tool;
+        state.selectedControl = tool;
         for (const [button, value] of [
           [penButton, "pen"],
           [lineButton, "line"],
-          [highlighterButton, "highlighter"],
           [eraserButton, "eraser"],
         ]) {
           button.classList.toggle("active", tool === value);
         }
-      }
-
-      function setColor(color) {
-        state.color = color;
-        colorInput.value = color;
-        for (const button of swatchesEl.querySelectorAll(".swatch")) {
-          button.classList.toggle("active", button.dataset.color === color);
-        }
-      }
-
-      function setSize(size) {
-        state.size = Number(size);
-        sizeInput.value = String(state.size);
-        sizeLabel.textContent = `${state.size}px`;
+        applyFloatingSettings();
       }
 
       function undo() {
@@ -768,16 +942,6 @@
           return;
         }
         state.undone.push(stroke);
-        redraw();
-        updateHistoryButtons();
-      }
-
-      function redo() {
-        const stroke = state.undone.pop();
-        if (!stroke) {
-          return;
-        }
-        state.strokes.push(stroke);
         redraw();
         updateHistoryButtons();
       }
@@ -792,8 +956,6 @@
       }
 
       function updateHistoryButtons() {
-        undoButton.disabled = state.strokes.length === 0;
-        redoButton.disabled = state.undone.length === 0;
         hideSnapshotButton.disabled = !state.snapshot;
         hideSnapshotButton.textContent = state.snapshotVisible ? "Hide PC" : "Show PC";
       }
@@ -861,19 +1023,217 @@
         };
       }
 
-      function distance(left, right) {
-        return Math.hypot(left.x - right.x, left.y - right.y);
+      function pointerRatioFromClient(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1),
+          y: clamp((clientY - rect.top) / Math.max(1, rect.height), 0, 1),
+        };
       }
 
-      for (const color of palette) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "swatch";
-        button.dataset.color = color;
-        button.style.setProperty("--swatch", color);
-        button.style.background = color;
-        button.addEventListener("click", () => setColor(color));
-        swatchesEl.appendChild(button);
+      function sendRemoteClickAt(clientX, clientY, sourceEvent) {
+        const ratio = pointerRatioFromClient(clientX, clientY);
+        const source = {
+          pointerId: sourceEvent.pointerId,
+          pointerType: sourceEvent.pointerType || "touch",
+          pressure: sourceEvent.pressure || 0.5,
+        };
+        transport.sendPriority("down", ratio, source);
+        transport.sendPriority("up", ratio, source);
+      }
+
+      function applyFloatingSettings() {
+        const selected = selectedControlSettings();
+
+        settingsTarget.textContent = `${controlLabel(state.selectedControl)} selected`;
+        buttonSizeInput.value = String(selected.size);
+        toolbarOpacityInput.value = String(selected.opacity);
+        buttonSizeOutput.textContent = String(selected.size);
+        toolbarOpacityOutput.textContent = `${selected.opacity}%`;
+
+        requestAnimationFrame(() => {
+          for (const button of passthroughButtons) {
+            applyToolButtonStyle(button);
+            placeToolButton(button);
+          }
+          positionSettingsPanel();
+        });
+      }
+
+      function selectedControlSettings() {
+        return state.floatingSettings.tools[state.selectedControl] || defaultSettings.tools[state.selectedControl];
+      }
+
+      function controlLabel(control) {
+        if (control === "pen") return "Pen";
+        if (control === "line") return "Line";
+        if (control === "eraser") return "Eraser";
+        return "Undo";
+      }
+
+      function applyToolButtonStyle(button) {
+        const key = floatingButtonKey(button);
+        const settings = state.floatingSettings.tools[key] || defaultSettings.tools[key];
+        const size = settings.size;
+        button.style.height = `${size}px`;
+        button.style.width = `${size}px`;
+        button.style.minWidth = `${size}px`;
+        button.style.fontSize = `${clamp(size * 0.31, 12, 17)}px`;
+        button.style.opacity = String(settings.opacity / 100);
+      }
+
+      function placeToolButton(button) {
+        const key = floatingButtonKey(button);
+        const position = state.floatingSettings.tools[key] || defaultSettings.tools[key];
+        const safe = 8;
+        const rect = stage.getBoundingClientRect();
+        const minLeft = rect.left + safe;
+        const minTop = rect.top + safe;
+        const maxLeft = Math.max(minLeft, rect.right - button.offsetWidth - safe);
+        const maxTop = Math.max(minTop, rect.bottom - button.offsetHeight - safe);
+        const left = minLeft + ((maxLeft - minLeft) * position.x) / 100;
+        const top = minTop + ((maxTop - minTop) * position.y) / 100;
+        button.style.left = `${left}px`;
+        button.style.top = `${top}px`;
+      }
+
+      function updateToolPositionFromClient(button, clientX, clientY) {
+        const key = floatingButtonKey(button);
+        const settings = state.floatingSettings.tools[key] || defaultSettings.tools[key];
+        const safe = 8;
+        const rect = stage.getBoundingClientRect();
+        const minLeft = rect.left + safe;
+        const minTop = rect.top + safe;
+        const maxLeft = Math.max(minLeft, rect.right - button.offsetWidth - safe);
+        const maxTop = Math.max(minTop, rect.bottom - button.offsetHeight - safe);
+        const left = clamp(clientX - button.offsetWidth / 2, minLeft, maxLeft);
+        const top = clamp(clientY - button.offsetHeight / 2, minTop, maxTop);
+        button.style.left = `${left}px`;
+        button.style.top = `${top}px`;
+        state.floatingSettings.tools[key] = {
+          ...settings,
+          x: maxLeft === minLeft ? 0 : ((left - minLeft) / (maxLeft - minLeft)) * 100,
+          y: maxTop === minTop ? 0 : ((top - minTop) / (maxTop - minTop)) * 100,
+        };
+      }
+
+      function floatingButtonKey(button) {
+        return button.dataset.tool || button.dataset.action;
+      }
+
+      function positionSettingsPanel() {
+        if (settingsPanel.hidden) {
+          return;
+        }
+        const safe = 12;
+        const toolbarRect = toolbar.getBoundingClientRect();
+        const left = clamp(toolbarRect.left, safe, Math.max(safe, window.innerWidth - settingsPanel.offsetWidth - safe));
+        const belowTop = toolbarRect.bottom + 8;
+        const top = belowTop + settingsPanel.offsetHeight <= window.innerHeight - safe
+          ? belowTop
+          : Math.max(safe, toolbarRect.top - settingsPanel.offsetHeight - 8);
+        settingsPanel.style.left = `${left}px`;
+        settingsPanel.style.top = `${top}px`;
+      }
+
+      function updateFloatingSetting(key, value) {
+        const control = state.selectedControl;
+        state.floatingSettings.tools[control] = {
+          ...state.floatingSettings.tools[control],
+          [key]: Number(value),
+        };
+        saveFloatingSettings();
+        applyFloatingSettings();
+      }
+
+      function setPenColor(color) {
+        if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
+          color = "#111111";
+        }
+        state.color = color;
+        localStorage.setItem(colorKey, color);
+        currentColorDot.style.background = color;
+        customColorInput.value = color;
+        for (const swatch of colorSwatches) {
+          swatch.classList.toggle("active", swatch.dataset.color.toLowerCase() === color.toLowerCase());
+        }
+      }
+
+      function installFloatingToolButton(button) {
+        let dragState = null;
+        const dragThreshold = 8;
+
+        button.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dragState = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            dragging: false,
+          };
+          try {
+            button.setPointerCapture(event.pointerId);
+          } catch (_) {}
+        });
+
+        button.addEventListener("pointermove", (event) => {
+          if (!dragState || event.pointerId !== dragState.pointerId) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          const moved = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY);
+          if (moved >= dragThreshold) {
+            dragState.dragging = true;
+            button.classList.add("dragging");
+          }
+          if (dragState.dragging) {
+            updateToolPositionFromClient(button, event.clientX, event.clientY);
+          }
+        });
+
+        button.addEventListener("pointerup", (event) => {
+          if (!dragState || event.pointerId !== dragState.pointerId) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          if (dragState.dragging) {
+            updateToolPositionFromClient(button, event.clientX, event.clientY);
+            saveFloatingSettings();
+          } else {
+            const key = floatingButtonKey(button);
+            state.selectedControl = key;
+            if (button.dataset.tool) {
+              setTool(button.dataset.tool);
+            } else if (button.dataset.action === "undo") {
+              undo();
+              applyFloatingSettings();
+            }
+            sendRemoteClickAt(event.clientX, event.clientY, event);
+          }
+          button.classList.remove("dragging");
+          dragState = null;
+        });
+
+        button.addEventListener("pointercancel", (event) => {
+          if (dragState && dragState.dragging) {
+            saveFloatingSettings();
+          }
+          button.classList.remove("dragging");
+          dragState = null;
+          event.stopPropagation();
+        });
+
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+      }
+
+      function distance(left, right) {
+        return Math.hypot(left.x - right.x, left.y - right.y);
       }
 
       canvas.addEventListener("pointerdown", (event) => engine.start(event), { passive: false });
@@ -882,28 +1242,61 @@
       canvas.addEventListener("pointercancel", (event) => engine.finish(event), { passive: false });
       canvas.addEventListener("lostpointercapture", (event) => engine.forceFinish(event));
 
-      penButton.addEventListener("click", () => setTool("pen"));
-      lineButton.addEventListener("click", () => setTool("line"));
-      highlighterButton.addEventListener("click", () => setTool("highlighter"));
-      eraserButton.addEventListener("click", () => setTool("eraser"));
-      undoButton.addEventListener("click", undo);
-      redoButton.addEventListener("click", redo);
+      for (const button of passthroughButtons) {
+        installFloatingToolButton(button);
+      }
       clearButton.addEventListener("click", clearAll);
       snapshotButton.addEventListener("click", loadSnapshot);
       hideSnapshotButton.addEventListener("click", toggleSnapshot);
-      colorInput.addEventListener("input", (event) => setColor(event.target.value));
-      sizeInput.addEventListener("input", (event) => setSize(event.target.value));
-      paperSelect.addEventListener("change", (event) => {
-        state.paper = event.target.value;
-        redraw();
+      settingsButton.addEventListener("click", () => {
+        settingsPanel.hidden = !settingsPanel.hidden;
+        settingsButton.classList.toggle("active", !settingsPanel.hidden);
+        applyFloatingSettings();
       });
 
-      for (const control of document.querySelectorAll("button, input, select")) {
+      buttonSizeInput.addEventListener("input", (event) => updateFloatingSetting("size", event.target.value));
+      toolbarOpacityInput.addEventListener("input", (event) => updateFloatingSetting("opacity", event.target.value));
+
+      colorButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+      colorButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        colorPanel.hidden = !colorPanel.hidden;
+        colorButton.classList.toggle("active", !colorPanel.hidden);
+      });
+      for (const swatch of colorSwatches) {
+        swatch.addEventListener("pointerdown", (event) => event.stopPropagation());
+        swatch.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setPenColor(swatch.dataset.color);
+        });
+      }
+      customColorInput.addEventListener("pointerdown", (event) => event.stopPropagation());
+      customColorInput.addEventListener("input", (event) => setPenColor(event.target.value));
+
+      for (const control of toolbar.querySelectorAll("button")) {
         control.addEventListener("pointerdown", (event) => event.stopPropagation());
+        control.addEventListener("pointerup", (event) => event.stopPropagation());
+        control.addEventListener("pointercancel", (event) => event.stopPropagation());
       }
 
-      window.addEventListener("resize", resizeStage);
-      window.addEventListener("orientationchange", () => setTimeout(resizeStage, 180));
+      for (const control of settingsPanel.querySelectorAll("input")) {
+        control.addEventListener("pointerdown", (event) => event.stopPropagation());
+        control.addEventListener("pointermove", (event) => event.stopPropagation());
+        control.addEventListener("pointerup", (event) => event.stopPropagation());
+      }
+
+      window.addEventListener("resize", () => {
+        resizeStage();
+        applyFloatingSettings();
+      });
+      window.addEventListener("orientationchange", () => {
+        setTimeout(() => {
+          resizeStage();
+          applyFloatingSettings();
+        }, 180);
+      });
       window.addEventListener("blur", (event) => engine.forceFinish(event));
       document.addEventListener("visibilitychange", (event) => {
         if (document.hidden) {
@@ -917,10 +1310,10 @@
       window.addEventListener("gesturechange", (event) => event.preventDefault());
       window.addEventListener("gestureend", (event) => event.preventDefault());
 
-      setColor(state.color);
-      setSize(state.size);
       updateHistoryButtons();
       resizeStage();
+      applyFloatingSettings();
+      setPenColor(state.color);
       redraw();
       transport.connect();
     </script>

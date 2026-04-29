@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LaTeX Cloud Editor</title>
+  <script src="https://cdn.jsdelivr.net/npm/yjs@13.6.24/dist/yjs.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs" type="module"></script>
+  <style>
+    :root {
+      --bg: #1e1f22;
+      --panel: #2b2d30;
+      --border: #3d4147;
+      --text: #d7d9de;
+      --muted: #9aa0a6;
+      --accent: #89a889;
+      --accent-hover: #9ab79a;
+      --danger: #b66a60;
+      --warning: #d9a36c;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-right: auto;
+    }
+    .btn {
+      background: var(--accent);
+      color: #172016;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn.secondary:hover { background: rgba(255,255,255,0.05); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #status {
+      font-size: 12px;
+      color: var(--muted);
+      min-width: 140px;
+      text-align: right;
+    }
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    #editor-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border-right: 1px solid var(--border);
+    }
+    #editor-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    #monaco-container {
+      flex: 1;
+      overflow: hidden;
+    }
+    #preview-pane {
+      width: 45%;
+      min-width: 320px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+    }
+    #preview-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    #pdf-container {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+    }
+    .pdf-page {
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    #error-panel {
+      max-height: 160px;
+      overflow: auto;
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      padding: 8px 12px;
+      font-size: 12px;
+      font-family: "Cascadia Mono", "Consolas", monospace;
+    }
+    .error-item {
+      padding: 3px 0;
+      cursor: pointer;
+    }
+    .error-item:hover { opacity: 0.8; }
+    .error-item.error { color: #ff8a80; }
+    .error-item.warning { color: var(--warning); }
+    #settings-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    #settings-modal.open { display: flex; }
+    .modal-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      width: 420px;
+      max-width: 90vw;
+    }
+    .modal-box h2 {
+      font-size: 16px;
+      margin-bottom: 14px;
+    }
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    .form-row label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .form-row input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    #upload-input { display: none; }
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>LaTeX Cloud Editor</h1>
+      <button class="btn secondary" id="btn-settings">设置</button>
+      <button class="btn secondary" id="btn-upload">插入图片</button>
+      <button class="btn" id="btn-compile">编译 (Ctrl+Enter)</button>
+      <span id="status">未连接</span>
+    </header>
+    <div id="main">
+      <div id="editor-pane">
+        <div id="editor-toolbar">
+          <span style="font-size:12px;color:var(--muted);">Project: <b id="project-label">default</b></span>
+          <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="user-count"></span>
+        </div>
+        <div id="monaco-container"></div>
+        <div id="error-panel"></div>
+      </div>
+      <div id="preview-pane">
+        <div id="preview-toolbar">
+          <span style="font-size:12px;color:var(--muted);">PDF 预览</span>
+          <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="compile-status"></span>
+        </div>
+        <div id="pdf-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="upload-input" accept="image/*" multiple />
+
+  <div id="settings-modal">
+    <div class="modal-box">
+      <h2>连接设置</h2>
+      <div class="form-row">
+        <label>云端服务器地址 (WebSocket)</label>
+        <input type="text" id="setting-cloud" value="ws://127.0.0.1:9800/ws" />
+      </div>
+      <div class="form-row">
+        <label>本地桥接地址 (HTTP)</label>
+        <input type="text" id="setting-local" value="http://127.0.0.1:9801" />
+      </div>
+      <div class="form-row">
+        <label>项目 ID</label>
+        <input type="text" id="setting-project" value="demo-project" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="btn-cancel-settings">取消</button>
+        <button class="btn" id="btn-save-settings">保存并连接</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
+
+    // ---- Settings ----
+    const settings = {
+      cloudWs: localStorage.getItem('lc_cloud_ws') || 'ws://127.0.0.1:9800/ws',
+      localHttp: localStorage.getItem('lc_local_http') || 'http://127.0.0.1:9801',
+      cloudHttp: localStorage.getItem('lc_cloud_http') || 'http://127.0.0.1:9800',
+      projectId: localStorage.getItem('lc_project_id') || 'demo-project',
+    };
+
+    function saveSettings() {
+      localStorage.setItem('lc_cloud_ws', settings.cloudWs);
+      localStorage.setItem('lc_local_http', settings.localHttp);
+      localStorage.setItem('lc_cloud_http', settings.cloudHttp);
+      localStorage.setItem('lc_project_id', settings.projectId);
+    }
+
+    document.getElementById('setting-cloud').value = settings.cloudWs;
+    document.getElementById('setting-local').value = settings.localHttp;
+    document.getElementById('setting-project').value = settings.projectId;
+    document.getElementById('project-label').textContent = settings.projectId;
+
+    // ---- Monaco ----
+    const monacoScript = document.createElement('script');
+    monacoScript.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs/loader.js';
+    document.head.appendChild(monacoScript);
+
+    let editor = null;
+    let ydoc = null;
+    let ytext = null;
+    let ws = null;
+    let isRemoteUpdate = false;
+    let monacoModel = null;
+
+    function requireMonaco() {
+      return new Promise((resolve) => {
+        window.require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs' } });
+        window.require(['vs/editor/editor.main'], resolve);
+      });
+    }
+
+    function bindMonacoToYText(ed, yt) {
+      let applying = false;
+
+      ed.onDidChangeModelContent((e) => {
+        if (applying || isRemoteUpdate) return;
+        e.changes.sort((a, b) => b.rangeOffset - a.rangeOffset).forEach((change) => {
+          const pos = ed.getModel().getOffsetAt(change.range.getStartPosition());
+          if (change.rangeLength > 0) {
+            yt.delete(pos, change.rangeLength);
+          }
+          if (change.text) {
+            yt.insert(pos, change.text);
+          }
+        });
+      });
+
+      yt.observe(() => {
+        const val = yt.toString();
+        const current = ed.getValue();
+        if (val === current) return;
+        applying = true;
+        isRemoteUpdate = true;
+        const sel = ed.getSelection();
+        ed.setValue(val);
+        if (sel) {
+          try { ed.setSelection(sel); } catch (e) {}
+        }
+        applying = false;
+        isRemoteUpdate = false;
+      });
+    }
+
+    // ---- WebSocket ----
+    function connectWS() {
+      if (ws) { ws.close(); }
+      setStatus('连接中...');
+      try {
+        ws = new WebSocket(settings.cloudWs);
+      } catch (e) {
+        setStatus('连接失败');
+        return;
+      }
+
+      ws.onopen = () => {
+        setStatus('已连接');
+        ws.send(JSON.stringify({ type: 'auth', project_id: settings.projectId }));
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data);
+          if (msg.type === 'ready') {
+            setStatus('已连接 (' + settings.projectId + ')');
+          } else if (msg.type === 'yjs_update') {
+            const update = Uint8Array.from(atob(msg.data), c => c.charCodeAt(0));
+            Y.applyUpdate(ydoc, update);
+          } else if (msg.type === 'request_sync') {
+            // New peer needs full state
+            const update = Y.encodeStateAsUpdate(ydoc);
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(update)));
+            ws.send(JSON.stringify({type: 'yjs_update', data: b64}));
+          } else if (msg.type === 'error') {
+            setStatus('错误: ' + msg.message);
+          }
+        } catch (e) {
+          console.error('ws message error', e);
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus('已断开');
+        setTimeout(connectWS, 3000);
+      };
+
+      ws.onerror = () => {
+        setStatus('连接错误');
+      };
+    }
+
+    function sendUpdate(update) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(update)));
+      ws.send(JSON.stringify({ type: 'yjs_update', data: b64 }));
+    }
+
+    // ---- YDoc setup ----
+    ydoc = new Y.Doc();
+    ytext = ydoc.getText('tex');
+    ydoc.on('update', (update) => {
+      if (!isRemoteUpdate) {
+        sendUpdate(update);
+      }
+    });
+
+    // Periodic full-state sync to cloud (ensures new clients get complete doc)
+    setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const update = Y.encodeStateAsUpdate(ydoc);
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(update)));
+      ws.send(JSON.stringify({type: 'yjs_update', data: b64}));
+    }, 30000);
+
+    // Snapshot loop for bridge/text fallback
+    setInterval(async () => {
+      if (!settings.cloudHttp || !settings.projectId) return;
+      try {
+        await fetch(`${settings.cloudHttp}/api/projects/${encodeURIComponent(settings.projectId)}/snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: ytext.toString() }),
+        });
+      } catch (e) {
+        // silent fail
+      }
+    }, 5000);
+
+    // ---- Monaco init ----
+    monacoScript.onload = async () => {
+      await requireMonaco();
+      editor = monaco.editor.create(document.getElementById('monaco-container'), {
+        value: '',
+        language: 'latex',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: 'on',
+        wordWrap: 'on',
+        tabSize: 2,
+      });
+      monacoModel = editor.getModel();
+      bindMonacoToYText(editor, ytext);
+      connectWS();
+    };
+
+    // ---- PDF rendering ----
+    async function renderPdf(url) {
+      const container = document.getElementById('pdf-container');
+      container.innerHTML = '<div style="color:#666;font-size:13px;">加载中...</div>';
+      try {
+        const pdf = await pdfjsLib.getDocument(url).promise;
+        container.innerHTML = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const scale = 1.5;
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.className = 'pdf-page';
+          const context = canvas.getContext('2d');
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+          container.appendChild(canvas);
+          await page.render({ canvasContext: context, viewport }).promise;
+        }
+      } catch (e) {
+        container.innerHTML = '<div style="color:#b66a60;font-size:13px;">无法加载 PDF: ' + (e.message || e) + '</div>';
+      }
+    }
+
+    // ---- Compile ----
+    async function compile() {
+      const btn = document.getElementById('btn-compile');
+      btn.disabled = true;
+      document.getElementById('compile-status').innerHTML = '<span class="spinner"></span>编译中...';
+      try {
+        // Send latest snapshot first
+        await fetch(`${settings.cloudHttp}/api/projects/${encodeURIComponent(settings.projectId)}/snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: ytext.toString() }),
+        });
+
+        const resp = await fetch(`${settings.localHttp}/api/compile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: settings.projectId,
+          }),
+        });
+        const data = await resp.json();
+        showErrors(data.errors || []);
+        if (data.ok) {
+          document.getElementById('compile-status').textContent = '编译成功';
+          const pdfUrl = `${settings.localHttp}/api/pdf?project_id=${encodeURIComponent(settings.projectId)}&t=${Date.now()}`;
+          await renderPdf(pdfUrl);
+        } else {
+          document.getElementById('compile-status').textContent = '编译失败';
+        }
+      } catch (e) {
+        document.getElementById('compile-status').textContent = '编译请求失败';
+        showErrors([{ line: 0, message: '无法连接到本地桥接: ' + (e.message || e), severity: 'error' }]);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function showErrors(errors) {
+      const panel = document.getElementById('error-panel');
+      if (!errors.length) {
+        panel.innerHTML = '';
+        if (monacoModel) monaco.editor.setModelMarkers(monacoModel, 'latex', []);
+        return;
+      }
+      panel.innerHTML = errors.map((e, i) =>
+        `<div class="error-item ${e.severity || 'error'}" data-idx="${i}">
+          ${e.severity === 'warning' ? '[警告]' : '[错误]'} 行 ${e.line}: ${e.message}
+        </div>`
+      ).join('');
+      panel.querySelectorAll('.error-item').forEach((el) => {
+        el.addEventListener('click', () => {
+          const idx = parseInt(el.dataset.idx);
+          const err = errors[idx];
+          if (err.line > 0 && editor) {
+            editor.revealLineInCenter(err.line);
+            editor.setPosition({ lineNumber: err.line, column: 1 });
+            editor.focus();
+          }
+        });
+      });
+      if (monacoModel) {
+        const markers = errors.filter(e => e.line > 0).map(e => ({
+          startLineNumber: e.line,
+          startColumn: 1,
+          endLineNumber: e.line,
+          endColumn: 1000,
+          message: e.message,
+          severity: e.severity === 'warning'
+            ? monaco.MarkerSeverity.Warning
+            : monaco.MarkerSeverity.Error,
+          source: 'latex',
+        }));
+        monaco.editor.setModelMarkers(monacoModel, 'latex', markers);
+      }
+    }
+
+    // ---- Upload image ----
+    async function uploadImages(files) {
+      const form = new FormData();
+      for (const f of files) form.append('image', f);
+      try {
+        const resp = await fetch(`${settings.localHttp}/api/upload_image?project_id=${encodeURIComponent(settings.projectId)}`, {
+          method: 'POST',
+          body: form,
+        });
+        const data = await resp.json();
+        if (data.files && data.files.length) {
+          const insertions = data.files.map((f) => {
+            const fname = f.filename;
+            const texName = fname.replace(/_/g, '\\_');
+            return `\\begin{figure}[htbp]\n  \\centering\n  \\includegraphics[width=0.8\\textwidth]{figures/${texName}}\n  \\caption{Caption for ${texName}}\n  \\label{fig:${fname.replace(/\\.[^.]+$/, '')}}\n\\end{figure}\n`;
+          }).join('\n');
+          const pos = editor.getPosition();
+          editor.executeEdits('upload', [{
+            range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+            text: insertions,
+          }]);
+        }
+      } catch (e) {
+        alert('上传失败: ' + (e.message || e));
+      }
+    }
+
+    // ---- UI events ----
+    function setStatus(s) {
+      document.getElementById('status').textContent = s;
+    }
+
+    document.getElementById('btn-compile').addEventListener('click', compile);
+
+    document.getElementById('btn-settings').addEventListener('click', () => {
+      document.getElementById('settings-modal').classList.add('open');
+    });
+    document.getElementById('btn-cancel-settings').addEventListener('click', () => {
+      document.getElementById('settings-modal').classList.remove('open');
+    });
+    document.getElementById('btn-save-settings').addEventListener('click', () => {
+      settings.cloudWs = document.getElementById('setting-cloud').value.trim();
+      settings.localHttp = document.getElementById('setting-local').value.trim();
+      settings.projectId = document.getElementById('setting-project').value.trim() || 'demo-project';
+      settings.cloudHttp = settings.cloudWs.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://').replace(/\/ws$/, '');
+      document.getElementById('project-label').textContent = settings.projectId;
+      saveSettings();
+      document.getElementById('settings-modal').classList.remove('open');
+      connectWS();
+    });
+
+    const uploadInput = document.getElementById('upload-input');
+    document.getElementById('btn-upload').addEventListener('click', () => uploadInput.click());
+    uploadInput.addEventListener('change', (e) => {
+      if (e.target.files.length) uploadImages(e.target.files);
+      uploadInput.value = '';
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        compile();
+      }
+    });
+  </script>
+</body>
+</html>
