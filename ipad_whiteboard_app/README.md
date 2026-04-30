@@ -1,8 +1,8 @@
 # Whiteboard Bridge iPad App
 
-This is the native iPad client for `../tablet_whiteboard`. It does not embed the
-Safari whiteboard page. The app talks directly to the existing PC bridge through
-the same endpoints:
+This is the native iPad client for both `../tablet_whiteboard` and
+`../macOS_version/macOS_whiteboard`. It does not embed the Safari whiteboard
+page. The app talks directly to the desktop bridge through the same endpoints:
 
 - `GET /snapshot`
 - `WS /screen`
@@ -29,16 +29,23 @@ the same endpoints:
 - High-rate Flutter pointer handling with 8 ms WebSocket move batches, matching
   the current PC bridge protocol.
 
-## PC side
+## Desktop side
 
-Start the existing bridge:
+Windows:
 
 ```powershell
 cd D:\Users\WESTBROOK\Projects\Voice_input\tablet_whiteboard
 start_whiteboard.bat
 ```
 
-The PC window shows a URL like:
+macOS:
+
+```bash
+cd /Users/ayana/Voice_from_Phone/macOS_version/macOS_whiteboard
+./start_desktop_client.sh
+```
+
+The desktop bridge window shows a URL like:
 
 ```text
 http://10.28.101.46:8791/?token=...

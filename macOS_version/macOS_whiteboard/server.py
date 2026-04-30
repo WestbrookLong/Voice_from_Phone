@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import ctypes
 import ctypes.util
 import json
@@ -7,10 +8,13 @@ import secrets
 import socket
 import subprocess
 import sys
+from collections import deque
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+from PIL import ImageGrab
 
 
 ROOT = Path(__file__).resolve().parent
@@ -43,6 +47,7 @@ class CGSize(ctypes.Structure):
 
 class CGRect(ctypes.Structure):
     _fields_ = [("origin", CGPoint), ("size", CGSize)]
+
 
 kCGHIDEventTap = 0
 kCGEventMouseMoved = 5
@@ -193,6 +198,21 @@ def monitor_rect(monitor_id: int) -> dict[str, int]:
     return _display_bounds(displays[index])
 
 
+def capture_monitor_jpeg(monitor: dict[str, int], quality: int = 72) -> bytes:
+    bbox = (
+        monitor["left"],
+        monitor["top"],
+        monitor["left"] + monitor["width"],
+        monitor["top"] + monitor["height"],
+    )
+    image = ImageGrab.grab(bbox=bbox, all_screens=True)
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=max(35, min(90, quality)), optimize=False)
+    return buffer.getvalue()
+
+
 def clamp_ratio(value: Any) -> float:
     return max(0.0, min(1.0, float(value)))
 
@@ -227,6 +247,62 @@ def parse_pointer_message(raw: str) -> list[dict[str, Any]]:
             raise ValueError("pointer_batch.events must be a list")
         return [event for event in events[:256] if isinstance(event, dict)]
     raise ValueError("unsupported message type")
+
+
+class MovePacer:
+    def __init__(self, monitor: dict[str, int], interval_seconds: float = 0.002, max_queue: int = 4096) -> None:
+        self.monitor = monitor
+        self.interval_seconds = interval_seconds
+        self.max_queue = max_queue
+        self.queue: deque[dict[str, Any]] = deque()
+        self.wake = asyncio.Event()
+        self.idle = asyncio.Event()
+        self.idle.set()
+        self.closed = False
+        self.task = asyncio.create_task(self._run())
+
+    def enqueue(self, event: dict[str, Any]) -> None:
+        if self.closed:
+            return
+        if len(self.queue) >= self.max_queue:
+            self.queue.popleft()
+        self.queue.append(event)
+        self.idle.clear()
+        self.wake.set()
+
+    async def flush(self) -> None:
+        if self.closed:
+            return
+        self.wake.set()
+        await self.idle.wait()
+
+    async def close(self) -> None:
+        self.closed = True
+        self.queue.clear()
+        self.wake.set()
+        self.task.cancel()
+        try:
+            await self.task
+        except asyncio.CancelledError:
+            pass
+
+    async def _run(self) -> None:
+        while True:
+            if not self.queue:
+                self.idle.set()
+                self.wake.clear()
+                await self.wake.wait()
+                if self.closed:
+                    return
+                continue
+
+            self.idle.clear()
+            event = self.queue.popleft()
+            try:
+                inject_pointer_event(event, self.monitor)
+            except Exception as exc:
+                print(f"[whiteboard move pacer error] {exc}", flush=True)
+            await asyncio.sleep(self.interval_seconds)
 
 
 def no_cache_headers() -> dict[str, str]:
@@ -300,6 +376,53 @@ async def health(_: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def snapshot(request: web.Request) -> web.Response:
+    app = request.app
+    if request.query.get("token") != app["token"]:
+        raise web.HTTPUnauthorized(text="invalid token")
+    quality = int(request.query.get("quality", "72"))
+    frame = await asyncio.to_thread(capture_monitor_jpeg, app["monitor_rect"], quality)
+    return web.Response(
+        body=frame,
+        content_type="image/jpeg",
+        headers={
+            **no_cache_headers(),
+            "X-Monitor-Width": str(app["monitor_rect"]["width"]),
+            "X-Monitor-Height": str(app["monitor_rect"]["height"]),
+        },
+    )
+
+
+async def screen(request: web.Request) -> web.WebSocketResponse:
+    app = request.app
+    if request.query.get("token") != app["token"]:
+        raise web.HTTPUnauthorized(text="invalid token")
+
+    fps = max(1, min(int(request.query.get("fps", "12")), 24))
+    quality = max(30, min(int(request.query.get("quality", "58")), 85))
+    interval = 1 / fps
+
+    ws = web.WebSocketResponse(heartbeat=20, max_msg_size=16 * 1024 * 1024)
+    await ws.prepare(request)
+    peer = request.remote or "unknown"
+    print(f"[whiteboard screen] connected: {peer}", flush=True)
+    try:
+        await ws.send_json({"type": "screen_meta", "monitor": app["monitor_rect"], "fps": fps, "quality": quality})
+        while not ws.closed:
+            started = asyncio.get_running_loop().time()
+            frame = await asyncio.to_thread(capture_monitor_jpeg, app["monitor_rect"], quality)
+            await ws.send_bytes(frame)
+            elapsed = asyncio.get_running_loop().time() - started
+            await asyncio.sleep(max(0.001, interval - elapsed))
+    except (asyncio.CancelledError, ConnectionResetError, RuntimeError):
+        pass
+    except Exception as exc:
+        print(f"[whiteboard screen error] {exc}", flush=True)
+    finally:
+        print(f"[whiteboard screen] disconnected: {peer}", flush=True)
+    return ws
+
+
 async def pointer(request: web.Request) -> web.WebSocketResponse:
     app = request.app
     if request.query.get("token") != app["token"]:
@@ -313,6 +436,7 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
     peer = request.remote or "unknown"
     mouse_is_down = False
     last_position = (monitor["left"], monitor["top"])
+    move_pacer = MovePacer(monitor)
     print(f"[whiteboard pointer] connected: {peer}", flush=True)
     try:
         async for msg in ws:
@@ -322,6 +446,14 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
                 events = parse_pointer_message(msg.data)
                 for event in events:
                     action = event.get("action")
+                    if action == "move":
+                        move_pacer.enqueue(event)
+                        last_position = (
+                            int(monitor["left"] + clamp_ratio(event.get("x")) * max(1, monitor["width"] - 1)),
+                            int(monitor["top"] + clamp_ratio(event.get("y")) * max(1, monitor["height"] - 1)),
+                        )
+                        continue
+                    await move_pacer.flush()
                     if action == "down" and mouse_is_down:
                         left_mouse_up(*last_position)
                         mouse_is_down = False
@@ -334,6 +466,7 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
                 print(f"[whiteboard pointer error] {exc}", flush=True)
                 await ws.send_json({"type": "error", "message": str(exc)})
     finally:
+        await move_pacer.close()
         if mouse_is_down:
             try:
                 left_mouse_up(*last_position)
@@ -351,6 +484,8 @@ def create_app(token: str, monitor_id: int, lan_ip: str | None = None, port: int
     app["port"] = port or 8791
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
+    app.router.add_get("/snapshot", snapshot)
+    app.router.add_get("/screen", screen)
     app.router.add_get("/pointer", pointer)
     app.router.add_static("/static", STATIC_DIR)
     return app
@@ -372,9 +507,10 @@ def main() -> None:
     app = create_app(token=token, monitor_id=args.monitor, lan_ip=get_lan_ip(), port=args.port)
     lan_ip = get_lan_ip()
     print("iPad whiteboard bridge for macOS is running.", flush=True)
-    print(f"Open on iPad: http://{lan_ip}:{args.port}/?token={token}", flush=True)
+    print(f"Browser whiteboard: http://{lan_ip}:{args.port}/?token={token}", flush=True)
+    print(f"iPad app connect URL: http://{lan_ip}:{args.port}/?token={token}", flush=True)
     print(f"Mapping target: monitor={args.monitor}, rect={app['monitor_rect']}", flush=True)
-    print("Switch tools in the target Mac drawing app manually; this page only maps pointer strokes.", flush=True)
+    print("Switch tools in the target Mac drawing app manually; this bridge only maps pointer strokes.", flush=True)
     print("macOS may require Accessibility permission for Terminal or Python.", flush=True)
     try:
         web.run_app(app, host=args.host, port=args.port, print=None)

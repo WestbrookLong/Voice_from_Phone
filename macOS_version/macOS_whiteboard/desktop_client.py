@@ -66,8 +66,8 @@ class WhiteboardClient(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("iPad Whiteboard Bridge for macOS")
-        self.geometry("760x500")
-        self.minsize(680, 460)
+        self.geometry("820x560")
+        self.minsize(760, 520)
 
         self.events: queue.Queue[str] = queue.Queue()
         self.server_thread: WhiteboardServerThread | None = None
@@ -79,8 +79,8 @@ class WhiteboardClient(tk.Tk):
         self.port_var = tk.StringVar(value="8791")
         self.monitor_var = tk.StringVar(value="1")
         self.status_var = tk.StringVar(value="Not started")
-        self.ipad_url_var = tk.StringVar(value="")
-        self.mac_url_var = tk.StringVar(value="")
+        self.browser_url_var = tk.StringVar(value="")
+        self.app_url_var = tk.StringVar(value="")
 
         self._build_ui()
         self.after(200, self._poll_events)
@@ -93,7 +93,7 @@ class WhiteboardClient(tk.Tk):
         ttk.Label(root, text="iPad Whiteboard Bridge for macOS", font=("Helvetica Neue", 18, "bold")).pack(anchor=tk.W)
         ttk.Label(
             root,
-            text="Use the exact URL or QR code shown here. The iPad canvas sends pen strokes to the selected Mac display.",
+            text="Start one Mac bridge, then choose either browser whiteboard control or the native iPad app.",
             foreground="#555555",
         ).pack(anchor=tk.W, pady=(4, 16))
 
@@ -109,18 +109,32 @@ class WhiteboardClient(tk.Tk):
         form.columnconfigure(1, weight=1)
 
         self.url_panel = ttk.Frame(root)
-        ttk.Label(self.url_panel, text="iPad端白板网址").pack(anchor=tk.W, pady=(0, 4))
-        ipad_url_row = ttk.Frame(self.url_panel)
-        ipad_url_row.pack(fill=tk.X)
-        ttk.Entry(ipad_url_row, textvariable=self.ipad_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(ipad_url_row, text="Copy", command=lambda: self._copy_value(self.ipad_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(ipad_url_row, text="Show QR", command=lambda: self._show_qr(self.ipad_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(self.url_panel, text="方式 A: 网页白板（Safari/浏览器直接打开）").pack(anchor=tk.W, pady=(0, 4))
+        browser_url_row = ttk.Frame(self.url_panel)
+        browser_url_row.pack(fill=tk.X)
+        ttk.Entry(browser_url_row, textvariable=self.browser_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(browser_url_row, text="Copy", command=lambda: self._copy_value(self.browser_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(browser_url_row, text="Show QR", command=lambda: self._show_qr(self.browser_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
 
-        ttk.Label(self.url_panel, text="Mac端白板网址（仅本机预览/调试）").pack(anchor=tk.W, pady=(10, 4))
-        mac_url_row = ttk.Frame(self.url_panel)
-        mac_url_row.pack(fill=tk.X)
-        ttk.Entry(mac_url_row, textvariable=self.mac_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(mac_url_row, text="Copy", command=lambda: self._copy_value(self.mac_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(
+            self.url_panel,
+            text="浏览器方式：iPad 直接打开这个网址即可，本机会把网页白板上的笔迹映射到当前前台 Mac 应用。",
+            foreground="#666666",
+            wraplength=700,
+        ).pack(anchor=tk.W, pady=(6, 0))
+
+        ttk.Label(self.url_panel, text="方式 B: iPad 原生 App（ipad_whiteboard_app）").pack(anchor=tk.W, pady=(14, 4))
+        app_url_row = ttk.Frame(self.url_panel)
+        app_url_row.pack(fill=tk.X)
+        ttk.Entry(app_url_row, textvariable=self.app_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(app_url_row, text="Copy", command=lambda: self._copy_value(self.app_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(
+            self.url_panel,
+            text="原生 App 方式：在 iPad App 的 Connect 弹窗里粘贴这个地址。App 可额外使用 PC Shot 和 Stream。",
+            foreground="#666666",
+            wraplength=700,
+        ).pack(anchor=tk.W, pady=(6, 0))
 
         qr_panel = ttk.Frame(self.url_panel)
         qr_panel.pack(fill=tk.X, pady=(14, 0))
@@ -128,9 +142,9 @@ class WhiteboardClient(tk.Tk):
         self.qr_label.pack(side=tk.LEFT)
         ttk.Label(
             qr_panel,
-            text="iPad must use the iPad URL or this QR code. The Mac URL uses 127.0.0.1 and only works on this Mac.",
+            text="二维码对应的是网页白板入口。原生 App 不扫码，直接粘贴上面的 App 地址。",
             foreground="#666666",
-            wraplength=360,
+            wraplength=440,
         ).pack(side=tk.LEFT, padx=(14, 0), anchor=tk.N)
 
         self.controls = ttk.Frame(root)
@@ -190,9 +204,9 @@ class WhiteboardClient(tk.Tk):
     def _update_url(self) -> None:
         port = self.port_var.get().strip() or "8791"
         token = self.token_var.get().strip()
-        self.ipad_url_var.set(f"http://{self.lan_ip}:{port}/?token={token}&v={self.page_version}")
-        self.mac_url_var.set(f"http://127.0.0.1:{port}/?token={token}&v={self.page_version}&preview=1")
-        self._update_qr(self.ipad_url_var.get())
+        self.browser_url_var.set(f"http://{self.lan_ip}:{port}/?token={token}&v={self.page_version}")
+        self.app_url_var.set(f"http://{self.lan_ip}:{port}/?token={token}")
+        self._update_qr(self.browser_url_var.get())
 
     def _show_urls(self) -> None:
         self._update_url()
@@ -200,15 +214,15 @@ class WhiteboardClient(tk.Tk):
 
     def _hide_urls(self) -> None:
         self.url_panel.pack_forget()
-        self.ipad_url_var.set("")
-        self.mac_url_var.set("")
+        self.browser_url_var.set("")
+        self.app_url_var.set("")
         self.qr_label.configure(image="")
         self.qr_image = None
 
     def _copy_value(self, value: str) -> None:
         if not value:
             self._update_url()
-            value = self.ipad_url_var.get()
+            value = self.browser_url_var.get()
         self.clipboard_clear()
         self.clipboard_append(value)
         self.status_var.set("URL copied")
@@ -216,7 +230,7 @@ class WhiteboardClient(tk.Tk):
     def _show_qr(self, value: str) -> None:
         if not value:
             self._update_url()
-            value = self.ipad_url_var.get()
+            value = self.browser_url_var.get()
         self._update_qr(value)
 
     def _update_qr(self, url: str) -> None:
