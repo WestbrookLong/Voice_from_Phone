@@ -42,6 +42,29 @@ cd /Users/ayana/Voice_from_Phone/macOS_version/macOS_voice_input
 
 桌面客户端会显示手机访问 URL 和二维码，手机 App 可以扫码连接，手机浏览器也可以直接打开该 URL。
 
+## 公网连接
+
+桌面客户端提供 `启动公网` 按钮，会使用 Cloudflare Tunnel 把本机 `127.0.0.1:8787` 暴露成临时公网 HTTPS 地址。
+
+先安装：
+
+```bash
+brew install cloudflared
+```
+
+或保证 `cloudflared` 已经在 `PATH` 中。程序默认也会尝试查找：
+
+- `/opt/homebrew/bin/cloudflared`
+- `/usr/local/bin/cloudflared`
+
+公网连接成功后，窗口会显示一条新的公网 URL，仍然带 `token` 参数。手机不和 Mac 在同一局域网时，可以直接打开这条公网 URL。
+
+注意：
+
+- 这是临时 `trycloudflare.com` 地址，不是固定域名。
+- 当前安全边界是 `Cloudflare Tunnel + session token`，不要把链接发给不信任的人。
+- 如果关闭桌面客户端或点击“停止公网”，公网地址立即失效。
+
 ## macOS 权限
 
 macOS 可能会拦截模拟键盘输入。若手机端已连接但 Mac 没有输入文字，请到：
@@ -73,7 +96,7 @@ python3 server.py --test-text "你好 macOS"
 - 手机端换行会在 Mac 端执行 Return。
 - 删除文字会在 Mac 端发送对应数量的 Delete/Backspace。
 - 清空手机输入框只会重置本次会话状态，不会删除 Mac 上已经输入的内容。
-- 当前安全边界是局域网 + session token，不要直接暴露到公网。
+- 当前安全边界默认是局域网 + session token；如果启用公网，则变为 Cloudflare Tunnel + session token。
 
 ## 目录边界
 

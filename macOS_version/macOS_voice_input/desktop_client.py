@@ -10,6 +10,7 @@ from PIL import ImageTk
 import qrcode
 
 from server import create_app, get_lan_ip
+from tunnel import CloudflaredTunnelThread, find_cloudflared
 
 
 class BridgeServerThread(threading.Thread):
@@ -56,14 +57,17 @@ class DesktopClient(tk.Tk):
         self.geometry("640x390")
         self.minsize(580, 360)
 
-        self.events: queue.Queue[str] = queue.Queue()
+        self.events: queue.Queue[object] = queue.Queue()
         self.server_thread: BridgeServerThread | None = None
+        self.tunnel_thread: CloudflaredTunnelThread | None = None
         self.lan_ip = get_lan_ip()
 
         self.token_var = tk.StringVar(value=secrets.token_urlsafe(12))
         self.port_var = tk.StringVar(value="8787")
         self.status_var = tk.StringVar(value="未启动")
         self.url_var = tk.StringVar(value="")
+        self.public_url_var = tk.StringVar(value="")
+        self.tunnel_status_var = tk.StringVar(value="公网: 未启动")
         self.qr_image: ImageTk.PhotoImage | None = None
 
         self._build_ui()
@@ -97,6 +101,12 @@ class DesktopClient(tk.Tk):
         ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(url_row, text="复制", command=self._copy_url).pack(side=tk.LEFT, padx=(8, 0))
 
+        ttk.Label(root, text="公网访问地址").pack(anchor=tk.W, pady=(12, 4))
+        public_url_row = ttk.Frame(root)
+        public_url_row.pack(fill=tk.X)
+        ttk.Entry(public_url_row, textvariable=self.public_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(public_url_row, text="复制", command=self._copy_public_url).pack(side=tk.LEFT, padx=(8, 0))
+
         qr_panel = ttk.Frame(root)
         qr_panel.pack(fill=tk.X, pady=(14, 0))
         self.qr_label = ttk.Label(qr_panel)
@@ -115,9 +125,14 @@ class DesktopClient(tk.Tk):
         self.stop_button = ttk.Button(controls, text="停止服务", command=self._stop_server, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(controls, text="打开网页版", command=self._open_web_page).pack(side=tk.LEFT, padx=(8, 0))
+        self.public_start_button = ttk.Button(controls, text="启动公网", command=self._start_tunnel)
+        self.public_start_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.public_stop_button = ttk.Button(controls, text="停止公网", command=self._stop_tunnel, state=tk.DISABLED)
+        self.public_stop_button.pack(side=tk.LEFT, padx=(8, 0))
 
         status = ttk.Label(root, textvariable=self.status_var, foreground="#0f6b5f")
         status.pack(anchor=tk.W, pady=(8, 0))
+        ttk.Label(root, textvariable=self.tunnel_status_var, foreground="#666666").pack(anchor=tk.W, pady=(4, 0))
 
         note = ttk.Label(
             root,
@@ -150,6 +165,7 @@ class DesktopClient(tk.Tk):
         self._update_url()
 
     def _stop_server(self) -> None:
+        self._stop_tunnel()
         if self.server_thread is not None:
             self.server_thread.stop()
             self.server_thread = None
@@ -173,6 +189,15 @@ class DesktopClient(tk.Tk):
         self.clipboard_append(url)
         self.status_var.set("地址已复制")
 
+    def _copy_public_url(self) -> None:
+        url = self.public_url_var.get()
+        if not url:
+            self.status_var.set("公网地址尚未生成")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        self.status_var.set("公网地址已复制")
+
     def _open_web_page(self) -> None:
         import webbrowser
 
@@ -184,6 +209,60 @@ class DesktopClient(tk.Tk):
         token = self.token_var.get().strip()
         url = f"http://{self.lan_ip}:{port}/?token={token}"
         self.url_var.set(url)
+        self._update_qr(url)
+
+    def _current_port(self) -> int | None:
+        try:
+            port = int(self.port_var.get())
+            if port <= 0 or port > 65535:
+                raise ValueError
+            return port
+        except ValueError:
+            messagebox.showerror("端口错误", "请输入 1-65535 之间的端口。")
+            return None
+
+    def _start_tunnel(self) -> None:
+        if self.tunnel_thread is not None:
+            return
+        port = self._current_port()
+        if port is None:
+            return
+        token = self.token_var.get().strip()
+        if not token:
+            messagebox.showerror("Token 错误", "Token 不能为空。")
+            return
+        cloudflared_path = find_cloudflared()
+        if cloudflared_path is None:
+            messagebox.showerror(
+                "cloudflared 未找到",
+                "未找到 cloudflared。请先执行 `brew install cloudflared`，或确保 cloudflared 在 PATH 中。",
+            )
+            return
+        if self.server_thread is None:
+            self._start_server()
+        self.public_url_var.set("")
+        self.tunnel_status_var.set("公网: 启动中...")
+        self.tunnel_thread = CloudflaredTunnelThread(cloudflared_path, port, self.events)
+        self.tunnel_thread.start()
+        self.public_start_button.configure(state=tk.DISABLED)
+        self.public_stop_button.configure(state=tk.NORMAL)
+
+    def _stop_tunnel(self) -> None:
+        if self.tunnel_thread is not None:
+            self.tunnel_thread.stop()
+            self.tunnel_thread = None
+        self.public_url_var.set("")
+        self.tunnel_status_var.set("公网: 未启动")
+        if hasattr(self, "public_start_button"):
+            self.public_start_button.configure(state=tk.NORMAL)
+        if hasattr(self, "public_stop_button"):
+            self.public_stop_button.configure(state=tk.DISABLED)
+
+    def _update_public_url(self, base_url: str) -> None:
+        token = self.token_var.get().strip()
+        base = base_url.rstrip("/")
+        url = f"{base}/?token={token}"
+        self.public_url_var.set(url)
         self._update_qr(url)
 
     def _update_qr(self, url: str) -> None:
@@ -201,6 +280,25 @@ class DesktopClient(tk.Tk):
                 self.status_var.set("服务已启动")
                 self.start_button.configure(state=tk.DISABLED)
                 self.stop_button.configure(state=tk.NORMAL)
+            elif isinstance(event, dict):
+                event_type = event.get("type")
+                if event_type == "tunnel_started":
+                    self.tunnel_status_var.set("公网: 连接中...")
+                elif event_type == "tunnel_url":
+                    url = str(event.get("url", ""))
+                    self._update_public_url(url)
+                    self.tunnel_status_var.set("公网: 已连接")
+                elif event_type == "tunnel_error":
+                    self.tunnel_status_var.set("公网: 出错")
+                    messagebox.showerror("Tunnel error", str(event.get("message", "Unknown tunnel error.")))
+                    self._stop_tunnel()
+                elif event_type == "tunnel_exit":
+                    if self.tunnel_thread is not None:
+                        self.tunnel_thread = None
+                        self.public_start_button.configure(state=tk.NORMAL)
+                        self.public_stop_button.configure(state=tk.DISABLED)
+                        self.public_url_var.set("")
+                        self.tunnel_status_var.set(f"公网: 已停止 ({event.get('code')})")
         self.after(200, self._poll_events)
 
     def _on_close(self) -> None:

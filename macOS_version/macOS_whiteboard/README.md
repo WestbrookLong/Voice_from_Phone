@@ -22,6 +22,30 @@ cd /Users/ayana/Voice_from_Phone/macOS_version/macOS_whiteboard
 
 - `方式 A: 网页白板`：给 iPad 浏览器打开，二维码也对应这个入口。
 - `方式 B: iPad 原生 App`：给 `ipad_whiteboard_app` 粘贴使用。
+- `方式 C: 公网页面白板`：启用公网后给 iPad 浏览器打开。
+- `方式 D: 公网原生 App`：启用公网后给 `ipad_whiteboard_app` 粘贴使用。
+
+## 公网连接
+
+桌面客户端提供 `Start public` 按钮，会使用 Cloudflare Tunnel 把本机 `127.0.0.1:8791` 暴露成临时公网 HTTPS 地址。
+
+先安装：
+
+```bash
+brew install cloudflared
+```
+
+或保证 `cloudflared` 已经在 `PATH` 中。程序默认也会尝试查找：
+
+- `/opt/homebrew/bin/cloudflared`
+- `/usr/local/bin/cloudflared`
+
+公网连通后会额外生成两条地址：
+
+- `方式 C: 公网页面白板`
+- `方式 D: 公网原生 App`
+
+这样即使 iPad 和 Mac 不在同一局域网，也可以继续通过浏览器白板或原生 App 连回这台 Mac。
 
 ## 使用流程
 
@@ -38,9 +62,11 @@ cd /Users/ayana/Voice_from_Phone/macOS_version/macOS_whiteboard
 ## 注意
 
 - 网页方式和 App 方式可以共用同一个服务，但一般只保留一个主要控制端更稳。
+- 局域网地址和公网地址可以同时存在，但公网转发更依赖外部网络，延迟通常比局域网高。
 - 网页白板里的 `Pen` 在 iPad 本地画黑线，`Eraser` 只擦 iPad 本地画布，`Clear` 只清空 iPad 本地画布。
 - 原生 App 额外支持 `PC Shot` 和 `Stream`，因为 Mac 端现在已经提供了 `/snapshot` 和 `/screen`。
 - 工具切换仍然需要在 Mac 的目标绘图软件中手动完成。
+- 公网 URL 仍然带 token，不要发给不信任的人；关闭 `Stop public` 后地址立即失效。
 
 ## macOS 权限
 

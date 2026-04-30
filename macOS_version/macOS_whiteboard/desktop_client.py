@@ -11,6 +11,7 @@ from PIL import ImageTk
 import qrcode
 
 from server import create_app, get_lan_ip
+from tunnel import CloudflaredTunnelThread, find_cloudflared
 
 
 class WhiteboardServerThread(threading.Thread):
@@ -69,8 +70,9 @@ class WhiteboardClient(tk.Tk):
         self.geometry("820x560")
         self.minsize(760, 520)
 
-        self.events: queue.Queue[str] = queue.Queue()
+        self.events: queue.Queue[object] = queue.Queue()
         self.server_thread: WhiteboardServerThread | None = None
+        self.tunnel_thread: CloudflaredTunnelThread | None = None
         self.lan_ip = get_lan_ip()
         self.page_version = str(int(time.time()))
         self.qr_image: ImageTk.PhotoImage | None = None
@@ -81,6 +83,9 @@ class WhiteboardClient(tk.Tk):
         self.status_var = tk.StringVar(value="Not started")
         self.browser_url_var = tk.StringVar(value="")
         self.app_url_var = tk.StringVar(value="")
+        self.public_browser_url_var = tk.StringVar(value="")
+        self.public_app_url_var = tk.StringVar(value="")
+        self.tunnel_status_var = tk.StringVar(value="Public: stopped")
 
         self._build_ui()
         self.after(200, self._poll_events)
@@ -113,8 +118,8 @@ class WhiteboardClient(tk.Tk):
         browser_url_row = ttk.Frame(self.url_panel)
         browser_url_row.pack(fill=tk.X)
         ttk.Entry(browser_url_row, textvariable=self.browser_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(browser_url_row, text="Copy", command=lambda: self._copy_value(self.browser_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(browser_url_row, text="Show QR", command=lambda: self._show_qr(self.browser_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(browser_url_row, text="Copy", command=lambda: self._copy_value(self.browser_url_var.get(), fallback="browser")).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(browser_url_row, text="Show QR", command=lambda: self._show_qr(self.browser_url_var.get(), fallback="browser")).pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(
             self.url_panel,
@@ -127,7 +132,20 @@ class WhiteboardClient(tk.Tk):
         app_url_row = ttk.Frame(self.url_panel)
         app_url_row.pack(fill=tk.X)
         ttk.Entry(app_url_row, textvariable=self.app_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(app_url_row, text="Copy", command=lambda: self._copy_value(self.app_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(app_url_row, text="Copy", command=lambda: self._copy_value(self.app_url_var.get(), fallback="app")).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(self.url_panel, text="方式 C: 公网页面白板").pack(anchor=tk.W, pady=(14, 4))
+        public_browser_url_row = ttk.Frame(self.url_panel)
+        public_browser_url_row.pack(fill=tk.X)
+        ttk.Entry(public_browser_url_row, textvariable=self.public_browser_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(public_browser_url_row, text="Copy", command=lambda: self._copy_value(self.public_browser_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(public_browser_url_row, text="Show QR", command=lambda: self._show_qr(self.public_browser_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(self.url_panel, text="方式 D: 公网原生 App").pack(anchor=tk.W, pady=(14, 4))
+        public_app_url_row = ttk.Frame(self.url_panel)
+        public_app_url_row.pack(fill=tk.X)
+        ttk.Entry(public_app_url_row, textvariable=self.public_app_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(public_app_url_row, text="Copy", command=lambda: self._copy_value(self.public_app_url_var.get())).pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(
             self.url_panel,
@@ -153,8 +171,13 @@ class WhiteboardClient(tk.Tk):
         self.start_button.pack(side=tk.LEFT)
         self.stop_button = ttk.Button(self.controls, text="Stop service", command=self._stop_server, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.public_start_button = ttk.Button(self.controls, text="Start public", command=self._start_tunnel)
+        self.public_start_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.public_stop_button = ttk.Button(self.controls, text="Stop public", command=self._stop_tunnel, state=tk.DISABLED)
+        self.public_stop_button.pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(root, textvariable=self.status_var, foreground="#0f6b5f").pack(anchor=tk.W, pady=(8, 0))
+        ttk.Label(root, textvariable=self.tunnel_status_var, foreground="#666666").pack(anchor=tk.W, pady=(4, 0))
         ttk.Label(
             root,
             text="macOS needs Accessibility permission for Terminal, iTerm, Python, or the packaged app. Switch drawing tools in the target Mac app manually; this bridge only maps strokes.",
@@ -185,6 +208,7 @@ class WhiteboardClient(tk.Tk):
         self.server_thread.start()
 
     def _stop_server(self) -> None:
+        self._stop_tunnel()
         if self.server_thread is not None:
             self.server_thread.stop()
             self.server_thread = None
@@ -208,6 +232,62 @@ class WhiteboardClient(tk.Tk):
         self.app_url_var.set(f"http://{self.lan_ip}:{port}/?token={token}")
         self._update_qr(self.browser_url_var.get())
 
+    def _current_port(self) -> int | None:
+        try:
+            port = int(self.port_var.get())
+            if port <= 0 or port > 65535:
+                raise ValueError
+            return port
+        except ValueError:
+            messagebox.showerror("Invalid settings", "Enter a valid port.")
+            return None
+
+    def _start_tunnel(self) -> None:
+        if self.tunnel_thread is not None:
+            return
+        port = self._current_port()
+        if port is None:
+            return
+        token = self.token_var.get().strip()
+        if not token:
+            messagebox.showerror("Invalid token", "Token cannot be empty.")
+            return
+        cloudflared_path = find_cloudflared()
+        if cloudflared_path is None:
+            messagebox.showerror(
+                "cloudflared not found",
+                "Install cloudflared with `brew install cloudflared`, or make sure it is on PATH.",
+            )
+            return
+        if self.server_thread is None:
+            self._start_server()
+        self.public_browser_url_var.set("")
+        self.public_app_url_var.set("")
+        self.tunnel_status_var.set("Public: starting...")
+        self.tunnel_thread = CloudflaredTunnelThread(cloudflared_path, port, self.events)
+        self.tunnel_thread.start()
+        self.public_start_button.configure(state=tk.DISABLED)
+        self.public_stop_button.configure(state=tk.NORMAL)
+
+    def _stop_tunnel(self) -> None:
+        if self.tunnel_thread is not None:
+            self.tunnel_thread.stop()
+            self.tunnel_thread = None
+        self.public_browser_url_var.set("")
+        self.public_app_url_var.set("")
+        self.tunnel_status_var.set("Public: stopped")
+        if hasattr(self, "public_start_button"):
+            self.public_start_button.configure(state=tk.NORMAL)
+        if hasattr(self, "public_stop_button"):
+            self.public_stop_button.configure(state=tk.DISABLED)
+
+    def _update_public_urls(self, base_url: str) -> None:
+        token = self.token_var.get().strip()
+        version = self.page_version
+        base = base_url.rstrip("/")
+        self.public_browser_url_var.set(f"{base}/?token={token}&v={version}")
+        self.public_app_url_var.set(f"{base}/?token={token}")
+
     def _show_urls(self) -> None:
         self._update_url()
         self.url_panel.pack(fill=tk.X, pady=(16, 0), before=self.controls)
@@ -216,21 +296,34 @@ class WhiteboardClient(tk.Tk):
         self.url_panel.pack_forget()
         self.browser_url_var.set("")
         self.app_url_var.set("")
+        self.public_browser_url_var.set("")
+        self.public_app_url_var.set("")
         self.qr_label.configure(image="")
         self.qr_image = None
 
-    def _copy_value(self, value: str) -> None:
+    def _copy_value(self, value: str, fallback: str | None = None) -> None:
         if not value:
-            self._update_url()
-            value = self.browser_url_var.get()
+            if fallback == "browser":
+                self._update_url()
+                value = self.browser_url_var.get()
+            elif fallback == "app":
+                self._update_url()
+                value = self.app_url_var.get()
+            else:
+                self.status_var.set("URL not available")
+                return
         self.clipboard_clear()
         self.clipboard_append(value)
         self.status_var.set("URL copied")
 
-    def _show_qr(self, value: str) -> None:
+    def _show_qr(self, value: str, fallback: str | None = None) -> None:
         if not value:
-            self._update_url()
-            value = self.browser_url_var.get()
+            if fallback == "browser":
+                self._update_url()
+                value = self.browser_url_var.get()
+            else:
+                self.status_var.set("QR not available")
+                return
         self._update_qr(value)
 
     def _update_qr(self, url: str) -> None:
@@ -249,12 +342,33 @@ class WhiteboardClient(tk.Tk):
                 self.start_button.configure(state=tk.DISABLED)
                 self.stop_button.configure(state=tk.NORMAL)
                 self._show_urls()
-            elif event.startswith("error:"):
+            elif isinstance(event, str) and event.startswith("error:"):
                 self.server_thread = None
                 self.status_var.set(event)
                 self.start_button.configure(state=tk.NORMAL)
                 self.stop_button.configure(state=tk.DISABLED)
                 self._hide_urls()
+            elif isinstance(event, dict):
+                event_type = event.get("type")
+                if event_type == "tunnel_started":
+                    self.tunnel_status_var.set("Public: connecting...")
+                elif event_type == "tunnel_url":
+                    url = str(event.get("url", ""))
+                    self._update_public_urls(url)
+                    self._show_qr(self.public_browser_url_var.get())
+                    self.tunnel_status_var.set("Public: connected")
+                elif event_type == "tunnel_error":
+                    self.tunnel_status_var.set("Public: error")
+                    messagebox.showerror("Tunnel error", str(event.get("message", "Unknown tunnel error.")))
+                    self._stop_tunnel()
+                elif event_type == "tunnel_exit":
+                    if self.tunnel_thread is not None:
+                        self.tunnel_thread = None
+                        self.public_start_button.configure(state=tk.NORMAL)
+                        self.public_stop_button.configure(state=tk.DISABLED)
+                        self.public_browser_url_var.set("")
+                        self.public_app_url_var.set("")
+                        self.tunnel_status_var.set(f"Public: stopped ({event.get('code')})")
         self.after(200, self._poll_events)
 
     def _on_close(self) -> None:

@@ -57,4 +57,5 @@ cd /Users/ayana/Voice_from_Phone/macOS_version/macOS_whiteboard
 ## 说明
 
 - 两个目录都包含各自独立运行所需的 `server.py`、`desktop_client.py`、`requirements.txt`、启动脚本和静态资源。
+- 两个目录现在都各自包含独立的公网隧道能力；如果要让异地设备访问，请在对应子目录内安装 `cloudflared` 并从各自桌面窗口点击公网按钮。
 - 根目录当前仍保留原有语音版文件，避免打断已有使用方式；以后建议优先从上面两个子目录进入。
