@@ -16,6 +16,9 @@
         --danger: #c4533c;
         --line: rgba(23, 32, 22, 0.12);
         --shadow: rgba(6, 11, 5, 0.28);
+        --input-font-size: 22px;
+        --input-line-height: 1.36;
+        --input-padding-y: 14px;
       }
 
       * {
@@ -26,6 +29,8 @@
       body {
         margin: 0;
         min-height: 100%;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
       }
 
       body {
@@ -47,10 +52,9 @@
       .shell {
         position: relative;
         display: grid;
-        grid-template-rows: auto 1fr auto;
+        grid-template-rows: auto auto auto;
         gap: 16px;
         width: min(100%, 760px);
-        min-height: calc(100dvh - 34px);
         margin: auto;
         overflow: hidden;
         border: 1px solid rgba(249, 244, 229, 0.22);
@@ -134,12 +138,15 @@
 
       textarea {
         width: 100%;
-        min-height: 48dvh;
+        height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
+        min-height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
+        max-height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
         resize: none;
+        overflow-y: auto;
         border: 1px solid rgba(23, 32, 22, 0.14);
         border-radius: 30px;
         outline: none;
-        padding: 22px;
+        padding: var(--input-padding-y) 18px;
         color: var(--ink);
         background:
           linear-gradient(rgba(255, 248, 232, 0.86), rgba(255, 248, 232, 0.86)),
@@ -147,7 +154,7 @@
         box-shadow:
           inset 0 1px 0 rgba(255, 255, 255, 0.72),
           0 18px 48px rgba(69, 50, 22, 0.12);
-        font: 500 clamp(23px, 6vw, 34px)/1.42 "LXGW WenKai", "STKaiti", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font: 500 var(--input-font-size)/var(--input-line-height) "LXGW WenKai", "STKaiti", "PingFang SC", "Microsoft YaHei", sans-serif;
       }
 
       textarea::placeholder {
@@ -202,9 +209,7 @@
         }
 
         textarea {
-          min-height: 54dvh;
           border-radius: 24px;
-          padding: 18px;
         }
       }
     </style>
@@ -221,7 +226,7 @@
         </header>
 
         <div class="composer">
-          <textarea id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="开始输入"></textarea>
+          <textarea id="input" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="开始输入"></textarea>
         </div>
 
         <div class="toolbar">
@@ -294,6 +299,56 @@
         });
       }
 
+      function sendEnter() {
+        sendMessage({
+          type: "ops",
+          token,
+          seq: ++seq,
+          ops: [{ type: "enter" }],
+        });
+      }
+
+      function clearInputAfterEnter() {
+        inputEl.value = "";
+        lastSentText = "";
+        resetSession();
+      }
+
+      function triggerEnterAndClear() {
+        sendEnter();
+        clearInputAfterEnter();
+        requestAnimationFrame(() => inputEl.focus());
+      }
+
+      function maybeSendEnterAndClear(event) {
+        const isKeyboardEnter = event.key === "Enter";
+        const isInputLineBreak = event.inputType === "insertLineBreak" || event.inputType === "insertParagraph";
+        if (!isKeyboardEnter && !isInputLineBreak) {
+          return;
+        }
+        event.preventDefault();
+        triggerEnterAndClear();
+      }
+
+      function syncOrHandleLineBreak() {
+        const lineBreakIndex = inputEl.value.search(/\r?\n/);
+        if (lineBreakIndex >= 0) {
+          const textBeforeBreak = inputEl.value.slice(0, lineBreakIndex);
+          if (textBeforeBreak !== lastSentText) {
+            lastSentText = textBeforeBreak;
+            sendMessage({
+              type: "sync_text",
+              token,
+              seq: ++seq,
+              text: textBeforeBreak,
+            });
+          }
+          triggerEnterAndClear();
+          return;
+        }
+        syncNow();
+      }
+
       function sendExplicitBackspace() {
         sendMessage({
           type: "ops",
@@ -359,8 +414,10 @@
       }
 
       inputEl.addEventListener("keydown", maybeSendEmptyBackspace);
+      inputEl.addEventListener("keydown", maybeSendEnterAndClear);
       inputEl.addEventListener("beforeinput", maybeSendEmptyBackspace);
-      inputEl.addEventListener("input", syncNow);
+      inputEl.addEventListener("beforeinput", maybeSendEnterAndClear);
+      inputEl.addEventListener("input", syncOrHandleLineBreak);
 
       clearButton.addEventListener("click", () => {
         inputEl.value = "";

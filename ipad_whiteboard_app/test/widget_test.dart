@@ -13,5 +13,6 @@ void main() {
     expect(find.byIcon(Icons.show_chart), findsOneWidget);
     expect(find.byIcon(Icons.cleaning_services), findsOneWidget);
     expect(find.byIcon(Icons.undo), findsOneWidget);
+    expect(find.byIcon(Icons.unfold_more), findsOneWidget);
   });
 }

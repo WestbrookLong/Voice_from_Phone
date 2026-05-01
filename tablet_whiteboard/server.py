@@ -18,10 +18,13 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 TOKEN_FILE = ROOT / ".whiteboard_token"
+FAST_MOVE_INTERVAL_SECONDS = 0.002
+PRECISE_MOVE_INTERVAL_SECONDS = 0.012
 
 MOUSEEVENTF_MOVE = 0x0001
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_WHEEL = 0x0800
 MOUSEEVENTF_ABSOLUTE = 0x8000
 MOUSEEVENTF_VIRTUALDESK = 0x4000
 INPUT_MOUSE = 0
@@ -139,6 +142,10 @@ def left_mouse_up() -> None:
     _send_mouse_input(flags=MOUSEEVENTF_LEFTUP)
 
 
+def mouse_wheel(delta: int) -> None:
+    _send_mouse_input(flags=MOUSEEVENTF_WHEEL, mouse_data=ctypes.c_uint32(delta).value)
+
+
 def get_lan_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -180,6 +187,11 @@ def inject_pointer_event(event: dict[str, Any], monitor: dict[str, int]) -> None
     elif action == "up":
         move_mouse_to_screen_point(x, y)
         left_mouse_up()
+    elif action == "wheel":
+        move_mouse_to_screen_point(x, y)
+        delta = int(event.get("wheelDelta") or event.get("delta") or 0)
+        if delta:
+            mouse_wheel(max(-1200, min(1200, delta)))
     else:
         raise ValueError(f"unsupported pointer action: {action}")
 
@@ -197,9 +209,8 @@ def parse_pointer_message(raw: str) -> list[dict[str, Any]]:
 
 
 class MovePacer:
-    def __init__(self, monitor: dict[str, int], interval_seconds: float = 0.002, max_queue: int = 4096) -> None:
+    def __init__(self, monitor: dict[str, int], max_queue: int = 4096) -> None:
         self.monitor = monitor
-        self.interval_seconds = interval_seconds
         self.max_queue = max_queue
         self.queue: deque[dict[str, Any]] = deque()
         self.wake = asyncio.Event()
@@ -249,7 +260,12 @@ class MovePacer:
                 inject_pointer_event(event, self.monitor)
             except Exception as exc:
                 print(f"[whiteboard move pacer error] {exc}", flush=True)
-            await asyncio.sleep(self.interval_seconds)
+            await asyncio.sleep(self.interval_for_event(event))
+
+    def interval_for_event(self, event: dict[str, Any]) -> float:
+        if event.get("pace") == "precise" or event.get("precision") is True:
+            return PRECISE_MOVE_INTERVAL_SECONDS
+        return FAST_MOVE_INTERVAL_SECONDS
 
 
 def no_cache_headers() -> dict[str, str]:
@@ -399,6 +415,8 @@ async def pointer(request: web.Request) -> web.WebSocketResponse:
                         move_pacer.enqueue(event)
                         continue
                     await move_pacer.flush()
+                    if event.get("pace") == "precise" or event.get("precision") is True:
+                        await asyncio.sleep(PRECISE_MOVE_INTERVAL_SECONDS)
                     if action == "down" and mouse_is_down:
                         left_mouse_up()
                         mouse_is_down = False

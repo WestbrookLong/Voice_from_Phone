@@ -1,17 +1,16 @@
 import argparse
-import asyncio
 import ctypes
 import json
+import logging
+import os
 import secrets
 import socket
 import sys
-from io import BytesIO
+from ctypes import wintypes
 from pathlib import Path
 from typing import Any
-from ctypes import wintypes
 
 from aiohttp import web
-from PIL import Image
 
 
 def app_root() -> Path:
@@ -22,23 +21,30 @@ def app_root() -> Path:
 
 ROOT = app_root()
 STATIC_DIR = ROOT / "static"
+LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "FlowBridge"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_PATH = LOG_DIR / "flowbridge.log"
+
+LOGGER = logging.getLogger("flowbridge")
+LOGGER.setLevel(logging.INFO)
+LOGGER.handlers.clear()
+file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+LOGGER.addHandler(file_handler)
+if sys.stdout is not None:
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(logging.Formatter("%(message)s"))
+    LOGGER.addHandler(stream_handler)
+
+
+def log(message: str) -> None:
+    LOGGER.info(message)
 
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
-MOUSEEVENTF_MOVE = 0x0001
-MOUSEEVENTF_LEFTDOWN = 0x0002
-MOUSEEVENTF_LEFTUP = 0x0004
-MOUSEEVENTF_WHEEL = 0x0800
-MOUSEEVENTF_ABSOLUTE = 0x8000
-MOUSEEVENTF_VIRTUALDESK = 0x4000
-WHEEL_DELTA = 120
-INPUT_KEYBOARD = 1
 INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
 INPUT_HARDWARE = 2
-SM_XVIRTUALSCREEN = 76
-SM_YVIRTUALSCREEN = 77
-SM_CXVIRTUALSCREEN = 78
-SM_CYVIRTUALSCREEN = 79
 VK_BACK = 0x08
 VK_RETURN = 0x0D
 ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
@@ -75,6 +81,8 @@ class HARDWAREINPUT(ctypes.Structure):
 
 
 class INPUT_UNION(ctypes.Union):
+    # Keep the full Win32 INPUT union layout. SendInput validates cbSize against
+    # the platform ABI even when this program only sends keyboard events.
     _fields_ = [
         ("mi", MOUSEINPUT),
         ("ki", KEYBDINPUT),
@@ -88,8 +96,6 @@ class INPUT(ctypes.Structure):
 
 USER32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
 USER32.SendInput.restype = wintypes.UINT
-USER32.GetSystemMetrics.argtypes = (ctypes.c_int,)
-USER32.GetSystemMetrics.restype = ctypes.c_int
 
 
 def _send_keyboard_input(vk: int = 0, scan: int = 0, flags: int = 0) -> None:
@@ -110,33 +116,13 @@ def _send_keyboard_input(vk: int = 0, scan: int = 0, flags: int = 0) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _send_mouse_input(dx: int = 0, dy: int = 0, flags: int = 0, mouse_data: int = 0) -> None:
-    event = INPUT(
-        type=INPUT_MOUSE,
-        union=INPUT_UNION(
-                mi=MOUSEINPUT(
-                dx=dx,
-                dy=dy,
-                mouseData=mouse_data,
-                dwFlags=flags,
-                time=0,
-                dwExtraInfo=0,
-            )
-        ),
-    )
-    sent = USER32.SendInput(1, ctypes.byref(event), ctypes.sizeof(event))
-    if sent != 1:
-        raise ctypes.WinError(ctypes.get_last_error())
-
-
 def press_key(vk: int) -> None:
     _send_keyboard_input(vk=vk)
     _send_keyboard_input(vk=vk, flags=KEYEVENTF_KEYUP)
 
 
 def type_text(text: str) -> None:
-    # SendInput with KEYEVENTF_UNICODE accepts UTF-16 code units, so encode first
-    # to preserve non-BMP characters such as emoji.
+    # SendInput with KEYEVENTF_UNICODE accepts UTF-16 code units, preserving Chinese and emoji.
     data = text.encode("utf-16-le")
     for i in range(0, len(data), 2):
         code_unit = data[i] | (data[i + 1] << 8)
@@ -152,53 +138,6 @@ def type_text(text: str) -> None:
 def backspace(count: int) -> None:
     for _ in range(max(0, min(count, 1000))):
         press_key(VK_BACK)
-
-
-def virtual_screen_rect() -> dict[str, int]:
-    return {
-        "left": USER32.GetSystemMetrics(SM_XVIRTUALSCREEN),
-        "top": USER32.GetSystemMetrics(SM_YVIRTUALSCREEN),
-        "width": USER32.GetSystemMetrics(SM_CXVIRTUALSCREEN),
-        "height": USER32.GetSystemMetrics(SM_CYVIRTUALSCREEN),
-    }
-
-
-def move_mouse_to_screen_point(x: int, y: int) -> None:
-    rect = virtual_screen_rect()
-    width = max(1, rect["width"] - 1)
-    height = max(1, rect["height"] - 1)
-    normalized_x = round((x - rect["left"]) * 65535 / width)
-    normalized_y = round((y - rect["top"]) * 65535 / height)
-    _send_mouse_input(
-        dx=max(0, min(65535, normalized_x)),
-        dy=max(0, min(65535, normalized_y)),
-        flags=MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-    )
-
-
-def left_mouse_down() -> None:
-    _send_mouse_input(flags=MOUSEEVENTF_LEFTDOWN)
-
-
-def left_mouse_up() -> None:
-    _send_mouse_input(flags=MOUSEEVENTF_LEFTUP)
-
-
-def mouse_wheel(delta: int) -> None:
-    _send_mouse_input(dx=0, dy=0, flags=MOUSEEVENTF_WHEEL, mouse_data=delta)
-
-
-def capture_jpeg(monitor_id: int, quality: int) -> tuple[dict[str, int], bytes]:
-    import mss
-
-    with mss.mss() as sct:
-        monitor_index = max(1, min(monitor_id, len(sct.monitors) - 1))
-        monitor = dict(sct.monitors[monitor_index])
-        shot = sct.grab(monitor)
-        image = Image.frombytes("RGB", shot.size, shot.rgb)
-        buffer = BytesIO()
-        image.save(buffer, format="JPEG", quality=quality, optimize=False)
-        return monitor, buffer.getvalue()
 
 
 class TextSession:
@@ -280,103 +219,11 @@ def create_app(token: str) -> web.Application:
             },
         )
 
-    async def index(request: web.Request) -> web.FileResponse:
+    async def index(_: web.Request) -> web.FileResponse:
         return html_response(STATIC_DIR / "index.html")
 
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"ok": True})
-
-    async def tablet(request: web.Request) -> web.FileResponse:
-        return html_response(STATIC_DIR / "tablet.html")
-
-    async def screen_handler(request: web.Request) -> web.WebSocketResponse:
-        if request.query.get("token") != token:
-            raise web.HTTPUnauthorized(text="invalid token")
-
-        fps = max(1, min(int(request.query.get("fps", "24")), 30))
-        quality = max(25, min(int(request.query.get("quality", "58")), 85))
-        monitor_id = max(1, int(request.query.get("monitor", "1")))
-        interval = 1 / fps
-
-        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=16 * 1024 * 1024)
-        await ws.prepare(request)
-        peer = request.remote or "unknown"
-        print(f"[screen] connected: {peer}", flush=True)
-
-        last_monitor: dict[str, int] | None = None
-        try:
-            while not ws.closed:
-                started = asyncio.get_running_loop().time()
-                monitor, frame = await asyncio.to_thread(capture_jpeg, monitor_id, quality)
-                if monitor != last_monitor:
-                    await ws.send_json(
-                        {
-                            "type": "screen_meta",
-                            "monitor": monitor,
-                            "fps": fps,
-                            "quality": quality,
-                        }
-                    )
-                    last_monitor = monitor
-                await ws.send_bytes(frame)
-                elapsed = asyncio.get_running_loop().time() - started
-                await asyncio.sleep(max(0, interval - elapsed))
-        except ConnectionResetError:
-            pass
-        finally:
-            print(f"[screen] disconnected: {peer}", flush=True)
-        return ws
-
-    async def pointer_handler(request: web.Request) -> web.WebSocketResponse:
-        if request.query.get("token") != token:
-            raise web.HTTPUnauthorized(text="invalid token")
-
-        ws = web.WebSocketResponse(heartbeat=20)
-        await ws.prepare(request)
-        peer = request.remote or "unknown"
-        print(f"[pointer] connected: {peer}", flush=True)
-
-        async for msg in ws:
-            if msg.type != web.WSMsgType.TEXT:
-                continue
-            try:
-                payload = json.loads(msg.data)
-                if payload.get("token") != token:
-                    raise ValueError("invalid token")
-                if payload.get("type") != "pointer":
-                    raise ValueError("unsupported pointer message")
-
-                monitor = payload.get("monitor")
-                if not isinstance(monitor, dict):
-                    raise ValueError("missing monitor metadata")
-                x_ratio = float(payload.get("x"))
-                y_ratio = float(payload.get("y"))
-                x_ratio = max(0.0, min(1.0, x_ratio))
-                y_ratio = max(0.0, min(1.0, y_ratio))
-                x = int(monitor["left"] + x_ratio * max(1, monitor["width"] - 1))
-                y = int(monitor["top"] + y_ratio * max(1, monitor["height"] - 1))
-                action = payload.get("action")
-
-                if action == "wheel":
-                    delta = int(payload.get("delta", 0))
-                    if delta:
-                        mouse_wheel(max(-1200, min(1200, delta)))
-                elif action == "down":
-                    move_mouse_to_screen_point(x, y)
-                    left_mouse_down()
-                elif action == "up":
-                    move_mouse_to_screen_point(x, y)
-                    left_mouse_up()
-                elif action == "move":
-                    move_mouse_to_screen_point(x, y)
-                else:
-                    raise ValueError(f"unsupported pointer action: {action}")
-            except Exception as exc:
-                print(f"[pointer error] {exc}", flush=True)
-                await ws.send_json({"type": "error", "message": str(exc)})
-
-        print(f"[pointer] disconnected: {peer}", flush=True)
-        return ws
 
     async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
         if request.query.get("token") != token:
@@ -385,7 +232,7 @@ def create_app(token: str) -> web.Application:
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
         peer = request.remote or "unknown"
-        print(f"[ws] connected: {peer}", flush=True)
+        log(f"[ws] connected: {peer}")
         await ws.send_json({"type": "ready"})
 
         async for msg in ws:
@@ -400,40 +247,36 @@ def create_app(token: str) -> web.Application:
                     if not isinstance(text, str):
                         raise ValueError("sync_text.text must be a string")
                     text = text[:5000]
-                    print(
+                    log(
                         f"[sync] replace {len(session.text)} chars -> {len(text)} chars: {text!r}",
-                        flush=True,
                     )
                     session.replace(text)
                 elif payload.get("type") == "reset_session":
-                    print("[sync] reset session", flush=True)
+                    log("[sync] reset session")
                     session.reset()
                 else:
                     ops = validate_ops(payload)
                     for op in ops:
                         if op["type"] == "insert":
-                            print(f"[inject] insert {len(op['text'])} chars: {op['text']!r}", flush=True)
+                            log(f"[inject] insert {len(op['text'])} chars: {op['text']!r}")
                             type_text(op["text"])
                         elif op["type"] == "enter":
-                            print("[inject] enter", flush=True)
+                            log("[inject] enter")
                             press_key(VK_RETURN)
                         elif op["type"] == "backspace":
-                            print(f"[inject] backspace {op['count']}", flush=True)
+                            log(f"[inject] backspace {op['count']}")
                             backspace(op["count"])
                 await ws.send_json({"type": "ack", "seq": payload.get("seq")})
             except Exception as exc:
-                print(f"[error] {exc}", flush=True)
+                log(f"[error] {exc}")
                 await ws.send_json({"type": "error", "message": str(exc)})
 
-        print(f"[ws] disconnected: {peer}", flush=True)
+        log(f"[ws] disconnected: {peer}")
         return ws
 
     app.router.add_get("/", index)
-    app.router.add_get("/tablet", tablet)
     app.router.add_get("/health", health)
     app.router.add_get("/ws", websocket_handler)
-    app.router.add_get("/screen", screen_handler)
-    app.router.add_get("/pointer", pointer_handler)
     app.router.add_static("/static", STATIC_DIR)
     return app
 
@@ -453,21 +296,21 @@ def main() -> None:
 
     args = parse_args()
     if args.test_text is not None:
-        print("Focus the target input box within 3 seconds...", flush=True)
+        log("Focus the target input box within 3 seconds...")
         import time
 
         time.sleep(3)
         type_text(args.test_text)
-        print("Test text sent.", flush=True)
+        log("Test text sent.")
         return
 
     token = args.token or secrets.token_urlsafe(12)
     app = create_app(token)
 
     lan_ip = get_lan_ip()
-    print("Phone realtime input bridge is running.")
-    print(f"Open on phone: http://{lan_ip}:{args.port}/?token={token}")
-    print("Keep the target app focused on this PC; phone input will be typed there.")
+    log("Phone realtime input bridge is running.")
+    log(f"Open on phone: http://{lan_ip}:{args.port}/?token={token}")
+    log("Keep the target app focused on this PC; phone input will be typed there.")
     web.run_app(app, host=args.host, port=args.port, print=None)
 
 

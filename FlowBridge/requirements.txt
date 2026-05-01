@@ -1,3 +1,2 @@
 aiohttp>=3.9,<4
-qrcode[pil]>=7.4,<8
-mss>=9,<10
+pywebview>=6.2,<7

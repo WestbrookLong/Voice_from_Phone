@@ -202,6 +202,10 @@
         line-height: 1.05;
       }
 
+      .zoom-button.active {
+        transform: translateY(1px);
+      }
+
       body.fullscreen-view .hud,
       body.fullscreen-view .hint,
       body.fullscreen-view .keyboard-button,
@@ -213,7 +217,9 @@
       body.fullscreen-view .echo-clear-button,
       body.fullscreen-view .input-panel,
       body.fullscreen-view #zoomInButton,
-      body.fullscreen-view #zoomOutButton {
+      body.fullscreen-view #zoomOutButton,
+      body.fullscreen-view #wheelUpButton,
+      body.fullscreen-view #wheelDownButton {
         display: none !important;
       }
 
@@ -503,6 +509,8 @@
     <div id="zoomControls" class="zoom-controls layout-control" data-layout-id="zoomControls" aria-label="缩放控制">
       <button id="zoomInButton" class="zoom-button" type="button" aria-label="放大">+</button>
       <button id="zoomOutButton" class="zoom-button" type="button" aria-label="缩小">-</button>
+      <button id="wheelUpButton" class="zoom-button fullscreen-button" type="button" aria-label="滚轮向上">滚上</button>
+      <button id="wheelDownButton" class="zoom-button fullscreen-button" type="button" aria-label="滚轮向下">滚下</button>
       <button id="fullscreenButton" class="zoom-button fullscreen-button" type="button" aria-label="全屏">全屏</button>
     </div>
     <button id="modeButton" class="mode-button layout-control" data-layout-id="mode" type="button">移动模式</button>
@@ -528,6 +536,8 @@
       const layoutControls = Array.from(document.querySelectorAll(".layout-control"));
       const zoomInButton = document.querySelector("#zoomInButton");
       const zoomOutButton = document.querySelector("#zoomOutButton");
+      const wheelUpButton = document.querySelector("#wheelUpButton");
+      const wheelDownButton = document.querySelector("#wheelDownButton");
       const fullscreenButton = document.querySelector("#fullscreenButton");
       const inputPanel = document.querySelector("#inputPanel");
       const textInput = document.querySelector("#textInput");
@@ -541,7 +551,7 @@
       const monitorId = params.get("monitor") || "1";
       const fps = params.get("fps") || "24";
       const quality = params.get("quality") || "58";
-      const buildId = "tablet-20260428-portrait-backspace";
+      const buildId = "tablet-20260430-wheel-buttons";
 
       let screenWs = null;
       let pointerWs = null;
@@ -564,8 +574,6 @@
       let layoutResizeTimer = null;
       let lastExplicitBackspaceAt = 0;
       const touches = new Map();
-      let wheelMode = false;
-      let forcedWheelMode = false;
       let touchClickMode = false;
       let fullscreenView = false;
       let layoutEdit = false;
@@ -580,10 +588,8 @@
       let localEchoStrokes = [];
       let screenFrameCounter = 0;
       let lastProcessedMove = null;
-      let singleFingerWheelPointerId = null;
-      let lastSingleFingerWheelY = null;
-      let lastTwoFingerCenter = null;
-      let wheelRemainder = 0;
+      let wheelRepeatTimer = null;
+      let activeWheelButton = null;
       const LAYOUT_STORAGE_KEY = "mobile-computer-tablet-layout-v1";
       const SETTINGS_STORAGE_KEY = "mobile-computer-tablet-settings-v1";
       const DEFAULT_LAYOUT = {
@@ -1086,7 +1092,7 @@
       }
 
       function drawLocalEcho(from, to) {
-        if (!localEchoEnabled || forcedWheelMode) {
+        if (!localEchoEnabled) {
           return;
         }
         inkCtx.save();
@@ -1116,7 +1122,7 @@
       }
 
       function drawLocalEchoDot(point) {
-        if (!localEchoEnabled || forcedWheelMode) {
+        if (!localEchoEnabled) {
           return;
         }
         renderLocalEchoDot(point);
@@ -1128,7 +1134,7 @@
 
       function startLocalEchoStroke(point) {
         activeEchoPoint = point;
-        if (!localEchoEnabled || forcedWheelMode) {
+        if (!localEchoEnabled) {
           return;
         }
         if (echoClearMode === "frame") {
@@ -1312,97 +1318,17 @@
         sendPointer("move", event);
       }
 
-      function twoFingerCenter() {
-        if (touches.size !== 2) {
-          return null;
-        }
-        const points = Array.from(touches.values());
-        return {
-          x: (points[0].clientX + points[1].clientX) / 2,
-          y: (points[0].clientY + points[1].clientY) / 2,
-        };
-      }
-
-      function updateWheelFromTouches() {
-        if (!wheelMode) {
-          return;
-        }
-        const center = twoFingerCenter();
-        if (!center) {
-          return;
-        }
-        if (!lastTwoFingerCenter) {
-          lastTwoFingerCenter = center;
-          return;
-        }
-
-        const dy = center.y - lastTwoFingerCenter.y;
-        lastTwoFingerCenter = center;
-        wheelRemainder += dy * 5;
-
-        const step = 120;
-        if (Math.abs(wheelRemainder) >= step) {
-          const delta = Math.trunc(wheelRemainder / step) * step;
-          wheelRemainder -= delta;
-          sendWheel(delta);
-        }
-      }
-
-      function updateWheelFromSingleTouch(event) {
-        if (lastSingleFingerWheelY === null) {
-          lastSingleFingerWheelY = event.clientY;
-          return;
-        }
-        const dy = event.clientY - lastSingleFingerWheelY;
-        lastSingleFingerWheelY = event.clientY;
-        wheelRemainder += dy * 5;
-
-        const step = 120;
-        if (Math.abs(wheelRemainder) >= step) {
-          const delta = Math.trunc(wheelRemainder / step) * step;
-          wheelRemainder -= delta;
-          sendWheel(delta);
-        }
-      }
-
-      function setForcedWheelMode(enabled) {
-        forcedWheelMode = enabled;
-        touchClickMode = false;
-        modeButton.textContent = enabled ? "滚轮模式" : "移动模式";
-        modeButton.classList.toggle("wheel", enabled);
-        modeButton.classList.remove("touch-click");
-        forceEndActivePointer({ clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
-        touches.clear();
-        wheelMode = false;
-        singleFingerWheelPointerId = null;
-        lastSingleFingerWheelY = null;
-        lastTwoFingerCenter = null;
-        wheelRemainder = 0;
-      }
-
       function setTouchClickMode(enabled) {
         touchClickMode = enabled;
-        forcedWheelMode = false;
         modeButton.textContent = enabled ? "触摸点击" : "移动模式";
         modeButton.classList.toggle("touch-click", enabled);
         modeButton.classList.remove("wheel");
         forceEndActivePointer({ clientX: 0, clientY: 0, pressure: 0, pointerType: activePointerType || "touch" });
         touches.clear();
-        wheelMode = false;
-        singleFingerWheelPointerId = null;
-        lastSingleFingerWheelY = null;
-        lastTwoFingerCenter = null;
-        wheelRemainder = 0;
       }
 
       function cyclePointerMode() {
-        if (!forcedWheelMode && !touchClickMode) {
-          setForcedWheelMode(true);
-        } else if (forcedWheelMode) {
-          setTouchClickMode(true);
-        } else {
-          setTouchClickMode(false);
-        }
+        setTouchClickMode(!touchClickMode);
       }
 
       function setFullscreenView(enabled) {
@@ -1432,23 +1358,12 @@
       canvas.addEventListener("pointerdown", (event) => {
         event.preventDefault();
         if (event.pointerType === "touch") {
-          if (forcedWheelMode) {
-            singleFingerWheelPointerId = event.pointerId;
-            lastSingleFingerWheelY = event.clientY;
-            wheelRemainder = 0;
-            canvas.setPointerCapture(event.pointerId);
-            sendPointer("move", event);
-            return;
-          }
           touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
           if (touches.size === 2) {
             forceEndActivePointer(event);
-            wheelMode = true;
-            lastTwoFingerCenter = twoFingerCenter();
-            wheelRemainder = 0;
             return;
           }
-          if (touches.size === 1 && !wheelMode) {
+          if (touches.size === 1) {
             forceEndActivePointer(event);
             activePointerId = event.pointerId;
             activePointerType = "touch";
@@ -1457,9 +1372,6 @@
             sendPointer(touchClickMode ? "down" : "move", event);
             return;
           }
-          return;
-        }
-        if (wheelMode) {
           return;
         }
         forceEndActivePointer(event);
@@ -1473,19 +1385,8 @@
       function handlePointerMove(event) {
         event.preventDefault();
         if (event.pointerType === "touch") {
-          if (forcedWheelMode) {
-            if (event.pointerId === singleFingerWheelPointerId) {
-              sendPointer("move", event);
-              updateWheelFromSingleTouch(event);
-            }
-            return;
-          }
           if (touches.has(event.pointerId)) {
             touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
-          }
-          if (wheelMode) {
-            updateWheelFromTouches();
-            return;
           }
           if (event.pointerId === activePointerId) {
             processActivePointerMove(event);
@@ -1509,14 +1410,6 @@
       function endPointer(event) {
         event.preventDefault();
         if (event.pointerType === "touch") {
-          if (forcedWheelMode) {
-            if (event.pointerId === singleFingerWheelPointerId) {
-              singleFingerWheelPointerId = null;
-              lastSingleFingerWheelY = null;
-              wheelRemainder = 0;
-            }
-            return;
-          }
           const wasActivePointer = event.pointerId === activePointerId;
           if (wasActivePointer) {
             sendPointer(touchClickMode ? "up" : "move", event);
@@ -1530,11 +1423,6 @@
             endLocalEchoStroke();
           }
           touches.delete(event.pointerId);
-          if (touches.size < 2) {
-            wheelMode = false;
-            lastTwoFingerCenter = null;
-            wheelRemainder = 0;
-          }
           return;
         }
         if (event.pointerId !== activePointerId) {
@@ -1653,6 +1541,45 @@
         if (layoutEdit) return;
         setZoom(zoomLevel - 0.35);
       });
+
+      function bindWheelButton(element, delta) {
+        element.addEventListener("pointerdown", (event) => {
+          if (startLayoutDrag(event, element.closest(".layout-control"))) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (layoutEdit) return;
+          activeWheelButton = element;
+          element.classList.add("active");
+          try {
+            element.setPointerCapture(event.pointerId);
+          } catch (_) {}
+          sendWheel(delta);
+          clearInterval(wheelRepeatTimer);
+          wheelRepeatTimer = setInterval(() => sendWheel(delta), 90);
+        });
+        const stop = (event) => {
+          if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          if (activeWheelButton !== element) return;
+          activeWheelButton = null;
+          element.classList.remove("active");
+          clearInterval(wheelRepeatTimer);
+          wheelRepeatTimer = null;
+          if (event) {
+            try {
+              element.releasePointerCapture(event.pointerId);
+            } catch (_) {}
+          }
+        };
+        element.addEventListener("pointerup", stop);
+        element.addEventListener("pointercancel", stop);
+        element.addEventListener("lostpointercapture", stop);
+      }
+
+      bindWheelButton(wheelUpButton, 120);
+      bindWheelButton(wheelDownButton, -120);
 
       fullscreenButton.addEventListener("pointerdown", (event) => event.stopPropagation());
       fullscreenButton.addEventListener("click", (event) => {

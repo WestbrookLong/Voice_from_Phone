@@ -44,7 +44,7 @@ class WhiteboardBridgeApp extends StatelessWidget {
 
 enum ToolMode { pen, line, eraser }
 
-enum FloatingButtonId { pen, line, eraser, undo }
+enum FloatingButtonId { pen, line, eraser, undo, wheel }
 
 enum BridgeConnectionState { offline, connecting, online, error }
 
@@ -96,12 +96,14 @@ class PointerSample {
     required this.ratio,
     required this.pressure,
     required this.pointerKind,
+    this.wheelDelta,
   });
 
   final String action;
   final Offset ratio;
   final double pressure;
   final String pointerKind;
+  final int? wheelDelta;
 }
 
 class ViewportState {
@@ -370,6 +372,22 @@ class BridgeClient {
     );
   }
 
+  void sendWheel(Offset ratio, int wheelDelta, {String pointerKind = 'touch'}) {
+    if (wheelDelta == 0) {
+      return;
+    }
+    flushMoves();
+    sendPointer(
+      PointerSample(
+        action: 'wheel',
+        ratio: ratio,
+        pressure: 0,
+        pointerKind: pointerKind,
+        wheelDelta: wheelDelta,
+      ),
+    );
+  }
+
   void flushMoves() {
     _moveFlushTimer?.cancel();
     _moveFlushTimer = null;
@@ -393,6 +411,7 @@ class BridgeClient {
       'pressure': sample.pressure.clamp(0.0, 1.0),
       'pointerType': sample.pointerKind,
       'seq': ++_sequence,
+      if (sample.wheelDelta != null) 'wheelDelta': sample.wheelDelta,
     };
   }
 
@@ -434,18 +453,21 @@ class _WhiteboardPageState extends State<WhiteboardPage>
     FloatingButtonId.line: const Offset(24, 156),
     FloatingButtonId.eraser: const Offset(24, 224),
     FloatingButtonId.undo: const Offset(24, 292),
+    FloatingButtonId.wheel: const Offset(24, 360),
   };
   final Map<FloatingButtonId, double> _buttonSizes = {
     FloatingButtonId.pen: 48,
     FloatingButtonId.line: 48,
     FloatingButtonId.eraser: 48,
     FloatingButtonId.undo: 48,
+    FloatingButtonId.wheel: 48,
   };
   final Map<FloatingButtonId, double> _buttonOpacities = {
     FloatingButtonId.pen: 0.88,
     FloatingButtonId.line: 0.88,
     FloatingButtonId.eraser: 0.88,
     FloatingButtonId.undo: 0.88,
+    FloatingButtonId.wheel: 0.88,
   };
 
   MonitorInfo _monitor = const MonitorInfo(width: 16, height: 10);
@@ -474,6 +496,7 @@ class _WhiteboardPageState extends State<WhiteboardPage>
   ui.Image? _pcShot;
   ui.Image? _screenFrame;
   Timer? _screenReconnectTimer;
+  double _wheelDragRemainder = 0;
 
   @override
   void initState() {
@@ -680,8 +703,12 @@ class _WhiteboardPageState extends State<WhiteboardPage>
       case FloatingButtonId.undo:
         setState(() => _selectedButton = FloatingButtonId.undo);
         _undoLocal();
+      case FloatingButtonId.wheel:
+        setState(() => _selectedButton = FloatingButtonId.wheel);
     }
-    _sendButtonPassThrough(id);
+    if (id != FloatingButtonId.wheel) {
+      _sendButtonPassThrough(id);
+    }
   }
 
   void _sendButtonPassThrough(FloatingButtonId id) {
@@ -691,6 +718,23 @@ class _WhiteboardPageState extends State<WhiteboardPage>
     final ratio = _ratioForLocal(center);
     if (ratio != null) {
       _bridge.sendClick(ratio);
+    }
+  }
+
+  void _sendWheelFromButton(double deltaDy) {
+    _wheelDragRemainder += deltaDy;
+    const pixelsPerWheelStep = 18.0;
+    final steps = (_wheelDragRemainder / pixelsPerWheelStep).truncate();
+    if (steps == 0) {
+      return;
+    }
+    _wheelDragRemainder -= steps * pixelsPerWheelStep;
+    final position = _buttonPositions[FloatingButtonId.wheel] ?? Offset.zero;
+    final size = _buttonSizes[FloatingButtonId.wheel] ?? 48;
+    final center = position + Offset(size / 2, size / 2);
+    final ratio = _ratioForLocal(center);
+    if (ratio != null) {
+      _bridge.sendWheel(ratio, -steps * 120);
     }
   }
 
@@ -1141,6 +1185,10 @@ class _WhiteboardPageState extends State<WhiteboardPage>
         opacity: _buttonOpacities[id] ?? 0.88,
         activeTool: _tool,
         onTap: () => _handleToolTap(id),
+        onWheel: id == FloatingButtonId.wheel ? _sendWheelFromButton : null,
+        onWheelEnd: id == FloatingButtonId.wheel
+            ? () => _wheelDragRemainder = 0
+            : null,
         onDrag: (delta) {
           setState(() {
             final next = (_buttonPositions[id] ?? Offset.zero) + delta;
@@ -1177,6 +1225,7 @@ class _WhiteboardPageState extends State<WhiteboardPage>
       FloatingButtonId.line => 'Line',
       FloatingButtonId.eraser => 'Eraser',
       FloatingButtonId.undo => 'Undo',
+      FloatingButtonId.wheel => 'Wheel',
     };
   }
 }
@@ -1327,7 +1376,7 @@ class WhiteboardPainter extends CustomPainter {
   }
 }
 
-class _FloatingToolButton extends StatelessWidget {
+class _FloatingToolButton extends StatefulWidget {
   const _FloatingToolButton({
     required this.id,
     required this.selected,
@@ -1336,6 +1385,8 @@ class _FloatingToolButton extends StatelessWidget {
     required this.activeTool,
     required this.onTap,
     required this.onDrag,
+    required this.onWheel,
+    required this.onWheelEnd,
     required this.onPenSize,
   });
 
@@ -1346,29 +1397,56 @@ class _FloatingToolButton extends StatelessWidget {
   final ToolMode activeTool;
   final VoidCallback onTap;
   final ValueChanged<Offset> onDrag;
+  final ValueChanged<double>? onWheel;
+  final VoidCallback? onWheelEnd;
   final VoidCallback? onPenSize;
 
   @override
+  State<_FloatingToolButton> createState() => _FloatingToolButtonState();
+}
+
+class _FloatingToolButtonState extends State<_FloatingToolButton> {
+  Offset _lastLongPressOffset = Offset.zero;
+
+  @override
   Widget build(BuildContext context) {
-    final foreground = selected ? Colors.white : Colors.black;
-    final background = selected ? Colors.black : Colors.white;
+    final foreground = widget.selected ? Colors.white : Colors.black;
+    final background = widget.selected ? Colors.black : Colors.white;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      onPanUpdate: (details) => onDrag(details.delta),
+      onTap: widget.onTap,
+      onPanUpdate: (details) {
+        final wheel = widget.onWheel;
+        if (wheel != null) {
+          wheel(details.delta.dy);
+          return;
+        }
+        widget.onDrag(details.delta);
+      },
+      onPanEnd: (_) => widget.onWheelEnd?.call(),
+      onPanCancel: () => widget.onWheelEnd?.call(),
+      onLongPressStart: widget.onWheel == null
+          ? null
+          : (_) => _lastLongPressOffset = Offset.zero,
+      onLongPressMoveUpdate: widget.onWheel == null
+          ? null
+          : (details) {
+              widget.onDrag(details.offsetFromOrigin - _lastLongPressOffset);
+              _lastLongPressOffset = details.offsetFromOrigin;
+            },
       child: Opacity(
-        opacity: opacity,
+        opacity: widget.opacity,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
             Container(
-              width: size,
-              height: size,
+              width: widget.size,
+              height: widget.size,
               decoration: BoxDecoration(
                 color: background,
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(
-                  color: selected
+                  color: widget.selected
                       ? const Color(0xffff8a00)
                       : Colors.black.withValues(alpha: 0.2),
                   width: 2,
@@ -1382,17 +1460,18 @@ class _FloatingToolButton extends StatelessWidget {
                 ],
               ),
               child: Icon(
-                _iconFor(id),
+                _iconFor(widget.id),
                 color: foreground,
-                size: math.max(18, size * 0.48),
+                size: math.max(18, widget.size * 0.48),
               ),
             ),
-            if (id == FloatingButtonId.pen && activeTool == ToolMode.pen)
+            if (widget.id == FloatingButtonId.pen &&
+                widget.activeTool == ToolMode.pen)
               Positioned(
                 right: -8,
                 bottom: -8,
                 child: GestureDetector(
-                  onTap: onPenSize,
+                  onTap: widget.onPenSize,
                   child: Container(
                     width: 26,
                     height: 26,
@@ -1421,6 +1500,7 @@ class _FloatingToolButton extends StatelessWidget {
       FloatingButtonId.line => Icons.show_chart,
       FloatingButtonId.eraser => Icons.cleaning_services,
       FloatingButtonId.undo => Icons.undo,
+      FloatingButtonId.wheel => Icons.unfold_more,
     };
   }
 }

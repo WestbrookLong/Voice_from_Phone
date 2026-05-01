@@ -10,15 +10,17 @@ page. The app talks directly to the desktop bridge through the same endpoints:
 
 ## Current feature set
 
-- Pen, straight line, eraser, and local undo.
+- Pen, straight line, eraser, local undo, and a floating wheel button.
 - Pen color picker and pen thickness popover on the pen button.
 - Local eraser clears only the iPad stroke layer; PC shot and screen stream stay
   as the bottom background.
-- Floating square Pen, Line, Eraser, and Undo buttons. Each button can be dragged
-  independently.
+- Floating square Pen, Line, Eraser, Undo, and Wheel buttons. Pen, Line, Eraser,
+  and Undo can be dragged directly; Wheel scrolls on vertical drag and can be
+  repositioned with a long press drag.
 - Settings panel changes the selected floating button's size and opacity only.
 - Pen, Line, Eraser, and Undo taps pass through as PC clicks at the same mapped
-  position. PC Shot, Stream, Area, Settings, Color, and Clear do not pass through.
+  position. Wheel sends mouse-wheel events at its mapped position. PC Shot,
+  Stream, Area, Settings, Color, and Clear do not pass through.
 - PC Shot snapshot background.
 - Optional screen stream background.
 - Hide/show PC background.

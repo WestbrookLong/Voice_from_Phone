@@ -413,6 +413,18 @@
           <path class="icon-stroke" d="M10 24h18c7 0 11 4 11 10" />
         </svg>
       </button>
+      <button id="scrollUpButton" class="tool-button" data-action="scrollUp" type="button" aria-label="Scroll Up" title="Scroll Up">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path class="icon-stroke" d="M24 40V9" />
+          <path class="icon-stroke" d="M13 20 24 9l11 11" />
+        </svg>
+      </button>
+      <button id="scrollDownButton" class="tool-button" data-action="scrollDown" type="button" aria-label="Scroll Down" title="Scroll Down">
+        <svg viewBox="0 0 48 48" aria-hidden="true">
+          <path class="icon-stroke" d="M24 8v31" />
+          <path class="icon-stroke" d="M13 28l11 11 11-11" />
+        </svg>
+      </button>
     </div>
     <div class="toolbar">
       <div class="group">
@@ -478,8 +490,11 @@
       const lineButton = document.querySelector("#lineButton");
       const eraserButton = document.querySelector("#eraserButton");
       const undoButton = document.querySelector("#undoButton");
+      const scrollUpButton = document.querySelector("#scrollUpButton");
+      const scrollDownButton = document.querySelector("#scrollDownButton");
       const toolButtons = [penButton, lineButton, eraserButton];
       const passthroughButtons = [penButton, lineButton, eraserButton, undoButton];
+      const floatingButtons = [penButton, lineButton, eraserButton, undoButton, scrollUpButton, scrollDownButton];
       const clearButton = document.querySelector("#clearButton");
       const snapshotButton = document.querySelector("#snapshotButton");
       const streamButton = document.querySelector("#streamButton");
@@ -512,6 +527,8 @@
           line: { x: 0, y: 30, size: 42, opacity: 94 },
           eraser: { x: 0, y: 44, size: 42, opacity: 94 },
           undo: { x: 0, y: 58, size: 42, opacity: 94 },
+          scrollUp: { x: 0, y: 72, size: 42, opacity: 94 },
+          scrollDown: { x: 0, y: 86, size: 42, opacity: 94 },
         },
       };
 
@@ -680,7 +697,7 @@
           this.ws.send(JSON.stringify(message));
         }
 
-        eventMessage(action, point, sourceEvent) {
+        eventMessage(action, point, sourceEvent, options = {}) {
           return {
             type: "pointer",
             action,
@@ -691,21 +708,27 @@
             pointerId: sourceEvent.pointerId,
             seq: ++this.sequence,
             t: Math.round(performance.now()),
+            ...options,
           };
         }
 
-        sendPriority(action, point, sourceEvent) {
+        sendPriority(action, point, sourceEvent, options = {}) {
           this.flushMoves();
-          this.send(this.eventMessage(action, point, sourceEvent));
+          this.send(this.eventMessage(action, point, sourceEvent, options));
         }
 
-        sendMoveNow(point, sourceEvent) {
+        sendWheel(point, sourceEvent, wheelDelta) {
           this.flushMoves();
-          this.send(this.eventMessage("move", point, sourceEvent));
+          this.send(this.eventMessage("wheel", point, sourceEvent, { wheelDelta }));
+        }
+
+        sendMoveNow(point, sourceEvent, options = {}) {
+          this.flushMoves();
+          this.send(this.eventMessage("move", point, sourceEvent, options));
           this.lastQueuedMove = point;
         }
 
-        queueMove(point, sourceEvent) {
+        queueMove(point, sourceEvent, options = {}) {
           if (!this.isOpen()) {
             return;
           }
@@ -722,7 +745,7 @@
             return;
           }
           this.lastQueuedMove = point;
-          this.moveQueue.push(this.eventMessage("move", point, sourceEvent));
+          this.moveQueue.push(this.eventMessage("move", point, sourceEvent, options));
           if (this.moveQueue.length >= 16) {
             this.flushMoves();
             return;
@@ -754,6 +777,10 @@
           this.transport = transport;
           this.active = null;
           this.lastLocalMove = null;
+        }
+
+        paceOptions() {
+          return this.active && !this.active.remoteOnly ? { pace: "precise" } : {};
         }
 
         start(event) {
@@ -793,7 +820,7 @@
               drawDot(localPoint, this.active.stroke);
             }
           }
-          this.transport.sendPriority("down", ratio, event);
+          this.transport.sendPriority("down", ratio, event, this.paceOptions());
           updateHistoryButtons();
         }
 
@@ -836,7 +863,7 @@
           }
           this.active.lastRatio = ratio;
           this.active.moveCount += 1;
-          this.transport.queueMove(ratio, event);
+          this.transport.queueMove(ratio, event, this.paceOptions());
         }
 
         finish(event) {
@@ -858,7 +885,7 @@
             this.active.pathLength = viewDistance(stroke.points[0], point);
             redraw(stroke);
             this.active.lastRatio = ratio;
-            this.transport.sendMoveNow(ratio, event);
+            this.transport.sendMoveNow(ratio, event, this.paceOptions());
           } else {
             const tailDistance = viewDistance(this.active.lastPoint, point);
             if (tailDistance > 0.35) {
@@ -876,7 +903,7 @@
           }
 
           state.strokes.push(cloneStroke(this.active.stroke));
-          this.transport.sendPriority("up", this.active.lastRatio, event);
+          this.transport.sendPriority("up", this.active.lastRatio, event, this.paceOptions());
           this.releaseActive();
           updateHistoryButtons();
         }
@@ -915,7 +942,7 @@
           }
           this.active.lastPoint = endPoint;
           this.active.lastRatio = endPoint;
-          this.transport.sendMoveNow(endPoint, event);
+          this.transport.sendMoveNow(endPoint, event, this.paceOptions());
         }
 
         forceFinish(event) {
@@ -1325,13 +1352,13 @@
         updateHistoryButtons();
       }
 
-      function clearAll() {
-        if (!state.strokes.length) {
-          return;
+      async function clearAll() {
+        if (state.strokes.length) {
+          state.undone.push(...state.strokes.splice(0));
+          redraw();
+          updateHistoryButtons();
         }
-        state.undone.push(...state.strokes.splice(0));
-        redraw();
-        updateHistoryButtons();
+        await loadSnapshot();
       }
 
       function updateHistoryButtons() {
@@ -1521,6 +1548,20 @@
         transport.sendPriority("up", ratio, source);
       }
 
+      function sendRemoteWheelStepAt(clientX, clientY, sourceEvent, wheelDelta) {
+        const ratio = pointerRatioFromClient(clientX, clientY);
+        const source = {
+          pointerId: sourceEvent.pointerId,
+          pointerType: sourceEvent.pointerType || "touch",
+          pressure: 0,
+        };
+        transport.sendWheel(ratio, source, wheelDelta);
+      }
+
+      function isScrollAction(action) {
+        return action === "scrollUp" || action === "scrollDown";
+      }
+
       function applyFloatingSettings() {
         const selected = selectedControlSettings();
 
@@ -1531,7 +1572,7 @@
         toolbarOpacityOutput.textContent = `${selected.opacity}%`;
 
         requestAnimationFrame(() => {
-          for (const button of passthroughButtons) {
+          for (const button of floatingButtons) {
             applyToolButtonStyle(button);
             placeToolButton(button);
           }
@@ -1549,6 +1590,8 @@
         if (control === "pen") return "Pen";
         if (control === "line") return "Line";
         if (control === "eraser") return "Eraser";
+        if (control === "scrollUp") return "Scroll Up";
+        if (control === "scrollDown") return "Scroll Down";
         return "Undo";
       }
 
@@ -1788,13 +1831,18 @@
           } else {
             const key = floatingButtonKey(button);
             state.selectedControl = key;
-            if (button.dataset.tool) {
+            if (isScrollAction(button.dataset.action)) {
+              sendRemoteWheelStepAt(event.clientX, event.clientY, event, button.dataset.action === "scrollUp" ? 120 : -120);
+              applyFloatingSettings();
+            } else if (button.dataset.tool) {
               setTool(button.dataset.tool);
             } else if (button.dataset.action === "undo") {
               undo();
               applyFloatingSettings();
             }
-            sendRemoteClickAt(event.clientX, event.clientY, event);
+            if (!isScrollAction(button.dataset.action)) {
+              sendRemoteClickAt(event.clientX, event.clientY, event);
+            }
           }
           button.classList.remove("dragging");
           dragState = null;
@@ -1828,7 +1876,7 @@
       canvas.addEventListener("pointercancel", handleCanvasPointerEnd, { passive: false });
       canvas.addEventListener("lostpointercapture", (event) => engine.forceFinish(event));
 
-      for (const button of passthroughButtons) {
+      for (const button of floatingButtons) {
         installFloatingToolButton(button);
       }
       installDrawAreaEditor();
