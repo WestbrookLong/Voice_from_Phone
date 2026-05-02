@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Flow Bridge macOS</title>
+    <title>Flow Voice</title>
     <style>
       :root {
         --bg: #050807;
@@ -134,6 +134,7 @@
         align-items: center;
         gap: 12px;
         padding: 0 16px;
+        -webkit-app-region: drag;
       }
 
       .logo {
@@ -165,29 +166,40 @@
 
       .window-controls {
         display: flex;
+        align-items: center;
+        gap: 8px;
         height: 100%;
-        border-left: 1px solid #173524;
+        padding: 0 16px;
+        -webkit-app-region: no-drag;
       }
 
       .window-controls button {
-        display: grid;
-        width: 48px;
-        height: 100%;
-        place-items: center;
+        position: relative;
+        display: block;
+        width: 12px;
+        height: 12px;
         border: 0;
-        color: #7ea88e;
-        background: transparent;
-        font-size: 17px;
+        border-radius: 999px;
+        padding: 0;
+        color: transparent;
+        font-size: 0;
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.24);
       }
 
       .window-controls button:hover {
-        color: #b9ffd4;
-        background: #10271b;
+        filter: brightness(1.08);
       }
 
-      .window-controls button.close:hover {
-        color: #ffd9d9;
-        background: #3a1616;
+      .window-controls button.close {
+        background: #ff5f57;
+      }
+
+      .window-controls button.minimize {
+        background: #febc2e;
+      }
+
+      .window-controls button.maximize {
+        background: #28c840;
       }
 
       main {
@@ -348,43 +360,16 @@
         line-height: 1.45;
       }
 
-      .local-card {
-        min-width: 150px;
-        border: 1px solid #1a3326;
-        border-radius: 16px;
-        padding: 12px 16px;
-        color: #9cfcc4;
-        background: #06100b;
-        text-align: right;
-        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      }
-
-      .local-card div:first-child {
-        color: var(--dim);
-        font-size: 10px;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-      }
-
-      .local-card strong {
-        display: block;
-        margin-top: 8px;
-        font-size: 14px;
-      }
-
-      .local-card span {
-        display: block;
-        margin-top: 4px;
-        color: #688876;
-        font-size: 12px;
-      }
-
       .url-box {
         border: 1px solid #21462f;
         border-radius: 22px;
         padding: 16px;
         background: linear-gradient(135deg, #0d2116, #09140f 55%, #07100b);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .url-box[hidden] {
+        display: none;
       }
 
       .url-head,
@@ -654,24 +639,24 @@
 
       <div class="content">
         <div class="titlebar">
-          <div class="titlebar-brand">
-            <div class="logo">FB</div>
-            <div class="brand-text">Flow Bridge</div>
+          <div class="window-controls">
+            <button id="close" class="close" type="button" title="Close">×</button>
+            <button id="minimize" class="minimize" type="button" title="Minimize">-</button>
+            <button id="maximize" class="maximize" type="button" title="Maximize / Restore">□</button>
           </div>
           <div class="drag-region"></div>
-          <div class="window-controls">
-            <button id="minimize" type="button" title="Minimize">-</button>
-            <button id="maximize" type="button" title="Maximize / Restore">□</button>
-            <button id="close" class="close" type="button" title="Close">×</button>
+          <div class="titlebar-brand">
+            <div class="logo">FV</div>
+            <div class="brand-text">Flow Voice</div>
           </div>
         </div>
 
         <main>
           <header>
             <div class="heading">
-              <div class="logo">FB</div>
+              <div class="logo">FV</div>
               <div>
-                <div class="eyebrow">Flow Bridge macOS</div>
+                <div class="eyebrow">Flow Voice macOS</div>
                 <h1>Desktop Connection Console</h1>
               </div>
             </div>
@@ -694,14 +679,9 @@
                     Use your phone as a voice input surface. The recognized text will be written to the active cursor on this Mac.
                   </p>
                 </div>
-                <div class="local-card">
-                  <div>Local</div>
-                  <strong id="localIp">127.0.0.1</strong>
-                  <span id="localPort">port 8787</span>
-                </div>
               </div>
 
-              <div class="url-box">
+              <div id="urlBox" class="url-box" hidden>
                 <div class="url-head">
                   <div>Open this URL on your phone</div>
                   <span id="urlMode">Token included</span>
@@ -712,18 +692,6 @@
                   <button id="openUrl" class="btn primary" type="button">Open</button>
                 </div>
 
-                <div class="inline-fields">
-                  <span>IP <strong id="inlineIp">127.0.0.1</strong></span>
-                  <label>
-                    PORT
-                    <input id="portInput" class="port-input" inputmode="numeric" />
-                  </label>
-                  <label>
-                    TOKEN
-                    <input id="tokenInput" class="token-input" />
-                  </label>
-                  <button id="newToken" class="btn" type="button">New Token</button>
-                </div>
               </div>
 
               <div class="info-grid">
@@ -732,19 +700,8 @@
                   <div id="statusInfo" class="thin-info-value">Service is stopped</div>
                 </div>
                 <div class="thin-info">
-                  <div class="thin-info-label">Network</div>
-                  <div id="networkInfo" class="thin-info-value">Same Wi-Fi or LAN required</div>
-                </div>
-              </div>
-
-              <div class="info-grid">
-                <div class="thin-info">
                   <div class="thin-info-label">Public Tunnel</div>
                   <div id="tunnelInfo" class="thin-info-value">PUBLIC OFFLINE</div>
-                </div>
-                <div class="thin-info">
-                  <div class="thin-info-label">Public URL</div>
-                  <div class="thin-info-value"><code id="publicUrl">Not ready</code></div>
                 </div>
               </div>
 
@@ -777,10 +734,6 @@
 
               <div class="actions">
                 <button id="toggleService" class="btn primary full" type="button">Start Service</button>
-              </div>
-              <div class="actions">
-                <button id="toggleTunnel" class="btn full" type="button">Start Public</button>
-                <button id="copyPublicUrl" class="btn full" type="button">Copy Public</button>
               </div>
             </aside>
           </section>
@@ -831,30 +784,19 @@
         const endpoint = `${state.ip}:${state.port}`;
 
         $("endpointLabel").textContent = endpoint;
-        $("localIp").textContent = state.ip;
-        $("localPort").textContent = `port ${state.port}`;
-        $("inlineIp").textContent = state.ip;
+        $("urlBox").hidden = !state.running;
         $("activeUrl").textContent = activeUrl || "Not ready";
-        $("publicUrl").textContent = state.publicUrl || "Not ready";
         $("urlMode").textContent = state.publicUrl ? "Public tunnel active" : "Token included";
         $("statusInfo").textContent = state.running ? "Listening for mobile input" : "Service is stopped";
-        $("networkInfo").textContent = state.publicUrl ? "Cloudflare public tunnel active" : "Same Wi-Fi or LAN required";
         $("tunnelInfo").textContent = state.tunnelStatus;
         $("sessionToken").textContent = state.token;
         $("sessionEndpoint").textContent = endpoint;
         $("qrImage").src = state.qrDataUrl || "";
-        $("portInput").value = state.port;
-        $("tokenInput").value = state.token;
-        $("portInput").disabled = state.running;
-        $("tokenInput").disabled = state.running;
-        $("newToken").disabled = state.running;
-        $("copyPublicUrl").disabled = !state.publicUrl;
 
         $("serviceBadge").classList.toggle("running", state.running);
         $("serviceBadgeText").textContent = state.running ? "Service Started" : "Service Stopped";
         $("toggleService").textContent = state.running ? "Stop Service" : "Start Service";
         $("toggleService").classList.toggle("primary", !state.running);
-        $("toggleTunnel").textContent = state.tunnelRunning ? "Stop Public" : "Start Public";
       }
 
       async function refresh() {
@@ -886,12 +828,7 @@
       $("close").addEventListener("click", () => call("close_window"));
       $("copyUrl").addEventListener("click", () => call("copy_url"));
       $("openUrl").addEventListener("click", () => call("open_url"));
-      $("newToken").addEventListener("click", () => call("regenerate_token"));
-      $("copyPublicUrl").addEventListener("click", () => call("copy_public_url"));
       $("toggleService").addEventListener("click", () => call(state.running ? "stop_service" : "start_service"));
-      $("toggleTunnel").addEventListener("click", () => call(state.tunnelRunning ? "stop_tunnel" : "start_tunnel"));
-      $("portInput").addEventListener("change", (event) => call("set_port", event.target.value));
-      $("tokenInput").addEventListener("change", (event) => call("set_token", event.target.value));
 
       window.addEventListener("pywebviewready", refresh);
       window.setInterval(refresh, 700);

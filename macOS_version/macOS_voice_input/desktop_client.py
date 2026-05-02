@@ -201,27 +201,39 @@ class DesktopApi:
             return self._result("New token generated.")
 
     def start_service(self) -> dict:
+        thread: BridgeServerThread | None = None
         with self.lock:
             if self._running():
-                return self._result("Service is already running.")
-            try:
-                port = int(self.port)
-                if port <= 0 or port > 65535:
-                    raise ValueError
-            except ValueError:
-                return self._result("Port must be between 1 and 65535.")
+                if self._tunnel_running():
+                    return self._result("Service and public tunnel are already running.")
+            else:
+                cloudflared_path = find_cloudflared()
+                if cloudflared_path is None:
+                    return self._result("cloudflared was not found. Install it with: brew install cloudflared")
+                try:
+                    port = int(self.port)
+                    if port <= 0 or port > 65535:
+                        raise ValueError
+                except ValueError:
+                    return self._result("Port must be between 1 and 65535.")
 
-            thread = BridgeServerThread("0.0.0.0", port, self.token)
-            self.server_thread = thread
-            thread.start()
+                thread = BridgeServerThread("0.0.0.0", port, self.token)
+                self.server_thread = thread
+                thread.start()
 
-        thread.ready.wait(timeout=4)
+        if thread is not None:
+            thread.ready.wait(timeout=4)
 
-        with self.lock:
-            if thread.error:
-                self.server_thread = None
-                return self._result(f"Failed to start service: {thread.error}")
-            return self._result("Service started.")
+            with self.lock:
+                if thread.error:
+                    self.server_thread = None
+                    return self._result(f"Failed to start service: {thread.error}")
+
+        tunnel_result = self.start_tunnel()
+        tunnel_message = tunnel_result.get("message", "")
+        if "not found" in tunnel_message or "failed" in tunnel_message.lower():
+            return self._result(f"Service started, but public tunnel failed: {tunnel_message}")
+        return self._result("Service and public tunnel starting.")
 
     def stop_service(self) -> dict:
         self.stop_tunnel()
@@ -328,7 +340,7 @@ def main() -> None:
 
     api = DesktopApi()
     window = webview.create_window(
-        "Flow Bridge macOS",
+        "Flow Voice",
         ui_url(),
         js_api=api,
         width=1180,
