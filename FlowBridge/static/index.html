@@ -6,16 +6,16 @@
     <title>Flow Voice</title>
     <style>
       :root {
-        --bg: #10140f;
-        --panel: rgba(249, 244, 229, 0.92);
-        --panel-strong: #fff8e8;
-        --ink: #172016;
-        --muted: #69705d;
-        --accent: #d9ff70;
-        --accent-strong: #3d5a21;
+        --bg: #050807;
+        --panel: rgba(8, 16, 13, 0.92);
+        --panel-strong: #0B1D14;
+        --ink: #DDE7DF;
+        --muted: #5B7062;
+        --accent: #28F58D;
+        --accent-strong: #7BFFB5;
         --danger: #c4533c;
-        --line: rgba(23, 32, 22, 0.12);
-        --shadow: rgba(6, 11, 5, 0.28);
+        --line: rgba(40, 245, 141, 0.12);
+        --shadow: rgba(0, 0, 0, 0.5);
         --input-font-size: 22px;
         --input-line-height: 1.36;
         --input-padding-y: 14px;
@@ -37,9 +37,9 @@
         min-height: 100dvh;
         color: var(--ink);
         background:
-          radial-gradient(circle at 12% 0%, rgba(217, 255, 112, 0.32), transparent 18rem),
-          radial-gradient(circle at 92% 12%, rgba(104, 167, 255, 0.18), transparent 16rem),
-          linear-gradient(155deg, #11180f 0%, #1e2819 42%, #0c100b 100%);
+          radial-gradient(circle at 12% 0%, rgba(12, 255, 136, 0.32), transparent 18rem),
+          radial-gradient(circle at 92% 12%, rgba(31, 164, 99, 0.18), transparent 16rem),
+          linear-gradient(155deg, #050807 0%, #0B1D14 42%, #06100B 100%);
         font-family: "Aptos Display", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
       }
 
@@ -57,11 +57,11 @@
         width: min(100%, 760px);
         margin: auto;
         overflow: hidden;
-        border: 1px solid rgba(249, 244, 229, 0.22);
+        border: 1px solid rgba(40, 245, 141, 0.22);
         border-radius: 34px;
         padding: 18px;
         background:
-          linear-gradient(145deg, rgba(255, 248, 232, 0.96), rgba(239, 229, 203, 0.88)),
+          linear-gradient(145deg, rgba(8, 16, 13, 0.96), rgba(11, 29, 20, 0.88)),
           var(--panel);
         box-shadow: 0 30px 90px var(--shadow);
       }
@@ -72,41 +72,44 @@
         inset: -36% 20% auto -20%;
         height: 280px;
         pointer-events: none;
-        background: radial-gradient(circle, rgba(217, 255, 112, 0.58), transparent 65%);
+        background: radial-gradient(circle, rgba(40, 245, 141, 0.58), transparent 65%);
         filter: blur(6px);
       }
 
       header {
         position: relative;
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: space-between;
-        gap: 14px;
+        gap: 12px;
       }
 
       .brand {
-        display: grid;
-        gap: 6px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
       }
 
       .eyebrow {
         width: fit-content;
-        border: 1px solid rgba(61, 90, 33, 0.24);
+        border: 1px solid rgba(40, 245, 141, 0.24);
         border-radius: 999px;
-        padding: 6px 10px;
+        padding: 4px 10px;
         color: var(--accent-strong);
-        background: rgba(217, 255, 112, 0.38);
-        font-size: 12px;
-        font-weight: 900;
+        background: rgba(40, 245, 141, 0.12);
+        font: 900 11px/1 "Segoe UI", sans-serif;
         letter-spacing: 0.08em;
         text-transform: uppercase;
+        white-space: nowrap;
       }
 
       h1 {
         margin: 0;
-        font-size: clamp(38px, 13vw, 78px);
-        line-height: 0.86;
-        letter-spacing: -0.08em;
+        font: 600 18px/1 "Segoe UI", sans-serif;
+        letter-spacing: -0.02em;
+        color: #F0FFF5;
+        white-space: nowrap;
       }
 
       .status {
@@ -115,19 +118,40 @@
         border-radius: 999px;
         padding: 9px 12px;
         color: var(--muted);
-        background: rgba(255, 248, 232, 0.78);
+        background: rgba(8, 16, 13, 0.78);
         font: 800 12px/1.1 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+        box-shadow: inset 0 1px 0 rgba(40, 245, 141, 0.08);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .status .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #5B7062;
+        box-shadow: 0 0 8px rgba(91, 112, 98, 0.5);
       }
 
       .status[data-state="connected"] {
-        color: #255b2e;
-        background: rgba(217, 255, 112, 0.5);
+        color: #9CFCC4;
+        background: rgba(40, 245, 141, 0.15);
+      }
+
+      .status[data-state="connected"] .dot {
+        background: #28F58D;
+        box-shadow: 0 0 14px rgba(40, 245, 141, 0.9);
       }
 
       .status[data-state="error"] {
         color: var(--danger);
         background: rgba(196, 83, 60, 0.1);
+      }
+
+      .status[data-state="error"] .dot {
+        background: #c4533c;
+        box-shadow: 0 0 8px rgba(196, 83, 60, 0.6);
       }
 
       .composer {
@@ -143,29 +167,29 @@
         max-height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
         resize: none;
         overflow-y: auto;
-        border: 1px solid rgba(23, 32, 22, 0.14);
+        border: 1px solid rgba(40, 245, 141, 0.14);
         border-radius: 30px;
         outline: none;
         padding: var(--input-padding-y) 18px;
         color: var(--ink);
         background:
-          linear-gradient(rgba(255, 248, 232, 0.86), rgba(255, 248, 232, 0.86)),
-          radial-gradient(circle at 100% 0%, rgba(217, 255, 112, 0.22), transparent 16rem);
+          linear-gradient(rgba(8, 16, 13, 0.86), rgba(8, 16, 13, 0.86)),
+          radial-gradient(circle at 100% 0%, rgba(40, 245, 141, 0.22), transparent 16rem);
         box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.72),
-          0 18px 48px rgba(69, 50, 22, 0.12);
+          inset 0 1px 0 rgba(40, 245, 141, 0.08),
+          0 18px 48px rgba(0, 0, 0, 0.4);
         font: 500 var(--input-font-size)/var(--input-line-height) "LXGW WenKai", "STKaiti", "PingFang SC", "Microsoft YaHei", sans-serif;
       }
 
       textarea::placeholder {
-        color: rgba(23, 32, 22, 0.34);
+        color: rgba(221, 231, 223, 0.34);
       }
 
       textarea:focus {
-        border-color: rgba(61, 90, 33, 0.42);
+        border-color: rgba(40, 245, 141, 0.42);
         box-shadow:
-          0 0 0 5px rgba(217, 255, 112, 0.22),
-          0 18px 48px rgba(69, 50, 22, 0.12);
+          0 0 0 5px rgba(40, 245, 141, 0.22),
+          0 18px 48px rgba(0, 0, 0, 0.4);
       }
 
       .toolbar {
@@ -179,15 +203,16 @@
         border: 1px solid var(--line);
         border-radius: 20px;
         color: var(--ink);
-        background: rgba(255, 248, 232, 0.76);
+        background: rgba(8, 16, 13, 0.76);
         font: 900 16px/1 "Segoe UI", "PingFang SC", sans-serif;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
+        box-shadow: inset 0 1px 0 rgba(40, 245, 141, 0.08);
       }
 
       button.primary {
-        border-color: transparent;
-        color: #152011;
+        border-color: rgba(40, 245, 141, 0.3);
+        color: #041008;
         background: var(--accent);
+        box-shadow: 0 0 28px rgba(40, 245, 141, 0.24);
       }
 
       @media (max-width: 430px) {
@@ -222,7 +247,9 @@
             <div class="eyebrow">LIVE INPUT</div>
             <h1>Flow Voice</h1>
           </div>
-          <div id="status" class="status" data-state="idle">连接中</div>
+          <div id="status" class="status" data-state="idle">
+          <span class="dot"></span>
+        </div>
         </header>
 
         <div class="composer">
@@ -231,7 +258,6 @@
 
         <div class="toolbar">
           <button id="clear" type="button">清空</button>
-          <button id="reconnect" class="primary" type="button">重连</button>
         </div>
       </section>
     </main>
@@ -240,7 +266,6 @@
       const statusEl = document.querySelector("#status");
       const inputEl = document.querySelector("#input");
       const clearButton = document.querySelector("#clear");
-      const reconnectButton = document.querySelector("#reconnect");
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
 
@@ -252,8 +277,12 @@
       let lastExplicitBackspaceAt = 0;
 
       function setStatus(text, state = "idle") {
-        statusEl.textContent = text;
         statusEl.dataset.state = state;
+        if (state === "connected") {
+          statusEl.innerHTML = '<span class="dot"></span>';
+        } else {
+          statusEl.innerHTML = text;
+        }
       }
 
       function socketUrl() {
@@ -426,8 +455,7 @@
         inputEl.focus();
       });
 
-      reconnectButton.addEventListener("click", connect);
-
+      
       connect();
     </script>
   </body>
