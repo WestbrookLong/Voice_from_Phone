@@ -1,34 +1,86 @@
 import asyncio
-import queue
+import base64
+import io
+import os
 import secrets
+import subprocess
+import sys
 import threading
-import tkinter as tk
-from tkinter import messagebox, ttk
+import time
+import webbrowser
+from pathlib import Path
+from queue import Queue
+from typing import Any
 
 from aiohttp import web
-from PIL import ImageTk
 import qrcode
+import webview
 
 from server import create_app, get_lan_ip
 from tunnel import CloudflaredTunnelThread, find_cloudflared
 
 
+def app_root() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent
+
+
+def ui_index_path() -> Path:
+    return app_root() / "desktop_ui" / "index.html"
+
+
+def ui_url() -> str:
+    dev_url = os.environ.get("MACOS_VOICE_INPUT_UI_DEV_URL")
+    if dev_url:
+        return dev_url
+
+    index_path = ui_index_path()
+    if not index_path.exists():
+        raise SystemExit(f"Desktop UI is missing: {index_path}")
+    return index_path.as_uri()
+
+
+def copy_text_to_clipboard(text: str) -> None:
+    process = subprocess.run(
+        ["pbcopy"],
+        input=text,
+        text=True,
+        check=False,
+    )
+    if process.returncode != 0:
+        raise RuntimeError("pbcopy failed")
+
+
+def qr_data_url(value: str) -> str:
+    image = qrcode.make(value or "about:blank").resize((420, 420))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 class BridgeServerThread(threading.Thread):
-    def __init__(self, host: str, port: int, token: str, events: queue.Queue[str]) -> None:
+    def __init__(self, host: str, port: int, token: str) -> None:
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.token = token
-        self.events = events
         self.loop: asyncio.AbstractEventLoop | None = None
         self.runner: web.AppRunner | None = None
+        self.ready = threading.Event()
+        self.error: str | None = None
 
     def run(self) -> None:
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._start())
         try:
+            self.loop.run_until_complete(self._start())
+            self.ready.set()
             self.loop.run_forever()
+        except Exception as exc:
+            self.error = str(exc)
+            self.ready.set()
         finally:
             self.loop.run_until_complete(self._cleanup())
             self.loop.close()
@@ -39,7 +91,6 @@ class BridgeServerThread(threading.Thread):
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)
         await site.start()
-        self.events.put("started")
 
     async def _cleanup(self) -> None:
         if self.runner is not None:
@@ -50,265 +101,248 @@ class BridgeServerThread(threading.Thread):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
 
-class DesktopClient(tk.Tk):
+class DesktopApi:
     def __init__(self) -> None:
-        super().__init__()
-        self.title("手机实时输入桥接 macOS")
-        self.geometry("640x390")
-        self.minsize(580, 360)
-
-        self.events: queue.Queue[object] = queue.Queue()
+        self.lock = threading.RLock()
+        self.lan_ip = get_lan_ip()
+        self.page_version = str(int(time.time()))
+        self.token = secrets.token_urlsafe(12)
+        self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
         self.tunnel_thread: CloudflaredTunnelThread | None = None
-        self.lan_ip = get_lan_ip()
+        self.events: Queue[Any] = Queue()
+        self.public_base_url = ""
+        self.tunnel_status = "PUBLIC OFFLINE"
+        self.window: webview.Window | None = None
+        self.maximized = False
 
-        self.token_var = tk.StringVar(value=secrets.token_urlsafe(12))
-        self.port_var = tk.StringVar(value="8787")
-        self.status_var = tk.StringVar(value="未启动")
-        self.url_var = tk.StringVar(value="")
-        self.public_url_var = tk.StringVar(value="")
-        self.tunnel_status_var = tk.StringVar(value="公网: 未启动")
-        self.qr_image: ImageTk.PhotoImage | None = None
+    def _local_url(self) -> str:
+        return f"http://{self.lan_ip}:{self.port}/?token={self.token}&v={self.page_version}"
 
-        self._build_ui()
-        self.after(200, self._poll_events)
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+    def _public_url(self) -> str:
+        if not self.public_base_url:
+            return ""
+        return f"{self.public_base_url.rstrip('/')}/?token={self.token}&v={self.page_version}"
 
-    def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=18)
-        root.pack(fill=tk.BOTH, expand=True)
+    def _running(self) -> bool:
+        return self.server_thread is not None and self.server_thread.error is None
 
-        title = ttk.Label(root, text="手机实时输入桥接 macOS", font=("Helvetica Neue", 18, "bold"))
-        title.pack(anchor=tk.W)
+    def _tunnel_running(self) -> bool:
+        return self.tunnel_thread is not None
 
-        subtitle = ttk.Label(root, text="启动后，手机 App 或网页输入会实时写入 Mac 当前光标位置。")
-        subtitle.pack(anchor=tk.W, pady=(4, 16))
+    def _result(self, message: str = "") -> dict:
+        return {"state": self.get_state(), "message": message}
 
-        form = ttk.Frame(root)
-        form.pack(fill=tk.X)
-
-        ttk.Label(form, text="端口").grid(row=0, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(form, textvariable=self.port_var, width=12).grid(row=0, column=1, sticky=tk.W, pady=4)
-
-        ttk.Label(form, text="Token").grid(row=1, column=0, sticky=tk.W, pady=4)
-        ttk.Entry(form, textvariable=self.token_var).grid(row=1, column=1, sticky=tk.EW, pady=4)
-        ttk.Button(form, text="重新生成", command=self._regenerate_token).grid(row=1, column=2, padx=(8, 0), pady=4)
-        form.columnconfigure(1, weight=1)
-
-        ttk.Label(root, text="手机访问地址").pack(anchor=tk.W, pady=(16, 4))
-        url_row = ttk.Frame(root)
-        url_row.pack(fill=tk.X)
-        ttk.Entry(url_row, textvariable=self.url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(url_row, text="复制", command=self._copy_url).pack(side=tk.LEFT, padx=(8, 0))
-
-        ttk.Label(root, text="公网访问地址").pack(anchor=tk.W, pady=(12, 4))
-        public_url_row = ttk.Frame(root)
-        public_url_row.pack(fill=tk.X)
-        ttk.Entry(public_url_row, textvariable=self.public_url_var, state="readonly").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(public_url_row, text="复制", command=self._copy_public_url).pack(side=tk.LEFT, padx=(8, 0))
-
-        qr_panel = ttk.Frame(root)
-        qr_panel.pack(fill=tk.X, pady=(14, 0))
-        self.qr_label = ttk.Label(qr_panel)
-        self.qr_label.pack(side=tk.LEFT)
-        ttk.Label(
-            qr_panel,
-            text="手机 App 点击“扫码连接”，或用手机浏览器打开地址。macOS 需允许 Terminal/Python 控制输入。",
-            foreground="#666666",
-            wraplength=330,
-        ).pack(side=tk.LEFT, padx=(14, 0), anchor=tk.N)
-
-        controls = ttk.Frame(root)
-        controls.pack(fill=tk.X, pady=(18, 8))
-        self.start_button = ttk.Button(controls, text="启动服务", command=self._start_server)
-        self.start_button.pack(side=tk.LEFT)
-        self.stop_button = ttk.Button(controls, text="停止服务", command=self._stop_server, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(controls, text="打开网页版", command=self._open_web_page).pack(side=tk.LEFT, padx=(8, 0))
-        self.public_start_button = ttk.Button(controls, text="启动公网", command=self._start_tunnel)
-        self.public_start_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.public_stop_button = ttk.Button(controls, text="停止公网", command=self._stop_tunnel, state=tk.DISABLED)
-        self.public_stop_button.pack(side=tk.LEFT, padx=(8, 0))
-
-        status = ttk.Label(root, textvariable=self.status_var, foreground="#0f6b5f")
-        status.pack(anchor=tk.W, pady=(8, 0))
-        ttk.Label(root, textvariable=self.tunnel_status_var, foreground="#666666").pack(anchor=tk.W, pady=(4, 0))
-
-        note = ttk.Label(
-            root,
-            text="使用前先把 Mac 光标放到目标输入框。若输入无效，请在“系统设置 -> 隐私与安全性”中给 Terminal 或 Python 开启“辅助功能”和“输入监控”。",
-            foreground="#666666",
-            wraplength=590,
-        )
-        note.pack(anchor=tk.W, pady=(16, 0))
-
-    def _start_server(self) -> None:
-        if self.server_thread is not None:
-            return
-
-        try:
-            port = int(self.port_var.get())
-            if port <= 0 or port > 65535:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("端口错误", "请输入 1-65535 之间的端口。")
-            return
-
-        token = self.token_var.get().strip()
-        if not token:
-            messagebox.showerror("Token 错误", "Token 不能为空。")
-            return
-
-        self.status_var.set("启动中...")
-        self.server_thread = BridgeServerThread("0.0.0.0", port, token, self.events)
-        self.server_thread.start()
-        self._update_url()
-
-    def _stop_server(self) -> None:
-        self._stop_tunnel()
-        if self.server_thread is not None:
-            self.server_thread.stop()
-            self.server_thread = None
-        self.status_var.set("已停止")
-        self.start_button.configure(state=tk.NORMAL)
-        self.stop_button.configure(state=tk.DISABLED)
-
-    def _regenerate_token(self) -> None:
-        if self.server_thread is not None:
-            messagebox.showinfo("服务运行中", "请先停止服务，再重新生成 Token。")
-            return
-        self.token_var.set(secrets.token_urlsafe(12))
-        self._update_url()
-
-    def _copy_url(self) -> None:
-        url = self.url_var.get()
-        if not url:
-            self._update_url()
-            url = self.url_var.get()
-        self.clipboard_clear()
-        self.clipboard_append(url)
-        self.status_var.set("地址已复制")
-
-    def _copy_public_url(self) -> None:
-        url = self.public_url_var.get()
-        if not url:
-            self.status_var.set("公网地址尚未生成")
-            return
-        self.clipboard_clear()
-        self.clipboard_append(url)
-        self.status_var.set("公网地址已复制")
-
-    def _open_web_page(self) -> None:
-        import webbrowser
-
-        self._update_url()
-        webbrowser.open(self.url_var.get())
-
-    def _update_url(self) -> None:
-        port = self.port_var.get().strip() or "8787"
-        token = self.token_var.get().strip()
-        url = f"http://{self.lan_ip}:{port}/?token={token}"
-        self.url_var.set(url)
-        self._update_qr(url)
-
-    def _current_port(self) -> int | None:
-        try:
-            port = int(self.port_var.get())
-            if port <= 0 or port > 65535:
-                raise ValueError
-            return port
-        except ValueError:
-            messagebox.showerror("端口错误", "请输入 1-65535 之间的端口。")
-            return None
-
-    def _start_tunnel(self) -> None:
-        if self.tunnel_thread is not None:
-            return
-        port = self._current_port()
-        if port is None:
-            return
-        token = self.token_var.get().strip()
-        if not token:
-            messagebox.showerror("Token 错误", "Token 不能为空。")
-            return
-        cloudflared_path = find_cloudflared()
-        if cloudflared_path is None:
-            messagebox.showerror(
-                "cloudflared 未找到",
-                "未找到 cloudflared。请先执行 `brew install cloudflared`，或确保 cloudflared 在 PATH 中。",
-            )
-            return
-        if self.server_thread is None:
-            self._start_server()
-        self.public_url_var.set("")
-        self.tunnel_status_var.set("公网: 启动中...")
-        self.tunnel_thread = CloudflaredTunnelThread(cloudflared_path, port, self.events)
-        self.tunnel_thread.start()
-        self.public_start_button.configure(state=tk.DISABLED)
-        self.public_stop_button.configure(state=tk.NORMAL)
-
-    def _stop_tunnel(self) -> None:
-        if self.tunnel_thread is not None:
-            self.tunnel_thread.stop()
-            self.tunnel_thread = None
-        self.public_url_var.set("")
-        self.tunnel_status_var.set("公网: 未启动")
-        if hasattr(self, "public_start_button"):
-            self.public_start_button.configure(state=tk.NORMAL)
-        if hasattr(self, "public_stop_button"):
-            self.public_stop_button.configure(state=tk.DISABLED)
-
-    def _update_public_url(self, base_url: str) -> None:
-        token = self.token_var.get().strip()
-        base = base_url.rstrip("/")
-        url = f"{base}/?token={token}"
-        self.public_url_var.set(url)
-        self._update_qr(url)
-
-    def _update_qr(self, url: str) -> None:
-        image = qrcode.make(url).resize((180, 180))
-        self.qr_image = ImageTk.PhotoImage(image)
-        self.qr_label.configure(image=self.qr_image)
-
-    def _poll_events(self) -> None:
+    def _poll_tunnel_events(self) -> None:
         while True:
             try:
                 event = self.events.get_nowait()
-            except queue.Empty:
-                break
-            if event == "started":
-                self.status_var.set("服务已启动")
-                self.start_button.configure(state=tk.DISABLED)
-                self.stop_button.configure(state=tk.NORMAL)
-            elif isinstance(event, dict):
-                event_type = event.get("type")
-                if event_type == "tunnel_started":
-                    self.tunnel_status_var.set("公网: 连接中...")
-                elif event_type == "tunnel_url":
-                    url = str(event.get("url", ""))
-                    self._update_public_url(url)
-                    self.tunnel_status_var.set("公网: 已连接")
-                elif event_type == "tunnel_error":
-                    self.tunnel_status_var.set("公网: 出错")
-                    messagebox.showerror("Tunnel error", str(event.get("message", "Unknown tunnel error.")))
-                    self._stop_tunnel()
-                elif event_type == "tunnel_exit":
-                    if self.tunnel_thread is not None:
-                        self.tunnel_thread = None
-                        self.public_start_button.configure(state=tk.NORMAL)
-                        self.public_stop_button.configure(state=tk.DISABLED)
-                        self.public_url_var.set("")
-                        self.tunnel_status_var.set(f"公网: 已停止 ({event.get('code')})")
-        self.after(200, self._poll_events)
+            except Exception:
+                return
 
-    def _on_close(self) -> None:
-        self._stop_server()
-        self.destroy()
+            if not isinstance(event, dict):
+                continue
+            event_type = event.get("type")
+            if event_type == "tunnel_started":
+                self.tunnel_status = "PUBLIC CONNECTING"
+            elif event_type == "tunnel_url":
+                self.public_base_url = str(event.get("url", ""))
+                self.tunnel_status = "PUBLIC ONLINE"
+            elif event_type == "tunnel_error":
+                self.public_base_url = ""
+                self.tunnel_status = f"PUBLIC ERROR: {event.get('message', 'unknown error')}"
+                self.tunnel_thread = None
+            elif event_type == "tunnel_exit":
+                self.public_base_url = ""
+                self.tunnel_status = f"PUBLIC STOPPED ({event.get('code')})"
+                self.tunnel_thread = None
+
+    def get_state(self) -> dict:
+        with self.lock:
+            self._poll_tunnel_events()
+            running = self._running()
+            local_url = self._local_url()
+            public_url = self._public_url()
+            active_url = public_url or local_url
+            return {
+                "running": running,
+                "tunnelRunning": self._tunnel_running(),
+                "token": self.token,
+                "ip": self.lan_ip,
+                "port": self.port,
+                "url": local_url,
+                "publicUrl": public_url,
+                "activeUrl": active_url,
+                "qrDataUrl": qr_data_url(active_url),
+                "status": "SERVICE STARTED" if running else "SERVICE STOPPED",
+                "tunnelStatus": self.tunnel_status,
+            }
+
+    def set_port(self, value: str) -> dict:
+        with self.lock:
+            if self._running():
+                return self._result("Stop the service before changing the port.")
+            cleaned = "".join(ch for ch in str(value) if ch.isdigit())[:5]
+            self.port = cleaned or "8787"
+            return self._result()
+
+    def set_token(self, value: str) -> dict:
+        with self.lock:
+            if self._running():
+                return self._result("Stop the service before changing the token.")
+            self.token = str(value).strip() or secrets.token_urlsafe(12)
+            return self._result()
+
+    def regenerate_token(self) -> dict:
+        with self.lock:
+            if self._running():
+                return self._result("Stop the service before regenerating the token.")
+            self.token = secrets.token_urlsafe(12)
+            return self._result("New token generated.")
+
+    def start_service(self) -> dict:
+        with self.lock:
+            if self._running():
+                return self._result("Service is already running.")
+            try:
+                port = int(self.port)
+                if port <= 0 or port > 65535:
+                    raise ValueError
+            except ValueError:
+                return self._result("Port must be between 1 and 65535.")
+
+            thread = BridgeServerThread("0.0.0.0", port, self.token)
+            self.server_thread = thread
+            thread.start()
+
+        thread.ready.wait(timeout=4)
+
+        with self.lock:
+            if thread.error:
+                self.server_thread = None
+                return self._result(f"Failed to start service: {thread.error}")
+            return self._result("Service started.")
+
+    def stop_service(self) -> dict:
+        self.stop_tunnel()
+        with self.lock:
+            thread = self.server_thread
+            self.server_thread = None
+        if thread is not None:
+            thread.stop()
+            thread.join(timeout=2)
+        return self._result("Service stopped.")
+
+    def start_tunnel(self) -> dict:
+        with self.lock:
+            if self._tunnel_running():
+                return self._result("Public tunnel is already running.")
+            try:
+                port = int(self.port)
+                if port <= 0 or port > 65535:
+                    raise ValueError
+            except ValueError:
+                return self._result("Port must be between 1 and 65535.")
+
+        cloudflared_path = find_cloudflared()
+        if cloudflared_path is None:
+            return self._result("cloudflared was not found. Install it with: brew install cloudflared")
+
+        if not self._running():
+            start_result = self.start_service()
+            if not start_result["state"]["running"]:
+                return start_result
+
+        with self.lock:
+            self.public_base_url = ""
+            self.tunnel_status = "PUBLIC STARTING"
+            self.tunnel_thread = CloudflaredTunnelThread(cloudflared_path, int(self.port), self.events)
+            self.tunnel_thread.start()
+            return self._result("Public tunnel starting.")
+
+    def stop_tunnel(self) -> dict:
+        with self.lock:
+            thread = self.tunnel_thread
+            self.tunnel_thread = None
+            self.public_base_url = ""
+            self.tunnel_status = "PUBLIC OFFLINE"
+        if thread is not None:
+            thread.stop()
+        return self._result("Public tunnel stopped.")
+
+    def copy_url(self) -> dict:
+        url = self.get_state()["activeUrl"]
+        try:
+            copy_text_to_clipboard(url)
+            return self._result("URL copied to clipboard.")
+        except Exception as exc:
+            return self._result(f"Clipboard copy failed: {exc}")
+
+    def copy_public_url(self) -> dict:
+        url = self.get_state()["publicUrl"]
+        if not url:
+            return self._result("Public URL is not ready.")
+        try:
+            copy_text_to_clipboard(url)
+            return self._result("Public URL copied to clipboard.")
+        except Exception as exc:
+            return self._result(f"Clipboard copy failed: {exc}")
+
+    def open_url(self) -> dict:
+        webbrowser.open(self.get_state()["activeUrl"])
+        return self._result("Opened the voice input page.")
+
+    def minimize_window(self) -> dict:
+        if self.window is not None:
+            self.window.minimize()
+        return self._result()
+
+    def toggle_maximize_window(self) -> dict:
+        if self.window is not None:
+            if self.maximized:
+                self.window.restore()
+                self.maximized = False
+            else:
+                self.window.maximize()
+                self.maximized = True
+        return self._result()
+
+    def close_window(self) -> dict:
+        state = self._result("Closing...")
+
+        def destroy_later() -> None:
+            self.shutdown()
+            if self.window is not None:
+                self.window.destroy()
+
+        threading.Timer(0.05, destroy_later).start()
+        return state
+
+    def shutdown(self) -> None:
+        self.stop_service()
 
 
 def main() -> None:
-    app = DesktopClient()
-    app.mainloop()
+    if sys.platform != "darwin":
+        raise SystemExit("This desktop client is for macOS.")
+
+    api = DesktopApi()
+    window = webview.create_window(
+        "Flow Bridge macOS",
+        ui_url(),
+        js_api=api,
+        width=1180,
+        height=820,
+        min_size=(1040, 720),
+        frameless=True,
+        easy_drag=False,
+        draggable=True,
+        shadow=True,
+        background_color="#050807",
+    )
+    api.window = window
+    window.events.closing += lambda: api.shutdown()
+    webview.start(debug=False)
 
 
 if __name__ == "__main__":

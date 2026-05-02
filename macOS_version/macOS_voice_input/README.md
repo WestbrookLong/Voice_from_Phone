@@ -40,11 +40,11 @@ cd /Users/ayana/Voice_from_Phone/macOS_version/macOS_voice_input
 ./start_desktop_client.sh
 ```
 
-桌面客户端会显示手机访问 URL 和二维码，手机 App 可以扫码连接，手机浏览器也可以直接打开该 URL。
+桌面客户端现在使用和 `FlowBridge` 相同的控制台式 UI：在一个深色窗口里集中显示服务状态、局域网地址、公网地址、Token、二维码和启动/停止按钮。手机 App 可以扫码连接，手机浏览器也可以直接打开窗口里显示的 URL。
 
 ## 公网连接
 
-桌面客户端提供 `启动公网` 按钮，会使用 Cloudflare Tunnel 把本机 `127.0.0.1:8787` 暴露成临时公网 HTTPS 地址。
+桌面客户端提供 `Start Public` 按钮，会使用 Cloudflare Tunnel 把本机 `127.0.0.1:8787` 暴露成临时公网 HTTPS 地址。
 
 先安装：
 
@@ -63,7 +63,7 @@ brew install cloudflared
 
 - 这是临时 `trycloudflare.com` 地址，不是固定域名。
 - 当前安全边界是 `Cloudflare Tunnel + session token`，不要把链接发给不信任的人。
-- 如果关闭桌面客户端或点击“停止公网”，公网地址立即失效。
+- 如果关闭桌面客户端或点击 `Stop Public`，公网地址立即失效。
 
 ## macOS 权限
 
