@@ -154,6 +154,22 @@
         box-shadow: 0 0 8px rgba(196, 83, 60, 0.6);
       }
 
+      .settings-button {
+        min-height: 42px;
+        width: 42px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        padding: 0;
+        color: var(--ink);
+      }
+
+      .settings-button[data-active="true"] {
+        border-color: rgba(40, 245, 141, 0.5);
+        color: #041008;
+        background: var(--accent);
+        box-shadow: 0 0 24px rgba(40, 245, 141, 0.24);
+      }
+
       .composer {
         position: relative;
         display: grid;
@@ -215,6 +231,130 @@
         box-shadow: 0 0 28px rgba(40, 245, 141, 0.24);
       }
 
+      .settings-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: none;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.46);
+        backdrop-filter: blur(8px);
+      }
+
+      .settings-overlay[data-open="true"] {
+        display: flex;
+      }
+
+      .settings-sheet {
+        width: min(100%, 520px);
+        border: 1px solid rgba(40, 245, 141, 0.22);
+        border-radius: 26px;
+        padding: 18px;
+        background:
+          linear-gradient(145deg, rgba(8, 16, 13, 0.98), rgba(11, 29, 20, 0.96)),
+          var(--panel);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
+      }
+
+      .settings-sheet h2 {
+        margin: 0 0 12px;
+        color: #F0FFF5;
+        font: 800 22px/1.1 "Segoe UI", sans-serif;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border: 1px solid rgba(40, 245, 141, 0.12);
+        border-radius: 20px;
+        padding: 14px;
+        background: rgba(6, 16, 11, 0.78);
+      }
+
+      .setting-group {
+        display: grid;
+        gap: 12px;
+      }
+
+      .dependent-settings {
+        display: none;
+        border-left: 2px solid rgba(40, 245, 141, 0.28);
+        margin-left: 12px;
+        padding-left: 12px;
+      }
+
+      .dependent-settings[data-visible="true"] {
+        display: block;
+      }
+
+      .setting-title {
+        color: var(--ink);
+        font: 800 16px/1.2 "Segoe UI", "PingFang SC", sans-serif;
+      }
+
+      .setting-desc {
+        margin-top: 6px;
+        color: var(--muted);
+        font: 500 12px/1.45 "Segoe UI", "PingFang SC", sans-serif;
+      }
+
+      .switch {
+        position: relative;
+        width: 54px;
+        height: 32px;
+        flex: 0 0 auto;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .slider {
+        position: absolute;
+        inset: 0;
+        border: 1px solid rgba(40, 245, 141, 0.18);
+        border-radius: 999px;
+        background: rgba(91, 112, 98, 0.22);
+        transition: 0.16s ease;
+      }
+
+      .slider::before {
+        content: "";
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #8EA99A;
+        transition: 0.16s ease;
+      }
+
+      .switch input:checked + .slider {
+        background: rgba(40, 245, 141, 0.26);
+        border-color: rgba(40, 245, 141, 0.55);
+      }
+
+      .switch input:checked + .slider::before {
+        transform: translateX(22px);
+        background: var(--accent);
+        box-shadow: 0 0 18px rgba(40, 245, 141, 0.42);
+      }
+
+      .switch input:disabled + .slider {
+        opacity: 0.5;
+      }
+
+      .close-settings {
+        width: 100%;
+        margin-top: 12px;
+      }
+
       @media (max-width: 430px) {
         .shell {
           border-radius: 28px;
@@ -250,6 +390,7 @@
           <div id="status" class="status" data-state="idle">
           <span class="dot"></span>
         </div>
+          <button id="settings" class="settings-button" type="button" aria-label="设置">⚙</button>
         </header>
 
         <div class="composer">
@@ -262,10 +403,58 @@
       </section>
     </main>
 
+    <div id="settingsOverlay" class="settings-overlay" data-open="false">
+      <section class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <h2 id="settingsTitle">设置</h2>
+        <div class="setting-group">
+          <div class="setting-row">
+            <div>
+              <div class="setting-title">标点过滤</div>
+              <div class="setting-desc">开启后，电脑端只接收过滤真实标点后的文本；手机输入框内容保持原样。</div>
+            </div>
+            <label class="switch">
+              <input id="punctuationToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="spokenPunctuationSettings" class="dependent-settings" data-visible="false">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">口述标点转换</div>
+                <div class="setting-desc">把“逗号、句号、问号”等文字命令转换为真实标点，并按中英文上下文选择标点样式。</div>
+              </div>
+              <label class="switch">
+                <input id="spokenPunctuationToggle" type="checkbox" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-title">英文语音命令</div>
+              <div class="setting-desc">开启后，说 enter 会回车；说 backspace / back space 会删除到上一个标点；说 delete all 会尽量删除当前光标前内容。命令大小写不敏感。</div>
+            </div>
+            <label class="switch">
+              <input id="voiceCommandToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <button id="closeSettings" class="close-settings primary" type="button">完成</button>
+      </section>
+    </div>
+
     <script>
       const statusEl = document.querySelector("#status");
       const inputEl = document.querySelector("#input");
       const clearButton = document.querySelector("#clear");
+      const settingsButton = document.querySelector("#settings");
+      const settingsOverlay = document.querySelector("#settingsOverlay");
+      const closeSettingsButton = document.querySelector("#closeSettings");
+      const punctuationToggle = document.querySelector("#punctuationToggle");
+      const spokenPunctuationSettings = document.querySelector("#spokenPunctuationSettings");
+      const spokenPunctuationToggle = document.querySelector("#spokenPunctuationToggle");
+      const voiceCommandToggle = document.querySelector("#voiceCommandToggle");
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || "";
 
@@ -274,7 +463,19 @@
       let queue = [];
       let reconnectTimer = null;
       let lastSentText = "";
+      let rawSessionStartIndex = 0;
       let lastExplicitBackspaceAt = 0;
+      let lastRemoteEnterAt = 0;
+      let filterPunctuation = localStorage.getItem("flowVoice.filterPunctuation") === "1";
+      let convertSpokenPunctuation = localStorage.getItem("flowVoice.convertSpokenPunctuation") === "1";
+      let enableVoiceCommands = localStorage.getItem("flowVoice.enableVoiceCommands") === "1";
+      let punctuationPattern = /[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~，。！？、；：“”‘’（）《》〈〉【】「」『』〔〕｛｝—…·￥～]/g;
+
+      try {
+        punctuationPattern = new RegExp("[\\p{P}\\p{S}]", "gu");
+      } catch (_) {
+        // Older browsers fall back to the explicit punctuation list above.
+      }
 
       function setStatus(text, state = "idle") {
         statusEl.dataset.state = state;
@@ -283,6 +484,98 @@
         } else {
           statusEl.innerHTML = text;
         }
+      }
+
+      function applySettingsState() {
+        if (!filterPunctuation) {
+          convertSpokenPunctuation = false;
+        }
+        punctuationToggle.checked = filterPunctuation;
+        spokenPunctuationToggle.checked = convertSpokenPunctuation;
+        voiceCommandToggle.checked = enableVoiceCommands;
+        spokenPunctuationToggle.disabled = !filterPunctuation;
+        spokenPunctuationSettings.dataset.visible = String(filterPunctuation);
+        settingsButton.dataset.active = String(filterPunctuation || convertSpokenPunctuation || enableVoiceCommands);
+      }
+
+      function computerText(rawText) {
+        let text = rawText;
+        if (!filterPunctuation) {
+          return text;
+        }
+        text = text.replace(punctuationPattern, "");
+        if (convertSpokenPunctuation) {
+          text = convertSpokenPunctuationText(text);
+        }
+        return text;
+      }
+
+      function isCjk(char) {
+        return /[\u3400-\u9fff\uf900-\ufaff]/.test(char || "");
+      }
+
+      function isLatinOrDigit(char) {
+        return /[A-Za-z0-9]/.test(char || "");
+      }
+
+      function nearbyNonSpace(text, index, direction) {
+        for (let i = index; i >= 0 && i < text.length; i += direction) {
+          if (!/\s/.test(text[i])) {
+            return text[i];
+          }
+        }
+        return "";
+      }
+
+      function punctuationStyle(text, start, end) {
+        const prev = nearbyNonSpace(text, start - 1, -1);
+        const next = nearbyNonSpace(text, end, 1);
+        if (isCjk(prev) || isCjk(next)) {
+          return "zh";
+        }
+        if (isLatinOrDigit(prev) || isLatinOrDigit(next)) {
+          return "en";
+        }
+        return "zh";
+      }
+
+      function convertSpokenPunctuationText(text) {
+        const phrasePattern = /左双引号|右双引号|左单引号|右单引号|左括号|右括号|省略号|破折号|感叹号|叹号|逗号|句号|顿号|问号|冒号|分号|引号/g;
+        const converted = text.replace(phrasePattern, (phrase, offset) => {
+          const style = punctuationStyle(text, offset, offset + phrase.length);
+          const isEnglish = style === "en";
+          const map = {
+            "逗号": isEnglish ? "," : "，",
+            "句号": isEnglish ? "." : "。",
+            "顿号": "、",
+            "问号": isEnglish ? "?" : "？",
+            "感叹号": isEnglish ? "!" : "！",
+            "叹号": isEnglish ? "!" : "！",
+            "冒号": isEnglish ? ":" : "：",
+            "分号": isEnglish ? ";" : "；",
+            "省略号": isEnglish ? "..." : "……",
+            "破折号": isEnglish ? "--" : "——",
+            "左括号": isEnglish ? "(" : "（",
+            "右括号": isEnglish ? ")" : "）",
+            "左双引号": isEnglish ? '"' : "“",
+            "右双引号": isEnglish ? '"' : "”",
+            "左单引号": isEnglish ? "'" : "‘",
+            "右单引号": isEnglish ? "'" : "’",
+            "引号": isEnglish ? '"' : "”",
+          };
+          return map[phrase] || phrase;
+        });
+        return cleanupConvertedPunctuation(converted);
+      }
+
+      function cleanupConvertedPunctuation(text) {
+        return text
+          .replace(/\s+([，。！？、；：）】》」』”’])/g, "$1")
+          .replace(/([（【《「『“‘])\s+/g, "$1")
+          .replace(/\s+([（【《「『“‘])/g, "$1")
+          .replace(/([，。！？、；：])\s+/g, "$1")
+          .replace(/\s+([,.!?;:])/g, "$1")
+          .replace(/([,.!?;:])(?=[A-Za-z0-9])/g, "$1 ");
       }
 
       function socketUrl() {
@@ -307,17 +600,29 @@
         }
       }
 
-      function syncNow() {
-        if (inputEl.value === lastSentText) {
-          return;
-        }
-        lastSentText = inputEl.value;
+      function sendSyncText(text) {
+        lastSentText = text;
         sendMessage({
           type: "sync_text",
           token,
           seq: ++seq,
-          text: inputEl.value,
+          text,
         });
+      }
+
+      function activeInputText() {
+        if (rawSessionStartIndex > inputEl.value.length) {
+          rawSessionStartIndex = 0;
+        }
+        return inputEl.value.slice(rawSessionStartIndex);
+      }
+
+      function syncNow() {
+        const text = computerText(activeInputText());
+        if (text === lastSentText) {
+          return;
+        }
+        sendSyncText(text);
       }
 
       function resetSession() {
@@ -337,8 +642,29 @@
         });
       }
 
+      function sendBackspace(count) {
+        const normalizedCount = Math.max(0, Math.floor(count || 0));
+        if (!normalizedCount) {
+          return;
+        }
+        const ops = [];
+        let remaining = normalizedCount;
+        while (remaining > 0) {
+          const chunk = Math.min(remaining, 1000);
+          ops.push({ type: "backspace", count: chunk });
+          remaining -= chunk;
+        }
+        sendMessage({
+          type: "ops",
+          token,
+          seq: ++seq,
+          ops,
+        });
+      }
+
       function clearInputAfterEnter() {
         inputEl.value = "";
+        rawSessionStartIndex = 0;
         lastSentText = "";
         resetSession();
       }
@@ -349,42 +675,138 @@
         requestAnimationFrame(() => inputEl.focus());
       }
 
-      function maybeSendEnterAndClear(event) {
+      function markRemoteSessionBoundary(index = inputEl.value.length) {
+        rawSessionStartIndex = Math.max(0, Math.min(index, inputEl.value.length));
+        lastSentText = "";
+        resetSession();
+      }
+
+      function triggerRemoteEnterOnly() {
+        const now = performance.now();
+        if (now - lastRemoteEnterAt < 120) {
+          return;
+        }
+        lastRemoteEnterAt = now;
+        sendEnter();
+        markRemoteSessionBoundary();
+      }
+
+      function maybeSendRemoteEnterOnly(event) {
         const isKeyboardEnter = event.key === "Enter";
         const isInputLineBreak = event.inputType === "insertLineBreak" || event.inputType === "insertParagraph";
         if (!isKeyboardEnter && !isInputLineBreak) {
           return;
         }
         event.preventDefault();
-        triggerEnterAndClear();
+        triggerRemoteEnterOnly();
+      }
+
+      function parseVoiceCommand(rawText) {
+        if (!enableVoiceCommands) {
+          return null;
+        }
+        const match = rawText.match(/(^|[\s,.;:!?，。！？、；：])((?:delete\s+all)|(?:back\s*space)|enter)\s*$/i);
+        if (!match) {
+          return null;
+        }
+        const command = match[2].toLowerCase().replace(/\s+/g, " ");
+        const normalizedCommand = command === "back space" ? "backspace" : command;
+        const commandStart = match.index + match[1].length;
+        return {
+          command: normalizedCommand,
+          textBeforeCommand: rawText.slice(0, commandStart).replace(/\s+$/g, ""),
+        };
+      }
+
+      function isBoundaryPunctuation(char) {
+        return /[,.!?;:，。！？、；：]/.test(char || "");
+      }
+
+      function backspaceCountToPreviousPunctuation(text) {
+        const chars = Array.from(text);
+        let searchEnd = chars.length;
+        while (searchEnd > 0 && /\s/.test(chars[searchEnd - 1])) {
+          searchEnd -= 1;
+        }
+        while (searchEnd > 0 && isBoundaryPunctuation(chars[searchEnd - 1])) {
+          searchEnd -= 1;
+        }
+        for (let i = searchEnd - 1; i >= 0; i -= 1) {
+          if (isBoundaryPunctuation(chars[i])) {
+            return chars.length - i - 1;
+          }
+        }
+        return Math.max(chars.length, 1000);
+      }
+
+      function syncCommandPrefix(textBeforeCommand) {
+        const text = computerText(textBeforeCommand);
+        if (text !== lastSentText) {
+          sendSyncText(text);
+        }
+        return text;
+      }
+
+      function isInterimCommandText(text, command) {
+        const normalizedText = String(text || "").trim().toLowerCase();
+        const normalizedCommand = String(command || "").trim().toLowerCase();
+        return normalizedText.length > 0 && normalizedCommand.startsWith(normalizedText);
+      }
+
+      function handleVoiceCommand() {
+        const activeText = activeInputText();
+        const parsed = parseVoiceCommand(activeText);
+        if (!parsed) {
+          return false;
+        }
+
+        const hasCommandPrefix = parsed.textBeforeCommand.trim().length > 0;
+        const commandText = hasCommandPrefix ? syncCommandPrefix(parsed.textBeforeCommand) : lastSentText;
+        if (parsed.command === "enter") {
+          if (!hasCommandPrefix && isInterimCommandText(lastSentText, parsed.command)) {
+            sendBackspace(Array.from(lastSentText).length);
+          }
+          sendEnter();
+          markRemoteSessionBoundary(inputEl.value.length);
+          return true;
+        }
+
+        if (parsed.command === "delete all") {
+          sendBackspace(1000);
+          markRemoteSessionBoundary(inputEl.value.length);
+          return true;
+        }
+
+        if (parsed.command === "backspace") {
+          sendBackspace(backspaceCountToPreviousPunctuation(commandText || lastSentText));
+          markRemoteSessionBoundary(inputEl.value.length);
+          return true;
+        }
+
+        return false;
       }
 
       function syncOrHandleLineBreak() {
-        const lineBreakIndex = inputEl.value.search(/\r?\n/);
+        if (handleVoiceCommand()) {
+          return;
+        }
+        const activeText = activeInputText();
+        const lineBreakIndex = activeText.search(/\r?\n/);
         if (lineBreakIndex >= 0) {
-          const textBeforeBreak = inputEl.value.slice(0, lineBreakIndex);
+          const lineBreakText = activeText.match(/\r?\n/)?.[0] || "\n";
+          const textBeforeBreak = computerText(activeText.slice(0, lineBreakIndex));
           if (textBeforeBreak !== lastSentText) {
-            lastSentText = textBeforeBreak;
-            sendMessage({
-              type: "sync_text",
-              token,
-              seq: ++seq,
-              text: textBeforeBreak,
-            });
+            sendSyncText(textBeforeBreak);
           }
-          triggerEnterAndClear();
+          sendEnter();
+          markRemoteSessionBoundary(rawSessionStartIndex + lineBreakIndex + lineBreakText.length);
           return;
         }
         syncNow();
       }
 
       function sendExplicitBackspace() {
-        sendMessage({
-          type: "ops",
-          token,
-          seq: ++seq,
-          ops: [{ type: "backspace", count: 1 }],
-        });
+        sendBackspace(1);
       }
 
       function maybeSendEmptyBackspace(event) {
@@ -443,19 +865,64 @@
       }
 
       inputEl.addEventListener("keydown", maybeSendEmptyBackspace);
-      inputEl.addEventListener("keydown", maybeSendEnterAndClear);
+      inputEl.addEventListener("keydown", maybeSendRemoteEnterOnly);
       inputEl.addEventListener("beforeinput", maybeSendEmptyBackspace);
-      inputEl.addEventListener("beforeinput", maybeSendEnterAndClear);
+      inputEl.addEventListener("beforeinput", maybeSendRemoteEnterOnly);
       inputEl.addEventListener("input", syncOrHandleLineBreak);
 
       clearButton.addEventListener("click", () => {
         inputEl.value = "";
+        rawSessionStartIndex = 0;
         lastSentText = "";
         resetSession();
         inputEl.focus();
       });
 
-      
+      settingsButton.addEventListener("click", () => {
+        settingsOverlay.dataset.open = "true";
+      });
+
+      closeSettingsButton.addEventListener("click", () => {
+        settingsOverlay.dataset.open = "false";
+        inputEl.focus();
+      });
+
+      settingsOverlay.addEventListener("click", (event) => {
+        if (event.target === settingsOverlay) {
+          settingsOverlay.dataset.open = "false";
+          inputEl.focus();
+        }
+      });
+
+      punctuationToggle.addEventListener("change", () => {
+        filterPunctuation = punctuationToggle.checked;
+        if (!filterPunctuation) {
+          convertSpokenPunctuation = false;
+          localStorage.setItem("flowVoice.convertSpokenPunctuation", "0");
+        }
+        localStorage.setItem("flowVoice.filterPunctuation", filterPunctuation ? "1" : "0");
+        applySettingsState();
+        syncOrHandleLineBreak();
+      });
+
+      spokenPunctuationToggle.addEventListener("change", () => {
+        if (!filterPunctuation) {
+          return;
+        }
+        convertSpokenPunctuation = spokenPunctuationToggle.checked;
+        localStorage.setItem("flowVoice.convertSpokenPunctuation", convertSpokenPunctuation ? "1" : "0");
+        applySettingsState();
+        syncOrHandleLineBreak();
+      });
+
+      voiceCommandToggle.addEventListener("change", () => {
+        enableVoiceCommands = voiceCommandToggle.checked;
+        localStorage.setItem("flowVoice.enableVoiceCommands", enableVoiceCommands ? "1" : "0");
+        applySettingsState();
+        syncOrHandleLineBreak();
+      });
+
+      applySettingsState();
       connect();
     </script>
   </body>

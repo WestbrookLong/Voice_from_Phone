@@ -1,0 +1,1362 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --bg: #050807;
+        --panel: rgba(11, 20, 16, 0.9);
+        --panel-strong: rgba(17, 35, 26, 0.94);
+        --line: rgba(127, 215, 162, 0.18);
+        --line-strong: rgba(127, 215, 162, 0.34);
+        --accent: #7fd7a2;
+        --accent-soft: #4d8f69;
+        --text: #dde7df;
+        --muted: #8aa394;
+        --warm: #d7c47a;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 16% 18%, rgba(38, 110, 71, 0.24), transparent 30%),
+          radial-gradient(circle at 85% 78%, rgba(22, 61, 40, 0.24), transparent 34%),
+          linear-gradient(145deg, rgba(14, 29, 22, 0.3), transparent 28%, rgba(3, 8, 6, 0.92) 72%),
+          var(--bg);
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+      }
+
+      .clip {
+        position: absolute;
+      }
+
+      .ambient-field {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+        background-size: 72px 72px;
+        opacity: 0.16;
+      }
+
+      .ambient-glow {
+        position: absolute;
+        border-radius: 999px;
+        filter: blur(100px);
+        opacity: 0.5;
+      }
+
+      .ambient-glow.left {
+        top: -90px;
+        left: -120px;
+        width: 520px;
+        height: 520px;
+        background: rgba(73, 157, 108, 0.24);
+      }
+
+      .ambient-glow.right {
+        right: -140px;
+        bottom: -180px;
+        width: 660px;
+        height: 660px;
+        background: rgba(24, 94, 57, 0.24);
+      }
+
+      .ambient-ring {
+        position: absolute;
+        inset: auto auto 120px 120px;
+        width: 340px;
+        height: 340px;
+        border: 1px solid rgba(127, 215, 162, 0.09);
+        border-radius: 50%;
+      }
+
+      .scene-shell {
+        position: absolute;
+        inset: 42px;
+        border: 1px solid rgba(127, 215, 162, 0.14);
+        border-radius: 34px;
+        overflow: hidden;
+        background: linear-gradient(180deg, rgba(7, 12, 10, 0.74), rgba(5, 8, 7, 0.9));
+        box-shadow:
+          0 28px 80px rgba(0, 0, 0, 0.48),
+          inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      .scene-shell::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(135deg, rgba(127, 215, 162, 0.08), transparent 28%, rgba(2, 8, 5, 0.86) 72%),
+          radial-gradient(circle at top right, rgba(127, 215, 162, 0.1), transparent 26%);
+        pointer-events: none;
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        width: 100%;
+        height: 100%;
+        padding: 72px 78px;
+        gap: 38px;
+        box-sizing: border-box;
+      }
+
+      .scene-grid {
+        display: grid;
+        width: 100%;
+        height: 100%;
+        gap: 34px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        align-self: flex-start;
+        padding: 12px 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(127, 215, 162, 0.2);
+        background: rgba(18, 39, 27, 0.65);
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        color: var(--accent);
+        text-transform: uppercase;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 18px rgba(127, 215, 162, 0.7);
+      }
+
+      .eyebrow {
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: rgba(127, 215, 162, 0.72);
+      }
+
+      .hero-title {
+        max-width: 780px;
+        font-family: "STZhongsong", "Source Han Serif SC", "SimSun", serif;
+        font-size: 90px;
+        line-height: 1.08;
+        font-weight: 900;
+        color: #f1f8f4;
+        letter-spacing: -0.04em;
+      }
+
+      .hero-copy {
+        max-width: 760px;
+        font-size: 31px;
+        line-height: 1.58;
+        color: var(--muted);
+      }
+
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+
+      .chip {
+        padding: 14px 22px;
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        border-radius: 999px;
+        background: rgba(7, 15, 11, 0.62);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 19px;
+        color: #bad8c6;
+      }
+
+      .hero-stack {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 28px;
+      }
+
+      .product-stage {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 0;
+      }
+
+      .device-shell,
+      .desktop-shell,
+      .desktop-card,
+      .phone-card,
+      .mini-card,
+      .ui-panel,
+      .toggle-card,
+      .closing-card {
+        border: 1px solid var(--line);
+        background: rgba(7, 13, 10, 0.86);
+        box-shadow:
+          0 16px 36px rgba(0, 0, 0, 0.32),
+          inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      }
+
+      .desktop-shell {
+        position: absolute;
+        right: 24px;
+        top: 74px;
+        width: 750px;
+        height: 460px;
+        border-radius: 30px;
+        padding: 28px;
+      }
+
+      .desktop-shell::before {
+        content: "";
+        position: absolute;
+        inset: 16px;
+        border-radius: 22px;
+        border: 1px solid rgba(127, 215, 162, 0.12);
+      }
+
+      .desktop-topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+      }
+
+      .logo-box {
+        display: grid;
+        place-items: center;
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+        background: rgba(12, 29, 20, 0.92);
+        border: 1px solid rgba(127, 215, 162, 0.24);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--accent);
+      }
+
+      .desktop-title {
+        font-family: "Noto Serif SC", serif;
+        font-size: 44px;
+        font-weight: 700;
+        color: #eef7f1;
+      }
+
+      .desktop-url {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(127, 215, 162, 0.18);
+        background: rgba(3, 8, 6, 0.82);
+      }
+
+      .desktop-url span,
+      .stat-code,
+      .small-label,
+      .mono {
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+      }
+
+      .desktop-url span {
+        flex: 1;
+        min-width: 0;
+        font-size: 19px;
+        color: #b9ffd4;
+      }
+
+      .desktop-url .action {
+        padding: 10px 18px;
+        border-radius: 14px;
+        border: 1px solid rgba(127, 215, 162, 0.2);
+        background: rgba(16, 41, 27, 0.96);
+        font-size: 16px;
+        font-weight: 700;
+        color: #c9f3d9;
+      }
+
+      .desktop-input-box {
+        margin-top: 26px;
+        padding: 24px;
+        border-radius: 24px;
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        background: linear-gradient(180deg, rgba(9, 22, 16, 0.88), rgba(5, 10, 8, 0.94));
+      }
+
+      .desktop-input-line {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        padding: 13px 0;
+        font-size: 24px;
+        color: #d7e5dc;
+      }
+
+      .cursor {
+        width: 4px;
+        height: 30px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 14px rgba(127, 215, 162, 0.8);
+      }
+
+      .phone-card {
+        position: absolute;
+        left: 56px;
+        bottom: 58px;
+        width: 320px;
+        height: 560px;
+        border-radius: 42px;
+        padding: 24px 22px;
+        background: linear-gradient(180deg, rgba(4, 11, 8, 0.98), rgba(8, 18, 13, 0.96));
+      }
+
+      .phone-card::before {
+        content: "";
+        position: absolute;
+        inset: 10px;
+        border-radius: 34px;
+        border: 1px solid rgba(127, 215, 162, 0.12);
+      }
+
+      .phone-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 22px;
+      }
+
+      .phone-live {
+        padding: 11px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        background: rgba(18, 39, 27, 0.68);
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        color: var(--accent);
+        text-transform: uppercase;
+      }
+
+      .phone-icon-row {
+        display: flex;
+        gap: 10px;
+      }
+
+      .phone-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        border: 1px solid rgba(127, 215, 162, 0.14);
+        background: rgba(7, 13, 10, 0.88);
+      }
+
+      .mobile-input {
+        margin-top: 16px;
+        border-radius: 28px;
+        border: 1px solid rgba(127, 215, 162, 0.15);
+        background: rgba(6, 13, 10, 0.96);
+        padding: 20px 20px 18px;
+      }
+
+      .mobile-input-title {
+        margin-bottom: 12px;
+        font-size: 18px;
+        color: #d1ead9;
+      }
+
+      .mobile-text-line {
+        width: 100%;
+        height: 14px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(187, 230, 204, 0.96), rgba(89, 159, 114, 0.5));
+        margin-bottom: 11px;
+      }
+
+      .mobile-text-line.short {
+        width: 64%;
+      }
+
+      .signal-lane {
+        position: absolute;
+        left: 328px;
+        right: 408px;
+        top: 370px;
+        height: 4px;
+      }
+
+      .signal-track {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(127, 215, 162, 0.06), rgba(127, 215, 162, 0.22), rgba(127, 215, 162, 0.06));
+      }
+
+      .signal-dot {
+        position: absolute;
+        top: -7px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(214, 255, 228, 0.96), rgba(127, 215, 162, 0.92) 58%, rgba(70, 129, 91, 0.4));
+        box-shadow: 0 0 22px rgba(127, 215, 162, 0.72);
+      }
+
+      .macro-stat {
+        position: absolute;
+        right: 38px;
+        bottom: 46px;
+        display: flex;
+        gap: 14px;
+      }
+
+      .stat-pill {
+        padding: 14px 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(127, 215, 162, 0.18);
+        background: rgba(6, 12, 9, 0.9);
+      }
+
+      .stat-pill .small-label {
+        font-size: 12px;
+        letter-spacing: 0.16em;
+        color: rgba(127, 215, 162, 0.54);
+        text-transform: uppercase;
+      }
+
+      .stat-pill .stat-code {
+        margin-top: 8px;
+        font-size: 20px;
+        color: #dfffe9;
+      }
+
+      .three-card-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 24px;
+      }
+
+      .mini-card {
+        border-radius: 28px;
+        padding: 28px 26px;
+        background: linear-gradient(180deg, rgba(9, 17, 13, 0.95), rgba(5, 10, 8, 0.94));
+      }
+
+      .mini-card h3 {
+        margin-top: 20px;
+        font-family: "Noto Serif SC", serif;
+        font-size: 34px;
+        color: #f0f8f4;
+      }
+
+      .mini-card p {
+        margin-top: 16px;
+        font-size: 23px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .card-number {
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 20px;
+        color: rgba(127, 215, 162, 0.72);
+      }
+
+      .diff-board {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 26px;
+      }
+
+      .diff-card {
+        border-radius: 30px;
+        padding: 30px;
+        border: 1px solid rgba(127, 215, 162, 0.18);
+        background: rgba(6, 12, 9, 0.88);
+      }
+
+      .diff-card h4 {
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 18px;
+        letter-spacing: 0.18em;
+        color: rgba(127, 215, 162, 0.76);
+        text-transform: uppercase;
+      }
+
+      .diff-line {
+        margin-top: 22px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .token {
+        padding: 11px 14px;
+        border-radius: 14px;
+        font-size: 24px;
+        background: rgba(18, 32, 24, 0.88);
+        color: #dce9df;
+      }
+
+      .token.keep {
+        border: 1px solid rgba(127, 215, 162, 0.2);
+      }
+
+      .token.old {
+        border: 1px solid rgba(215, 196, 122, 0.24);
+        color: var(--warm);
+      }
+
+      .token.new {
+        border: 1px solid rgba(127, 215, 162, 0.28);
+        background: rgba(18, 51, 35, 0.86);
+        color: #f1fff6;
+      }
+
+      .command-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .command-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        background: rgba(9, 17, 13, 0.88);
+        font-size: 22px;
+        color: #dce7df;
+      }
+
+      .command-row span:last-child {
+        font-family: "JetBrains Mono", monospace;
+        color: var(--accent);
+      }
+
+      .split-focus {
+        display: grid;
+        grid-template-columns: 1.12fr 0.88fr;
+        gap: 28px;
+      }
+
+      .desktop-card {
+        border-radius: 30px;
+        padding: 28px;
+        background: linear-gradient(180deg, rgba(8, 15, 12, 0.94), rgba(6, 11, 9, 0.92));
+      }
+
+      .desktop-card .title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 22px;
+      }
+
+      .desktop-card .title-row h3,
+      .phone-panel h3 {
+        font-family: "STZhongsong", "Source Han Serif SC", "SimSun", serif;
+        font-size: 34px;
+        color: #f2fff7;
+      }
+
+      .desktop-url-wide {
+        display: flex;
+        gap: 14px;
+        padding: 14px;
+        border-radius: 20px;
+        border: 1px solid rgba(127, 215, 162, 0.18);
+        background: rgba(3, 8, 6, 0.86);
+      }
+
+      .desktop-url-wide .fill {
+        flex: 1;
+        height: 18px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(138, 170, 148, 0.3), rgba(185, 255, 212, 0.88));
+      }
+
+      .button-green,
+      .button-dark {
+        padding: 12px 18px;
+        border-radius: 16px;
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .button-green {
+        background: var(--accent);
+        color: #09110c;
+      }
+
+      .button-dark {
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        background: rgba(16, 41, 27, 0.88);
+        color: #d2f3df;
+      }
+
+      .desktop-bottom-grid {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 20px;
+      }
+
+      .ui-panel {
+        border-radius: 24px;
+        padding: 22px;
+      }
+
+      .ui-panel h4 {
+        margin-bottom: 12px;
+        font-size: 24px;
+        color: #ecfff4;
+      }
+
+      .ui-panel p {
+        font-size: 18px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .qr-box {
+        margin-top: 16px;
+        width: 182px;
+        height: 182px;
+        padding: 14px;
+        border-radius: 24px;
+        background: #ffffff;
+      }
+
+      .qr-grid {
+        display: grid;
+        grid-template-columns: repeat(11, 1fr);
+        width: 100%;
+        height: 100%;
+        gap: 3px;
+      }
+
+      .qr-grid span {
+        border-radius: 2px;
+        background: #111111;
+      }
+
+      .phone-panel {
+        border-radius: 34px;
+        padding: 26px;
+        border: 1px solid rgba(127, 215, 162, 0.18);
+        background: linear-gradient(180deg, rgba(7, 13, 10, 0.96), rgba(4, 11, 8, 0.96));
+      }
+
+      .phone-status {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 22px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        background: rgba(15, 28, 21, 0.8);
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 14px;
+        color: #c5ebd4;
+      }
+
+      .input-surface {
+        border-radius: 24px;
+        border: 1px solid rgba(127, 215, 162, 0.16);
+        padding: 18px;
+        background: rgba(5, 12, 9, 0.9);
+      }
+
+      .toggle-card {
+        margin-top: 16px;
+        border-radius: 24px;
+        padding: 18px 20px;
+      }
+
+      .toggle-card-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .toggle-card strong {
+        display: block;
+        font-size: 22px;
+        color: #effaf3;
+      }
+
+      .toggle-card p {
+        margin-top: 9px;
+        font-size: 17px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      .toggle-switch {
+        width: 72px;
+        height: 40px;
+        border-radius: 999px;
+        background: rgba(24, 61, 40, 0.96);
+        border: 1px solid rgba(127, 215, 162, 0.24);
+        position: relative;
+      }
+
+      .toggle-switch::after {
+        content: "";
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 16px rgba(127, 215, 162, 0.5);
+      }
+
+      .closing-layout {
+        display: grid;
+        grid-template-columns: 1fr 0.95fr;
+        gap: 34px;
+        align-items: center;
+      }
+
+      .closing-title {
+        max-width: 760px;
+        font-family: "STZhongsong", "Source Han Serif SC", "SimSun", serif;
+        font-size: 104px;
+        line-height: 1.02;
+        font-weight: 900;
+        color: #f3fff8;
+        letter-spacing: -0.05em;
+      }
+
+      .closing-copy {
+        margin-top: 26px;
+        max-width: 720px;
+        font-size: 28px;
+        line-height: 1.58;
+        color: var(--muted);
+      }
+
+      .closing-card {
+        border-radius: 30px;
+        padding: 30px;
+        background: linear-gradient(180deg, rgba(8, 16, 12, 0.95), rgba(6, 10, 8, 0.94));
+      }
+
+      .closing-card h3 {
+        font-family: "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+        font-size: 20px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(127, 215, 162, 0.76);
+      }
+
+      .closing-list {
+        margin-top: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .closing-item {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(127, 215, 162, 0.14);
+        background: rgba(8, 15, 12, 0.86);
+        font-size: 22px;
+        color: #e5f6eb;
+      }
+
+      .repo-line {
+        margin-top: 26px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(127, 215, 162, 0.12);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        color: #9dcfb1;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="16"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div id="ambient" class="clip" data-start="0" data-duration="16" data-track-index="0">
+        <div class="ambient-field"></div>
+        <div class="ambient-glow left"></div>
+        <div class="ambient-glow right"></div>
+        <div class="ambient-ring"></div>
+      </div>
+
+      <div id="scene-1" class="clip scene-shell" data-start="0" data-duration="4.4" data-track-index="1">
+        <div class="scene-content scene-grid" style="grid-template-columns: 0.92fr 1.08fr;">
+          <div class="hero-stack">
+            <div id="s1-badge" class="badge"><span class="dot"></span> Flow Voice</div>
+            <div id="s1-eyebrow" class="eyebrow">Lightweight Cursor Injection</div>
+            <h1 id="s1-title" class="hero-title">手机开口，电脑当前光标立即落字。</h1>
+            <p id="s1-copy" class="hero-copy">
+              不做远程桌面，不走重型投屏链路。Flow Voice 只同步文本差异，把手机输入法的实时结果直接写进 Windows 当前光标。
+            </p>
+            <div id="s1-chips" class="chip-row">
+              <div class="chip">无需发送</div>
+              <div class="chip">流式写入</div>
+              <div class="chip">当前光标</div>
+            </div>
+          </div>
+
+          <div class="product-stage">
+            <div id="desktop-shell" class="desktop-shell">
+              <div class="desktop-topbar">
+                <div style="display:flex;align-items:center;gap:18px;">
+                  <div class="logo-box">FV</div>
+                  <div>
+                    <div class="eyebrow" style="font-size:14px;">Desktop Console</div>
+                    <div class="desktop-title">Flow Bridge</div>
+                  </div>
+                </div>
+                <div class="status-pill"><span class="dot" style="width:8px;height:8px;"></span> SERVICE STARTED</div>
+              </div>
+
+              <div class="desktop-url">
+                <span>http://192.168.3.8:8787/?token=1PmSE6fJgqyouMU3</span>
+                <div class="action">Copy URL</div>
+                <div class="action" style="background:var(--accent);color:#07100b;">Open</div>
+              </div>
+
+              <div class="desktop-input-box">
+                <div class="desktop-input-line">
+                  <strong style="font-family:'Noto Serif SC',serif;font-size:28px;">当前输入</strong>
+                  <span class="mono" style="font-size:20px;color:var(--accent);">VOICE</span>
+                </div>
+                <div class="desktop-input-line">
+                  <span>把会议纪要实时写进任何输入框</span>
+                  <span id="s1-cursor" class="cursor"></span>
+                </div>
+                <div class="desktop-input-line" style="color:#91a99a;">手机端继续说话，电脑端继续落字。</div>
+              </div>
+            </div>
+
+            <div id="phone-shell" class="phone-card">
+              <div class="phone-header">
+                <div class="phone-live">LIVE INPUT</div>
+                <div class="phone-icon-row">
+                  <div class="phone-icon"></div>
+                  <div class="phone-icon"></div>
+                </div>
+              </div>
+              <div class="eyebrow" style="font-size:13px;">Phone Surface</div>
+              <div class="mobile-input">
+                <div class="mobile-input-title">语音转写正在进行</div>
+                <div class="mobile-text-line"></div>
+                <div class="mobile-text-line"></div>
+                <div class="mobile-text-line short"></div>
+              </div>
+              <div class="toggle-card" style="margin-top:18px;">
+                <div class="toggle-card-top">
+                  <strong>说话即可同步</strong>
+                  <div class="toggle-switch"></div>
+                </div>
+                <p>手机负责输入，电脑负责注入。输入法原本怎么识别，这里就怎么实时推过去。</p>
+              </div>
+            </div>
+
+            <div class="signal-lane">
+              <div class="signal-track"></div>
+              <div class="signal-dot" style="left: 0;"></div>
+              <div class="signal-dot" style="left: 0;"></div>
+              <div class="signal-dot" style="left: 0;"></div>
+            </div>
+
+            <div id="s1-stats" class="macro-stat">
+              <div class="stat-pill">
+                <div class="small-label">Flow</div>
+                <div class="stat-code">Text Delta Only</div>
+              </div>
+              <div class="stat-pill">
+                <div class="small-label">Target</div>
+                <div class="stat-code">Active Cursor</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-2" class="clip scene-shell" data-start="3.5" data-duration="4.6" data-track-index="2">
+        <div class="scene-content" style="flex-direction:column;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:28px;">
+            <div style="display:flex;flex-direction:column;gap:18px;">
+              <div id="s2-badge" class="badge"><span class="dot"></span> Injection Logic</div>
+              <h2 id="s2-title" class="hero-title" style="max-width:980px;font-size:74px;">轻量链路，只同步应该落到光标处的那一小段差异。</h2>
+            </div>
+            <p id="s2-copy" class="hero-copy" style="max-width:620px;font-size:25px;">
+              输入法后改前文也没关系。Flow Voice 会做前缀匹配，必要时退格重打一段尾部，保证电脑端始终跟上手机端最新文本。
+            </p>
+          </div>
+
+          <div class="three-card-grid">
+            <div id="s2-card-1" class="mini-card">
+              <div class="card-number">01</div>
+              <h3>流式注入</h3>
+              <p>输入一变化，立刻写到当前光标；不需要点击发送，不需要等待整句结束。</p>
+            </div>
+            <div id="s2-card-2" class="mini-card">
+              <div class="card-number">02</div>
+              <h3>前缀匹配</h3>
+              <p>语音输入修正文案时，只回滚变化尾部，不整段重输，兼顾实时感和正确性。</p>
+            </div>
+            <div id="s2-card-3" class="mini-card">
+              <div class="card-number">03</div>
+              <h3>命令直控</h3>
+              <p>支持 enter、backspace、delete all 这类英文语音命令，双手可以真正解放。</p>
+            </div>
+          </div>
+
+          <div class="diff-board">
+            <div id="s2-diff" class="diff-card">
+              <h4>prefix match / tail rewrite</h4>
+              <div class="diff-line">
+                <div class="token keep">今天</div>
+                <div class="token keep">下午</div>
+                <div class="token old">开会</div>
+                <div class="token new">开项目会</div>
+              </div>
+              <div class="diff-line" style="margin-top:18px;">
+                <div class="token keep">只回滚尾部</div>
+                <div class="token new">重新注入新结果</div>
+              </div>
+            </div>
+
+            <div id="s2-commands" class="diff-card">
+              <h4>voice commands</h4>
+              <div class="command-stack">
+                <div class="command-row"><span>say enter</span><span>press Enter</span></div>
+                <div class="command-row"><span>say back space</span><span>delete to punctuation</span></div>
+                <div class="command-row"><span>say delete all</span><span>clear editable range</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-3" class="clip scene-shell" data-start="7.2" data-duration="4.8" data-track-index="3">
+        <div class="scene-content" style="flex-direction:column;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:24px;">
+            <div style="display:flex;flex-direction:column;gap:18px;">
+              <div id="s3-badge" class="badge"><span class="dot"></span> UI Experience</div>
+              <h2 id="s3-title" class="hero-title" style="max-width:960px;font-size:78px;">扫码即连，界面克制，开始说话这一步被压到最短。</h2>
+            </div>
+            <div id="s3-tags" class="chip-row" style="max-width:500px;justify-content:flex-end;">
+              <div class="chip">QR Connect</div>
+              <div class="chip">Android App</div>
+              <div class="chip">Windows EXE</div>
+            </div>
+          </div>
+
+          <div class="split-focus">
+            <div id="s3-desktop" class="desktop-card">
+              <div class="title-row">
+                <div>
+                  <div class="eyebrow" style="font-size:14px;">Desktop Side</div>
+                  <h3>Flow Bridge 控制台</h3>
+                </div>
+                <div class="status-pill"><span class="dot" style="width:8px;height:8px;"></span> 已启动</div>
+              </div>
+
+              <div class="desktop-url-wide">
+                <div class="fill"></div>
+                <div class="button-dark">Copy URL</div>
+                <div class="button-green">Open</div>
+              </div>
+
+              <div class="desktop-bottom-grid">
+                <div class="ui-panel">
+                  <h4>语音输入</h4>
+                  <p>地址、Token、复制、打开、服务启停，桌面端只保留真正高频的控制项。</p>
+                </div>
+                <div class="ui-panel" style="display:flex;flex-direction:column;align-items:center;">
+                  <h4 style="align-self:flex-start;">二维码连接</h4>
+                  <div class="qr-box">
+                    <div class="qr-grid">
+                      <span></span><span></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span></span><span></span>
+                      <span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span><span style="background:#fff;"></span><span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span>
+                      <span></span><span style="background:#fff;"></span><span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span style="background:#fff;"></span><span></span>
+                      <span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span><span></span><span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span>
+                      <span></span><span></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span></span><span></span>
+                      <span style="background:#fff;"></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span><span style="background:#fff;"></span><span></span>
+                      <span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span>
+                      <span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span><span></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span>
+                      <span></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                      <span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span><span></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span style="background:#fff;"></span><span></span>
+                      <span></span><span></span><span></span><span></span><span></span><span style="background:#fff;"></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="s3-phone" class="phone-panel">
+              <div class="phone-status">
+                <div>
+                  <div class="eyebrow" style="font-size:13px;">Mobile Side</div>
+                  <h3>安卓客户端</h3>
+                </div>
+                <div class="status-pill"><span class="dot" style="width:8px;height:8px;"></span> 已连接</div>
+              </div>
+
+              <div class="input-surface">
+                <div class="phone-header" style="margin-bottom:12px;">
+                  <div class="phone-live">Live Input</div>
+                  <div class="phone-icon-row">
+                    <div class="phone-icon"></div>
+                    <div class="phone-icon"></div>
+                  </div>
+                </div>
+                <div class="mobile-text-line"></div>
+                <div class="mobile-text-line"></div>
+                <div class="mobile-text-line short"></div>
+              </div>
+
+              <div class="toggle-card">
+                <div class="toggle-card-top">
+                  <strong>标点过滤</strong>
+                  <div class="toggle-switch"></div>
+                </div>
+                <p>手机输入保持原样，电脑端只注入过滤后的最终文本。</p>
+              </div>
+
+              <div class="toggle-card">
+                <div class="toggle-card-top">
+                  <strong>口述标点转换</strong>
+                  <div class="toggle-switch"></div>
+                </div>
+                <p>把“逗号、句号、问号”等文字命令变成真实标点，中英文风格自动区分。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-4" class="clip scene-shell" data-start="11.2" data-duration="4.8" data-track-index="4">
+        <div class="scene-content">
+          <div class="closing-layout">
+            <div>
+              <div id="s4-badge" class="badge"><span class="dot"></span> Flow Voice</div>
+              <h2 id="s4-title" class="closing-title">Open. Dictate. Done.</h2>
+              <p id="s4-copy" class="closing-copy">
+                一条局域网连接，一套克制的手机与桌面 UI，一条只关心文本差异的轻量链路。
+                从扫码到开口，不需要再和输入动作本身做对抗。
+              </p>
+              <div id="s4-tags" class="chip-row" style="margin-top:28px;">
+                <div class="chip">实时注入</div>
+                <div class="chip">适应输入法修正</div>
+                <div class="chip">扫码即连</div>
+              </div>
+            </div>
+
+            <div id="s4-card" class="closing-card">
+              <h3>Why It Feels Fast</h3>
+              <div class="closing-list">
+                <div class="closing-item"><span class="dot" style="width:10px;height:10px;"></span> 不同步桌面画面，只同步文字变化。</div>
+                <div class="closing-item"><span class="dot" style="width:10px;height:10px;"></span> 命令词可直接控制 Enter / Backspace / Delete All。</div>
+                <div class="closing-item"><span class="dot" style="width:10px;height:10px;"></span> 桌面端 EXE 与安卓端 App 都围绕“快速进入输入”设计。</div>
+              </div>
+              <div class="repo-line">github.com/WestbrookLong/FlowVoice</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      const fullDuration = 16;
+      const pulseCycle = 2.2;
+      const pulseRepeats = Math.max(0, Math.floor(fullDuration / pulseCycle) - 1);
+      const signalCycle = 1.45;
+      const signalRepeats = Math.max(0, Math.floor(fullDuration / signalCycle) - 1);
+
+      tl.from("#scene-1", {
+        clipPath: "inset(0 100% 0 0 round 34px)",
+        duration: 0.85,
+        ease: "power3.out"
+      }, 0);
+      tl.from(["#s1-badge", "#s1-eyebrow"], {
+        y: 24,
+        opacity: 0,
+        duration: 0.48,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 0.2);
+      tl.from("#s1-title", {
+        y: 48,
+        opacity: 0,
+        duration: 0.72,
+        ease: "power3.out"
+      }, 0.34);
+      tl.from("#s1-copy", {
+        y: 34,
+        opacity: 0,
+        duration: 0.56,
+        ease: "power2.out"
+      }, 0.56);
+      tl.from("#s1-chips .chip", {
+        y: 20,
+        opacity: 0,
+        duration: 0.44,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 0.84);
+      tl.from(["#desktop-shell", "#phone-shell"], {
+        y: 42,
+        scale: 0.96,
+        opacity: 0,
+        duration: 0.7,
+        stagger: 0.12,
+        ease: "power3.out"
+      }, 0.42);
+      tl.from("#s1-stats .stat-pill", {
+        y: 18,
+        opacity: 0,
+        duration: 0.5,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 1.02);
+      tl.fromTo(".ambient-glow.left", {
+        scale: 0.9
+      }, {
+        scale: 1.08,
+        duration: pulseCycle,
+        ease: "sine.inOut",
+        repeat: pulseRepeats,
+        yoyo: true
+      }, 0);
+      tl.fromTo(".ambient-glow.right", {
+        scale: 1.04
+      }, {
+        scale: 0.92,
+        duration: pulseCycle + 0.3,
+        ease: "sine.inOut",
+        repeat: pulseRepeats,
+        yoyo: true
+      }, 0);
+      tl.fromTo(".ambient-ring", {
+        rotation: 0
+      }, {
+        rotation: 20,
+        duration: fullDuration,
+        ease: "none"
+      }, 0);
+      tl.fromTo(".signal-dot", {
+        x: 0,
+        opacity: 0
+      }, {
+        x: 620,
+        opacity: 1,
+        duration: signalCycle,
+        ease: "power1.inOut",
+        stagger: 0.18,
+        repeat: signalRepeats
+      }, 0.82);
+      tl.fromTo("#s1-cursor", {
+        opacity: 0.2
+      }, {
+        opacity: 1,
+        duration: 0.44,
+        ease: "none",
+        repeat: Math.max(0, Math.floor(fullDuration / 0.44) - 1),
+        yoyo: true
+      }, 0.4);
+
+      tl.fromTo("#scene-2", {
+        clipPath: "inset(0 100% 0 0 round 34px)"
+      }, {
+        clipPath: "inset(0 0% 0 0 round 34px)",
+        duration: 0.92,
+        ease: "power3.inOut"
+      }, 3.5);
+      tl.from(["#s2-badge", "#s2-title", "#s2-copy"], {
+        y: 28,
+        opacity: 0,
+        duration: 0.54,
+        stagger: 0.1,
+        ease: "power2.out"
+      }, 3.78);
+      tl.from(["#s2-card-1", "#s2-card-2", "#s2-card-3"], {
+        y: 30,
+        opacity: 0,
+        duration: 0.56,
+        stagger: 0.12,
+        ease: "power3.out"
+      }, 4.16);
+      tl.from(["#s2-diff", "#s2-commands"], {
+        y: 28,
+        opacity: 0,
+        duration: 0.56,
+        stagger: 0.1,
+        ease: "power3.out"
+      }, 4.52);
+      tl.from(".token", {
+        scale: 0.9,
+        opacity: 0,
+        duration: 0.34,
+        stagger: 0.05,
+        ease: "back.out(1.6)"
+      }, 4.86);
+      tl.from(".command-row", {
+        x: 20,
+        opacity: 0,
+        duration: 0.4,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 4.98);
+
+      tl.fromTo("#scene-3", {
+        clipPath: "inset(100% 0 0 0 round 34px)"
+      }, {
+        clipPath: "inset(0% 0 0 0 round 34px)",
+        duration: 0.94,
+        ease: "power3.inOut"
+      }, 7.2);
+      tl.from(["#s3-badge", "#s3-title"], {
+        y: 26,
+        opacity: 0,
+        duration: 0.5,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 7.48);
+      tl.from("#s3-tags .chip", {
+        y: 14,
+        opacity: 0,
+        duration: 0.36,
+        stagger: 0.05,
+        ease: "power2.out"
+      }, 7.7);
+      tl.from(["#s3-desktop", "#s3-phone"], {
+        y: 32,
+        opacity: 0,
+        duration: 0.62,
+        stagger: 0.12,
+        ease: "power3.out"
+      }, 7.96);
+      tl.from(".qr-box", {
+        scale: 0.88,
+        opacity: 0,
+        duration: 0.46,
+        ease: "back.out(1.5)"
+      }, 8.44);
+      tl.from(".toggle-card", {
+        y: 18,
+        opacity: 0,
+        duration: 0.44,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 8.32);
+
+      tl.fromTo("#scene-4", {
+        clipPath: "circle(0% at 72% 56%)"
+      }, {
+        clipPath: "circle(150% at 72% 56%)",
+        duration: 1,
+        ease: "power3.inOut"
+      }, 11.2);
+      tl.from(["#s4-badge", "#s4-title"], {
+        y: 26,
+        opacity: 0,
+        duration: 0.56,
+        stagger: 0.08,
+        ease: "power3.out"
+      }, 11.52);
+      tl.from(["#s4-copy", "#s4-tags .chip", "#s4-card"], {
+        y: 28,
+        opacity: 0,
+        duration: 0.58,
+        stagger: 0.1,
+        ease: "power3.out"
+      }, 11.88);
+      tl.from(".closing-item", {
+        x: 18,
+        opacity: 0,
+        duration: 0.38,
+        stagger: 0.08,
+        ease: "power2.out"
+      }, 12.3);
+      tl.to(["#s4-title", "#s4-copy", "#s4-tags", "#s4-card", "#s4-badge"], {
+        y: -20,
+        opacity: 0,
+        duration: 0.56,
+        stagger: 0.06,
+        ease: "power2.in"
+      }, 15.12);
+      tl.to(".ambient-field, .ambient-glow, .ambient-ring", {
+        opacity: 0,
+        duration: 0.6,
+        ease: "power2.in"
+      }, 15.28);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

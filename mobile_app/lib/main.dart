@@ -14,59 +14,18 @@ class FlowVoiceApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const bg = Color(0xFF10140F);
-    const ink = Color(0xFF172016);
-    const accent = Color(0xFFD9FF70);
-
     return MaterialApp(
       title: 'Flow Voice',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: bg,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF050807),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: accent,
-          brightness: Brightness.light,
+          seedColor: const Color(0xFF28F58D),
+          brightness: Brightness.dark,
         ),
         fontFamily: 'sans',
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFFFFF8E8),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(color: Color(0x1F172016)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(color: Color(0x1F172016)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(color: Color(0xFF3D5A21), width: 1.4),
-          ),
-          labelStyle: const TextStyle(color: Color(0xFF69705D)),
-          hintStyle: const TextStyle(color: Color(0x66172016)),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(52),
-            backgroundColor: accent,
-            foregroundColor: ink,
-            textStyle: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size.fromHeight(48),
-            foregroundColor: ink,
-            side: const BorderSide(color: Color(0x26172016)),
-            textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          ),
-        ),
       ),
       home: const FlowVoicePage(),
     );
@@ -98,15 +57,19 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
   BridgeStatus _status = BridgeStatus.disconnected;
   String _statusText = '离线';
   String _lastSentText = '';
+  int _rawSessionStartIndex = 0;
   int _seq = 0;
+  int _connectionGeneration = 0;
   bool _isConnecting = false;
+  bool _filterPunctuation = false;
+  bool _convertSpokenPunctuation = false;
+  bool _enableVoiceCommands = false;
   Timer? _reconnectTimer;
   final List<Map<String, Object?>> _queue = <Map<String, Object?>>[];
 
   @override
   void initState() {
     super.initState();
-    _hostController.text = '192.168.3.8:8787';
     _inputController.addListener(_syncInput);
   }
 
@@ -147,12 +110,23 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
     );
   }
 
+  Future<void> _scanQrCode() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const QrScanPage()),
+    );
+    if (result == null || result.trim().isEmpty) {
+      return;
+    }
+    _urlController.text = result.trim();
+    _parseAndFillUrl(result);
+    await _connect();
+  }
+
   void _parseAndFillUrl(String raw) {
     final value = raw.trim();
     if (value.isEmpty) {
       return;
     }
-
     final uri = Uri.tryParse(value);
     if (uri == null || uri.host.isEmpty) {
       _setStatus(BridgeStatus.error, 'URL 无效');
@@ -168,25 +142,13 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
     _setStatus(BridgeStatus.disconnected, '已读取');
   }
 
-  Future<void> _scanQrCode() async {
-    final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(builder: (_) => const QrScanPage()),
-    );
-    if (result == null || result.trim().isEmpty) {
-      return;
-    }
-    _urlController.text = result.trim();
-    _parseAndFillUrl(result);
-  }
-
   Future<void> _connect({bool fromRetry = false}) async {
     if (_isConnecting) {
       return;
     }
-
     final uri = _wsUri;
     if (uri == null) {
-      _setStatus(BridgeStatus.error, '缺少地址');
+      _setStatus(BridgeStatus.error, '请扫码');
       return;
     }
 
@@ -195,8 +157,15 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
     _setStatus(BridgeStatus.connecting, '连接中');
 
     try {
-      await _socket?.close();
+      final generation = ++_connectionGeneration;
+      final oldSocket = _socket;
+      _socket = null;
+      await oldSocket?.close();
       final socket = await WebSocket.connect(uri.toString());
+      if (generation != _connectionGeneration) {
+        await socket.close();
+        return;
+      }
       _socket = socket;
       _setStatus(BridgeStatus.connected, '在线');
       _flushQueue();
@@ -204,8 +173,8 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
 
       socket.listen(
         _handleSocketMessage,
-        onDone: () => _handleSocketClosed(retry: true),
-        onError: (_) => _handleSocketClosed(retry: true),
+        onDone: () => _handleSocketClosed(socket, retry: true),
+        onError: (_) => _handleSocketClosed(socket, retry: true),
         cancelOnError: true,
       );
     } catch (_) {
@@ -230,8 +199,11 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
     }
   }
 
-  void _handleSocketClosed({required bool retry}) {
+  void _handleSocketClosed(WebSocket socket, {required bool retry}) {
     if (!mounted) {
+      return;
+    }
+    if (!identical(socket, _socket)) {
       return;
     }
     _socket = null;
@@ -261,10 +233,31 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
   }
 
   void _syncInput() {
-    final text = _inputController.text;
+    if (_handleVoiceCommand()) {
+      return;
+    }
+
+    final activeText = _activeInputText();
+    final lineBreakMatch = RegExp(r'\r?\n').firstMatch(activeText);
+    if (lineBreakMatch != null) {
+      final textBeforeBreak =
+          _computerText(activeText.substring(0, lineBreakMatch.start));
+      if (textBeforeBreak != _lastSentText) {
+        _sendSyncText(textBeforeBreak);
+      }
+      _sendEnter();
+      _markRemoteSessionBoundary(_rawSessionStartIndex + lineBreakMatch.end);
+      return;
+    }
+
+    final text = _computerText(activeText);
     if (text == _lastSentText) {
       return;
     }
+    _sendSyncText(text);
+  }
+
+  void _sendSyncText(String text) {
     _lastSentText = text;
     _send(<String, Object?>{
       'type': 'sync_text',
@@ -274,11 +267,247 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
     });
   }
 
+  String _activeInputText() {
+    if (_rawSessionStartIndex > _inputController.text.length) {
+      _rawSessionStartIndex = 0;
+    }
+    return _inputController.text.substring(_rawSessionStartIndex);
+  }
+
+  String _computerText(String rawText) {
+    var text = rawText;
+    if (!_filterPunctuation) {
+      return text;
+    }
+    text = text.replaceAll(
+      RegExp(
+          r'''[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~，。！？、；：“”‘’（）《》〈〉【】「」『』〔〕｛｝—…·￥～]'''),
+      '',
+    );
+    if (_convertSpokenPunctuation) {
+      text = _convertSpokenPunctuationText(text);
+    }
+    return text;
+  }
+
+  bool _isCjk(String char) {
+    return RegExp(r'[\u3400-\u9fff\uf900-\ufaff]').hasMatch(char);
+  }
+
+  bool _isLatinOrDigit(String char) {
+    return RegExp(r'[A-Za-z0-9]').hasMatch(char);
+  }
+
+  String _nearbyNonSpace(String text, int index, int direction) {
+    for (var i = index; i >= 0 && i < text.length; i += direction) {
+      if (!RegExp(r'\s').hasMatch(text[i])) {
+        return text[i];
+      }
+    }
+    return '';
+  }
+
+  String _punctuationStyle(String text, int start, int end) {
+    final prev = _nearbyNonSpace(text, start - 1, -1);
+    final next = _nearbyNonSpace(text, end, 1);
+    if (_isCjk(prev) || _isCjk(next)) {
+      return 'zh';
+    }
+    if (_isLatinOrDigit(prev) || _isLatinOrDigit(next)) {
+      return 'en';
+    }
+    return 'zh';
+  }
+
+  String _convertSpokenPunctuationText(String text) {
+    final pattern = RegExp(
+        '左双引号|右双引号|左单引号|右单引号|左括号|右括号|省略号|破折号|感叹号|叹号|逗号|句号|顿号|问号|冒号|分号|引号');
+    final converted = text.replaceAllMapped(pattern, (match) {
+      final phrase = match.group(0) ?? '';
+      final isEnglish = _punctuationStyle(text, match.start, match.end) == 'en';
+      final map = <String, String>{
+        '逗号': isEnglish ? ',' : '，',
+        '句号': isEnglish ? '.' : '。',
+        '顿号': '、',
+        '问号': isEnglish ? '?' : '？',
+        '感叹号': isEnglish ? '!' : '！',
+        '叹号': isEnglish ? '!' : '！',
+        '冒号': isEnglish ? ':' : '：',
+        '分号': isEnglish ? ';' : '；',
+        '省略号': isEnglish ? '...' : '……',
+        '破折号': isEnglish ? '--' : '——',
+        '左括号': isEnglish ? '(' : '（',
+        '右括号': isEnglish ? ')' : '）',
+        '左双引号': isEnglish ? '"' : '“',
+        '右双引号': isEnglish ? '"' : '”',
+        '左单引号': isEnglish ? "'" : '‘',
+        '右单引号': isEnglish ? "'" : '’',
+        '引号': isEnglish ? '"' : '”',
+      };
+      return map[phrase] ?? phrase;
+    });
+    return _cleanupConvertedPunctuation(converted);
+  }
+
+  String _cleanupConvertedPunctuation(String text) {
+    return text
+        .replaceAllMapped(RegExp(r'\s+([，。！？、；：）】》」』”’])'), (m) => m.group(1)!)
+        .replaceAllMapped(RegExp(r'([（【《「『“‘])\s+'), (m) => m.group(1)!)
+        .replaceAllMapped(RegExp(r'\s+([（【《「『“‘])'), (m) => m.group(1)!)
+        .replaceAllMapped(RegExp(r'([，。！？、；：])\s+'), (m) => m.group(1)!)
+        .replaceAllMapped(RegExp(r'\s+([,.!?;:])'), (m) => m.group(1)!)
+        .replaceAllMapped(
+            RegExp(r'([,.!?;:])(?=[A-Za-z0-9])'), (m) => '${m.group(1)!} ');
+  }
+
+  ({String command, String textBeforeCommand})? _parseVoiceCommand(
+      String rawText) {
+    if (!_enableVoiceCommands) {
+      return null;
+    }
+    final match = RegExp(
+      r'(^|[\s,.;:!?，。！？、；：])((?:delete\s+all)|(?:back\s*space)|enter)\s*$',
+      caseSensitive: false,
+    ).firstMatch(rawText);
+    if (match == null) {
+      return null;
+    }
+    final rawCommand =
+        (match.group(2) ?? '').toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final command = rawCommand == 'back space' ? 'backspace' : rawCommand;
+    final commandStart = match.start + (match.group(1) ?? '').length;
+    return (
+      command: command,
+      textBeforeCommand:
+          rawText.substring(0, commandStart).replaceAll(RegExp(r'\s+$'), ''),
+    );
+  }
+
+  bool _isBoundaryPunctuation(String char) {
+    return RegExp(r'[,.!?;:，。！？、；：]').hasMatch(char);
+  }
+
+  int _backspaceCountToPreviousPunctuation(String text) {
+    final chars = text.runes.map(String.fromCharCode).toList();
+    var searchEnd = chars.length;
+    while (searchEnd > 0 && RegExp(r'\s').hasMatch(chars[searchEnd - 1])) {
+      searchEnd -= 1;
+    }
+    while (searchEnd > 0 && _isBoundaryPunctuation(chars[searchEnd - 1])) {
+      searchEnd -= 1;
+    }
+    for (var i = searchEnd - 1; i >= 0; i -= 1) {
+      if (_isBoundaryPunctuation(chars[i])) {
+        return chars.length - i - 1;
+      }
+    }
+    return chars.length > 1000 ? chars.length : 1000;
+  }
+
+  bool _isInterimCommandText(String text, String command) {
+    final normalizedText = text.trim().toLowerCase();
+    final normalizedCommand = command.trim().toLowerCase();
+    return normalizedText.isNotEmpty &&
+        normalizedCommand.startsWith(normalizedText);
+  }
+
+  String _syncCommandPrefix(String textBeforeCommand) {
+    final text = _computerText(textBeforeCommand);
+    if (text != _lastSentText) {
+      _sendSyncText(text);
+    }
+    return text;
+  }
+
+  bool _handleVoiceCommand() {
+    final activeText = _activeInputText();
+    final parsed = _parseVoiceCommand(activeText);
+    if (parsed == null) {
+      return false;
+    }
+
+    final hasCommandPrefix = parsed.textBeforeCommand.trim().isNotEmpty;
+    final commandText = hasCommandPrefix
+        ? _syncCommandPrefix(parsed.textBeforeCommand)
+        : _lastSentText;
+    if (parsed.command == 'enter') {
+      if (!hasCommandPrefix &&
+          _isInterimCommandText(_lastSentText, parsed.command)) {
+        _sendBackspace(_lastSentText.runes.length);
+      }
+      _sendEnter();
+      _markRemoteSessionBoundary(_inputController.text.length);
+      return true;
+    }
+
+    if (parsed.command == 'delete all') {
+      _sendBackspace(1000);
+      _markRemoteSessionBoundary(_inputController.text.length);
+      return true;
+    }
+
+    if (parsed.command == 'backspace') {
+      _sendBackspace(_backspaceCountToPreviousPunctuation(
+          commandText.isEmpty ? _lastSentText : commandText));
+      _markRemoteSessionBoundary(_inputController.text.length);
+      return true;
+    }
+
+    return false;
+  }
+
+  void _markRemoteSessionBoundary(int index) {
+    _rawSessionStartIndex = index.clamp(0, _inputController.text.length);
+    _lastSentText = '';
+    _sendResetSession();
+  }
+
+  void _sendResetSession() {
+    _send(<String, Object?>{
+      'type': 'reset_session',
+      'token': _tokenController.text.trim(),
+      'seq': ++_seq,
+    });
+  }
+
+  void _sendEnter() {
+    _send(<String, Object?>{
+      'type': 'ops',
+      'token': _tokenController.text.trim(),
+      'seq': ++_seq,
+      'ops': <Map<String, Object?>>[
+        <String, Object?>{'type': 'enter'},
+      ],
+    });
+  }
+
+  void _sendBackspace(int count) {
+    var remaining = count < 0 ? 0 : count;
+    if (remaining == 0) {
+      return;
+    }
+    final ops = <Map<String, Object?>>[];
+    while (remaining > 0) {
+      final chunk = remaining > 1000 ? 1000 : remaining;
+      ops.add(<String, Object?>{'type': 'backspace', 'count': chunk});
+      remaining -= chunk;
+    }
+    _send(<String, Object?>{
+      'type': 'ops',
+      'token': _tokenController.text.trim(),
+      'seq': ++_seq,
+      'ops': ops,
+    });
+  }
+
   void _send(Map<String, Object?> message) {
     final socket = _socket;
     if (socket == null || socket.readyState != WebSocket.open) {
       _queue.add(message);
-      _setStatus(BridgeStatus.error, '离线 ${_queue.length}');
+      if (_status != BridgeStatus.connected &&
+          _status != BridgeStatus.connecting) {
+        _setStatus(BridgeStatus.error, '离线 ${_queue.length}');
+      }
       return;
     }
     socket.add(jsonEncode(message));
@@ -295,129 +524,205 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
   void _clearLocalInput() {
     _inputController.removeListener(_syncInput);
     _inputController.clear();
+    _rawSessionStartIndex = 0;
     _lastSentText = '';
     _inputController.addListener(_syncInput);
-    _send(<String, Object?>{
-      'type': 'reset_session',
-      'token': _tokenController.text.trim(),
-      'seq': ++_seq,
-    });
+    _sendResetSession();
     _inputFocusNode.requestFocus();
+  }
+
+  void _openSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            void update(VoidCallback fn) {
+              setState(fn);
+              setSheetState(() {});
+              _syncInput();
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: _SettingsSheet(
+                  filterPunctuation: _filterPunctuation,
+                  convertSpokenPunctuation: _convertSpokenPunctuation,
+                  enableVoiceCommands: _enableVoiceCommands,
+                  onFilterChanged: (value) => update(() {
+                    _filterPunctuation = value;
+                    if (!value) {
+                      _convertSpokenPunctuation = false;
+                    }
+                  }),
+                  onConvertChanged: _filterPunctuation
+                      ? (value) =>
+                          update(() => _convertSpokenPunctuation = value)
+                      : null,
+                  onCommandChanged: (value) =>
+                      update(() => _enableVoiceCommands = value),
+                  onClose: () => Navigator.of(context).pop(),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = switch (_status) {
-      BridgeStatus.connected => const Color(0xFF255B2E),
-      BridgeStatus.connecting => const Color(0xFF775F24),
-      BridgeStatus.disconnected => const Color(0xFF69705D),
-      BridgeStatus.error => const Color(0xFFC4533C),
-    };
-
     return Scaffold(
       body: SafeArea(
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: <Color>[
-                Color(0xFF11180F),
-                Color(0xFF1E2819),
-                Color(0xFF0C100B),
-              ],
-            ),
-          ),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: <Widget>[
-              _Header(statusText: _statusText, statusColor: statusColor),
-              const SizedBox(height: 16),
-              _Panel(
+        child: _VoiceBackground(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: _VoiceShell(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    TextField(
-                      controller: _urlController,
-                      keyboardType: TextInputType.url,
-                      decoration: const InputDecoration(
-                        labelText: '电脑二维码 URL',
-                        hintText: '扫码会自动填入',
-                      ),
-                      onSubmitted: _parseAndFillUrl,
+                    _Header(
+                      status: _status,
+                      statusText: _statusText,
+                      settingsActive: _filterPunctuation ||
+                          _convertSpokenPunctuation ||
+                          _enableVoiceCommands,
+                      onSettings: _openSettings,
+                      onScan: _scanQrCode,
+                    ),
+                    const SizedBox(height: 16),
+                    _VoiceInput(
+                      controller: _inputController,
+                      focusNode: _inputFocusNode,
                     ),
                     const SizedBox(height: 10),
                     Row(
                       children: <Widget>[
                         Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _scanQrCode,
-                            icon: const Icon(Icons.qr_code_scanner),
-                            label: const Text('扫码连接'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => _parseAndFillUrl(_urlController.text),
-                            child: const Text('读取 URL'),
+                          child: _VoiceButton(
+                            label: '清空',
+                            onPressed: _clearLocalInput,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _hostController,
-                      keyboardType: TextInputType.url,
-                      decoration: const InputDecoration(
-                        labelText: '电脑地址',
-                        hintText: '192.168.x.x:8787',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _tokenController,
-                      decoration: const InputDecoration(labelText: 'Token'),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: _connect,
-                      child: const Text('连接电脑'),
-                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              _Panel(
-                child: Column(
-                  children: <Widget>[
-                    TextField(
-                      controller: _inputController,
-                      focusNode: _inputFocusNode,
-                      minLines: 11,
-                      maxLines: 18,
-                      keyboardType: TextInputType.multiline,
-                      textInputAction: TextInputAction.newline,
-                      decoration: const InputDecoration(
-                        hintText: '开始输入',
-                      ),
-                      style: const TextStyle(
-                        color: Color(0xFF172016),
-                        fontSize: 24,
-                        height: 1.42,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    OutlinedButton(
-                      onPressed: _clearLocalInput,
-                      child: const Text('清空'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _VoiceBackground extends StatelessWidget {
+  const _VoiceBackground({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            Color(0xFF050807),
+            Color(0xFF0B1D14),
+            Color(0xFF06100B),
+          ],
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          const Positioned(
+            left: -110,
+            top: -120,
+            child: _GlowBlob(
+              size: 330,
+              color: Color(0x3328F58D),
+            ),
+          ),
+          const Positioned(
+            right: -120,
+            top: 30,
+            child: _GlowBlob(
+              size: 300,
+              color: Color(0x261FA463),
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _GlowBlob extends StatelessWidget {
+  const _GlowBlob({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: <Color>[color, Colors.transparent],
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceShell extends StatelessWidget {
+  const _VoiceShell({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 760),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(34),
+          border: Border.all(color: const Color(0x3828F58D)),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[
+              Color(0xF508100D),
+              Color(0xE00B1D14),
+            ],
+          ),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x80000000),
+              blurRadius: 90,
+              offset: Offset(0, 30),
+            ),
+          ],
+        ),
+        child: child,
       ),
     );
   }
@@ -425,87 +730,456 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
 
 class _Header extends StatelessWidget {
   const _Header({
+    required this.status,
     required this.statusText,
-    required this.statusColor,
+    required this.settingsActive,
+    required this.onSettings,
+    required this.onScan,
   });
 
+  final BridgeStatus status;
   final String statusText;
-  final Color statusColor;
+  final bool settingsActive;
+  final VoidCallback onSettings;
+  final VoidCallback onScan;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                'LIVE INPUT',
-                style: TextStyle(
-                  color: Color(0xFFD9FF70),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.8,
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 340;
+        final ultraCompact = constraints.maxWidth < 300;
+        return Row(
+          children: <Widget>[
+            Expanded(
+              child: Row(
+                children: <Widget>[
+                  if (!ultraCompact) const Flexible(child: _Eyebrow()),
+                  if (!compact) ...const <Widget>[
+                    SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        'Flow Voice',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Color(0xFFF0FFF5),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.36,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              SizedBox(height: 6),
-              Text(
-                'Flow Voice',
-                style: TextStyle(
-                  color: Color(0xFFF9F4E5),
-                  fontSize: 48,
-                  height: 0.9,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -3.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF8E8),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(
-            statusText,
-            style: TextStyle(
-              color: statusColor,
-              fontWeight: FontWeight.w900,
-              fontSize: 13,
             ),
-          ),
-        ),
-      ],
+            _StatusPill(
+              status: status,
+              text: compact ? '' : statusText,
+            ),
+            const SizedBox(width: 8),
+            _RoundIconButton(
+              icon: Icons.settings,
+              active: settingsActive,
+              onPressed: onSettings,
+            ),
+            const SizedBox(width: 8),
+            _RoundIconButton(
+              icon: Icons.qr_code_scanner,
+              active: false,
+              onPressed: onScan,
+            ),
+          ],
+        );
+      },
     );
   }
 }
 
-class _Panel extends StatelessWidget {
-  const _Panel({required this.child});
+class _Eyebrow extends StatelessWidget {
+  const _Eyebrow();
 
-  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0x1F28F58D),
+        border: Border.all(color: const Color(0x3D28F58D)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Text(
+        'LIVE INPUT',
+        maxLines: 1,
+        overflow: TextOverflow.fade,
+        softWrap: false,
+        style: TextStyle(
+          color: Color(0xFF7BFFB5),
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          height: 1,
+          letterSpacing: 0.9,
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.status,
+    required this.text,
+  });
+
+  final BridgeStatus status;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final isConnected = status == BridgeStatus.connected;
+    final isError =
+        status == BridgeStatus.error || status == BridgeStatus.disconnected;
+    final color = isConnected
+        ? const Color(0xFF9CFCC4)
+        : isError
+            ? const Color(0xFFC4533C)
+            : const Color(0xFF5B7062);
+    final dot = isConnected
+        ? const Color(0xFF28F58D)
+        : isError
+            ? const Color(0xFFC4533C)
+            : const Color(0xFF5B7062);
+    return Container(
+      constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+      padding: EdgeInsets.symmetric(
+        horizontal: text.isEmpty ? 0 : 12,
+        vertical: 9,
+      ),
+      decoration: BoxDecoration(
+        color: isConnected ? const Color(0x2628F58D) : const Color(0xC708100D),
+        border: Border.all(color: const Color(0x1F28F58D)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: dot,
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: dot.withValues(alpha: 0.6),
+                  blurRadius: 10,
+                ),
+              ],
+            ),
+          ),
+          if (text.isNotEmpty) ...<Widget>[
+            const SizedBox(width: 6),
+            Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.fade,
+              softWrap: false,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RoundIconButton extends StatelessWidget {
+  const _RoundIconButton({
+    required this.icon,
+    required this.active,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final bool active;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: active ? const Color(0xFF28F58D) : const Color(0xC208100D),
+      shape: const CircleBorder(
+        side: BorderSide(color: Color(0x3328F58D)),
+      ),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Icon(
+            icon,
+            size: 21,
+            color: active ? const Color(0xFF041008) : const Color(0xFFDDE7DF),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceInput extends StatelessWidget {
+  const _VoiceInput({
+    required this.controller,
+    required this.focusNode,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 122,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: const Color(0x2428F58D)),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            Color(0xDB08100D),
+            Color(0xDE0B1D14),
+          ],
+        ),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 48,
+            offset: Offset(0, 18),
+          ),
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        focusNode: focusNode,
+        minLines: 3,
+        maxLines: 3,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        autocorrect: true,
+        enableSuggestions: true,
+        style: const TextStyle(
+          color: Color(0xFFDDE7DF),
+          fontSize: 22,
+          height: 1.36,
+          fontWeight: FontWeight.w500,
+        ),
+        decoration: const InputDecoration(
+          hintText: '开始输入',
+          hintStyle: TextStyle(color: Color(0x57DDE7DF)),
+          border: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceButton extends StatelessWidget {
+  const _VoiceButton({
+    required this.label,
+    required this.onPressed,
+  });
+
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 54,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFFDDE7DF),
+          side: const BorderSide(color: Color(0x1F28F58D)),
+          backgroundColor: const Color(0xC208100D),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w900,
+          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+}
+
+class _SettingsSheet extends StatelessWidget {
+  const _SettingsSheet({
+    required this.filterPunctuation,
+    required this.convertSpokenPunctuation,
+    required this.enableVoiceCommands,
+    required this.onFilterChanged,
+    required this.onConvertChanged,
+    required this.onCommandChanged,
+    required this.onClose,
+  });
+
+  final bool filterPunctuation;
+  final bool convertSpokenPunctuation;
+  final bool enableVoiceCommands;
+  final ValueChanged<bool> onFilterChanged;
+  final ValueChanged<bool>? onConvertChanged;
+  final ValueChanged<bool> onCommandChanged;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: const Color(0x3828F58D)),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: <Color>[
+              Color(0xFF08100D),
+              Color(0xFF0B1D14),
+            ],
+          ),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x8C000000),
+              blurRadius: 90,
+              offset: Offset(0, 30),
+            ),
+          ],
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text(
+                '设置',
+                style: TextStyle(
+                  color: Color(0xFFF0FFF5),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _SettingSwitch(
+                title: '标点过滤',
+                description: '开启后，电脑端只接收过滤真实标点后的文本；手机输入框内容保持原样。',
+                value: filterPunctuation,
+                onChanged: onFilterChanged,
+              ),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: _SettingSwitch(
+                  title: '口述标点转换',
+                  description: '把“逗号、句号、问号”等文字命令转换为真实标点，并按上下文选择样式。',
+                  value: convertSpokenPunctuation,
+                  onChanged: onConvertChanged,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _SettingSwitch(
+                title: '英文语音命令',
+                description:
+                    '支持 enter、backspace / back space、delete all。命令大小写不敏感。',
+                value: enableVoiceCommands,
+                onChanged: onCommandChanged,
+              ),
+              const SizedBox(height: 12),
+              _VoiceButton(label: '完成', onPressed: onClose),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingSwitch extends StatelessWidget {
+  const _SettingSwitch({
+    required this.title,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String description;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9F4E5).withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0x33FFFFFF)),
-        boxShadow: const <BoxShadow>[
-          BoxShadow(
-            color: Color(0x3D000000),
-            blurRadius: 42,
-            offset: Offset(0, 18),
+        color: const Color(0xC706100B),
+        border: Border.all(color: const Color(0x1F28F58D)),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: onChanged == null
+                        ? const Color(0x805B7062)
+                        : const Color(0xFFDDE7DF),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  description,
+                  style: TextStyle(
+                    color: onChanged == null
+                        ? const Color(0x705B7062)
+                        : const Color(0xFF5B7062),
+                    fontSize: 12,
+                    height: 1.45,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeThumbColor: const Color(0xFF28F58D),
+            inactiveThumbColor: const Color(0xFF8EA99A),
+            inactiveTrackColor: const Color(0x385B7062),
           ),
         ],
       ),
-      child: child,
     );
   }
 }
@@ -554,7 +1228,7 @@ class _QrScanPageState extends State<QrScanPage> {
               width: 246,
               height: 246,
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFFD9FF70), width: 3),
+                border: Border.all(color: const Color(0xFF28F58D), width: 3),
                 borderRadius: BorderRadius.circular(24),
               ),
             ),

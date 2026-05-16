@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Flow Voice</title>
+    <style>
+      :root {
+        --bg: #050807;
+        --panel: rgba(8, 16, 13, 0.92);
+        --panel-strong: #0B1D14;
+        --ink: #DDE7DF;
+        --muted: #5B7062;
+        --accent: #28F58D;
+        --accent-strong: #7BFFB5;
+        --danger: #c4533c;
+        --line: rgba(40, 245, 141, 0.12);
+        --shadow: rgba(0, 0, 0, 0.5);
+        --input-font-size: 22px;
+        --input-line-height: 1.36;
+        --input-padding-y: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+
+      body {
+        min-height: 100dvh;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 12% 0%, rgba(12, 255, 136, 0.32), transparent 18rem),
+          radial-gradient(circle at 92% 12%, rgba(31, 164, 99, 0.18), transparent 16rem),
+          linear-gradient(155deg, #050807 0%, #0B1D14 42%, #06100B 100%);
+        font-family: "Aptos Display", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+      }
+
+      main {
+        min-height: 100dvh;
+        display: grid;
+        padding: max(18px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+      }
+
+      .shell {
+        position: relative;
+        display: grid;
+        grid-template-rows: auto auto auto;
+        gap: 16px;
+        width: min(100%, 760px);
+        margin: auto;
+        overflow: hidden;
+        border: 1px solid rgba(40, 245, 141, 0.22);
+        border-radius: 34px;
+        padding: 18px;
+        background:
+          linear-gradient(145deg, rgba(8, 16, 13, 0.96), rgba(11, 29, 20, 0.88)),
+          var(--panel);
+        box-shadow: 0 30px 90px var(--shadow);
+      }
+
+      .shell::before {
+        content: "";
+        position: absolute;
+        inset: -36% 20% auto -20%;
+        height: 280px;
+        pointer-events: none;
+        background: radial-gradient(circle, rgba(40, 245, 141, 0.58), transparent 65%);
+        filter: blur(6px);
+      }
+
+      header {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+
+      .eyebrow {
+        width: fit-content;
+        border: 1px solid rgba(40, 245, 141, 0.24);
+        border-radius: 999px;
+        padding: 4px 10px;
+        color: var(--accent-strong);
+        background: rgba(40, 245, 141, 0.12);
+        font: 900 11px/1 "Segoe UI", sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      h1 {
+        margin: 0;
+        font: 600 18px/1 "Segoe UI", sans-serif;
+        letter-spacing: -0.02em;
+        color: #F0FFF5;
+        white-space: nowrap;
+      }
+
+      .status {
+        flex: 0 0 auto;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 9px 12px;
+        color: var(--muted);
+        background: rgba(8, 16, 13, 0.78);
+        font: 800 12px/1.1 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+        box-shadow: inset 0 1px 0 rgba(40, 245, 141, 0.08);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .status .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #5B7062;
+        box-shadow: 0 0 8px rgba(91, 112, 98, 0.5);
+      }
+
+      .status[data-state="connected"] {
+        color: #9CFCC4;
+        background: rgba(40, 245, 141, 0.15);
+      }
+
+      .status[data-state="connected"] .dot {
+        background: #28F58D;
+        box-shadow: 0 0 14px rgba(40, 245, 141, 0.9);
+      }
+
+      .status[data-state="error"] {
+        color: var(--danger);
+        background: rgba(196, 83, 60, 0.1);
+      }
+
+      .status[data-state="error"] .dot {
+        background: #c4533c;
+        box-shadow: 0 0 8px rgba(196, 83, 60, 0.6);
+      }
+
+      .settings-button {
+        min-height: 42px;
+        width: 42px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        padding: 0;
+        color: var(--ink);
+      }
+
+      .settings-button[data-active="true"] {
+        border-color: rgba(40, 245, 141, 0.5);
+        color: #041008;
+        background: var(--accent);
+        box-shadow: 0 0 24px rgba(40, 245, 141, 0.24);
+      }
+
+      .composer {
+        position: relative;
+        display: grid;
+        min-height: 0;
+      }
+
+      textarea {
+        width: 100%;
+        height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
+        min-height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
+        max-height: calc((var(--input-font-size) * var(--input-line-height) * 3) + (var(--input-padding-y) * 2) + 2px);
+        resize: none;
+        overflow-y: auto;
+        border: 1px solid rgba(40, 245, 141, 0.14);
+        border-radius: 30px;
+        outline: none;
+        padding: var(--input-padding-y) 18px;
+        color: var(--ink);
+        background:
+          linear-gradient(rgba(8, 16, 13, 0.86), rgba(8, 16, 13, 0.86)),
+          radial-gradient(circle at 100% 0%, rgba(40, 245, 141, 0.22), transparent 16rem);
+        box-shadow:
+          inset 0 1px 0 rgba(40, 245, 141, 0.08),
+          0 18px 48px rgba(0, 0, 0, 0.4);
+        font: 500 var(--input-font-size)/var(--input-line-height) "LXGW WenKai", "STKaiti", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+
+      textarea::placeholder {
+        color: rgba(221, 231, 223, 0.34);
+      }
+
+      textarea:focus {
+        border-color: rgba(40, 245, 141, 0.42);
+        box-shadow:
+          0 0 0 5px rgba(40, 245, 141, 0.22),
+          0 18px 48px rgba(0, 0, 0, 0.4);
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      button {
+        min-height: 54px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        color: var(--ink);
+        background: rgba(8, 16, 13, 0.76);
+        font: 900 16px/1 "Segoe UI", "PingFang SC", sans-serif;
+        box-shadow: inset 0 1px 0 rgba(40, 245, 141, 0.08);
+      }
+
+      button.primary {
+        border-color: rgba(40, 245, 141, 0.3);
+        color: #041008;
+        background: var(--accent);
+        box-shadow: 0 0 28px rgba(40, 245, 141, 0.24);
+      }
+
+      .settings-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: none;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.46);
+        backdrop-filter: blur(8px);
+      }
+
+      .settings-overlay[data-open="true"] {
+        display: flex;
+      }
+
+      .settings-sheet {
+        width: min(100%, 520px);
+        border: 1px solid rgba(40, 245, 141, 0.22);
+        border-radius: 26px;
+        padding: 18px;
+        background:
+          linear-gradient(145deg, rgba(8, 16, 13, 0.98), rgba(11, 29, 20, 0.96)),
+          var(--panel);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
+      }
+
+      .settings-sheet h2 {
+        margin: 0 0 12px;
+        color: #F0FFF5;
+        font: 800 22px/1.1 "Segoe UI", sans-serif;
+      }
+
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border: 1px solid rgba(40, 245, 141, 0.12);
+        border-radius: 20px;
+        padding: 14px;
+        background: rgba(6, 16, 11, 0.78);
+      }
+
+      .setting-group {
+        display: grid;
+        gap: 12px;
+      }
+
+      .dependent-settings {
+        display: none;
+        border-left: 2px solid rgba(40, 245, 141, 0.28);
+        margin-left: 12px;
+        padding-left: 12px;
+      }
+
+      .dependent-settings[data-visible="true"] {
+        display: block;
+      }
+
+      .setting-title {
+        color: var(--ink);
+        font: 800 16px/1.2 "Segoe UI", "PingFang SC", sans-serif;
+      }
+
+      .setting-desc {
+        margin-top: 6px;
+        color: var(--muted);
+        font: 500 12px/1.45 "Segoe UI", "PingFang SC", sans-serif;
+      }
+
+      .switch {
+        position: relative;
+        width: 54px;
+        height: 32px;
+        flex: 0 0 auto;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .slider {
+        position: absolute;
+        inset: 0;
+        border: 1px solid rgba(40, 245, 141, 0.18);
+        border-radius: 999px;
+        background: rgba(91, 112, 98, 0.22);
+        transition: 0.16s ease;
+      }
+
+      .slider::before {
+        content: "";
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #8EA99A;
+        transition: 0.16s ease;
+      }
+
+      .switch input:checked + .slider {
+        background: rgba(40, 245, 141, 0.26);
+        border-color: rgba(40, 245, 141, 0.55);
+      }
+
+      .switch input:checked + .slider::before {
+        transform: translateX(22px);
+        background: var(--accent);
+        box-shadow: 0 0 18px rgba(40, 245, 141, 0.42);
+      }
+
+      .switch input:disabled + .slider {
+        opacity: 0.5;
+      }
+
+      .close-settings {
+        width: 100%;
+        margin-top: 12px;
+      }
+
+      @media (max-width: 430px) {
+        .shell {
+          border-radius: 28px;
+          padding: 14px;
+        }
+
+        header {
+          align-items: center;
+        }
+
+        .eyebrow {
+          display: none;
+        }
+
+        .status {
+          padding: 8px 10px;
+        }
+
+        textarea {
+          border-radius: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="shell">
+        <header>
+          <div class="brand">
+            <div class="eyebrow">LIVE INPUT</div>
+            <h1>Flow Voice</h1>
+          </div>
+          <div id="status" class="status" data-state="idle">
+          <span class="dot"></span>
+        </div>
+          <button id="settings" class="settings-button" type="button" aria-label="设置">⚙</button>
+        </header>
+
+        <div class="composer">
+          <textarea id="input" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="开始输入"></textarea>
+        </div>
+
+        <div class="toolbar">
+          <button id="clear" type="button">清空</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="settingsOverlay" class="settings-overlay" data-open="false">
+      <section class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <h2 id="settingsTitle">设置</h2>
+        <div class="setting-group">
+          <div class="setting-row">
+            <div>
+              <div class="setting-title">标点过滤</div>
+              <div class="setting-desc">开启后，电脑端只接收过滤真实标点后的文本；手机输入框内容保持原样。</div>
+            </div>
+            <label class="switch">
+              <input id="punctuationToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="spokenPunctuationSettings" class="dependent-settings" data-visible="false">
+            <div class="setting-row">
+              <div>
+                <div class="setting-title">口述标点转换</div>
+                <div class="setting-desc">把“逗号、句号、问号”等文字命令转换为真实标点，并按中英文上下文选择标点样式。</div>
+              </div>
+              <label class="switch">
+                <input id="spokenPunctuationToggle" type="checkbox" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-title">英文语音命令</div>
+              <div class="setting-desc">开启后，说 enter 会回车；说 back 会退格一次；说 backspace / back space 会删除到上一个标点；说 delete all 会尽量删除当前光标前内容。命令大小写不敏感。</div>
+            </div>
+            <label class="switch">
+              <input id="voiceCommandToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <button id="closeSettings" class="close-settings primary" type="button">完成</button>
+      </section>
+    </div>
+
+    <script>
+      const statusEl = document.querySelector("#status");
+      const inputEl = document.querySelector("#input");
+      const clearButton = document.querySelector("#clear");
+      const settingsButton = document.querySelector("#settings");
+      const settingsOverlay = document.querySelector("#settingsOverlay");
+      const closeSettingsButton = document.querySelector("#closeSettings");
+      const punctuationToggle = document.querySelector("#punctuationToggle");
+      const spokenPunctuationSettings = document.querySelector("#spokenPunctuationSettings");
+      const spokenPunctuationToggle = document.querySelector("#spokenPunctuationToggle");
+      const voiceCommandToggle = document.querySelector("#voiceCommandToggle");
+      const params = new URLSearchParams(location.search);
+      const token = params.get("token") || "";
+
+      let ws = null;
+      let seq = 0;
+      let queue = [];
+      let reconnectTimer = null;
+      let lastSnapshotKey = "";
+      let lastExplicitBackspaceAt = 0;
+      let filterPunctuation = localStorage.getItem("flowVoice.filterPunctuation") === "1";
+      let convertSpokenPunctuation = localStorage.getItem("flowVoice.convertSpokenPunctuation") === "1";
+      let enableVoiceCommands = localStorage.getItem("flowVoice.enableVoiceCommands") === "1";
+
+      function setStatus(text, state = "idle") {
+        statusEl.dataset.state = state;
+        if (state === "connected") {
+          statusEl.innerHTML = '<span class="dot"></span>';
+        } else {
+          statusEl.innerHTML = text;
+        }
+      }
+
+      function applySettingsState() {
+        if (!filterPunctuation) {
+          convertSpokenPunctuation = false;
+        }
+        punctuationToggle.checked = filterPunctuation;
+        spokenPunctuationToggle.checked = convertSpokenPunctuation;
+        voiceCommandToggle.checked = enableVoiceCommands;
+        spokenPunctuationToggle.disabled = !filterPunctuation;
+        spokenPunctuationSettings.dataset.visible = String(filterPunctuation);
+        settingsButton.dataset.active = String(
+          filterPunctuation || convertSpokenPunctuation || enableVoiceCommands,
+        );
+      }
+
+      function currentSettings() {
+        return {
+          filterPunctuation,
+          convertSpokenPunctuation,
+          enableVoiceCommands,
+        };
+      }
+
+      function socketUrl() {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        return `${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+      }
+
+      function sendMessage(message) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          queue.push(message);
+          setStatus("离线", "error");
+          return;
+        }
+        ws.send(JSON.stringify(message));
+      }
+
+      function flushQueue() {
+        const pending = queue;
+        queue = [];
+        for (const item of pending) {
+          sendMessage(item);
+        }
+      }
+
+      function syncSnapshot(force = false) {
+        const message = {
+          type: "sync_state",
+          token,
+          seq: ++seq,
+          text: inputEl.value,
+          settings: currentSettings(),
+        };
+        const snapshotKey = JSON.stringify({
+          text: message.text,
+          settings: message.settings,
+        });
+        if (!force && snapshotKey === lastSnapshotKey) {
+          return;
+        }
+        lastSnapshotKey = snapshotKey;
+        sendMessage(message);
+      }
+
+      function resetSession() {
+        lastSnapshotKey = "";
+        sendMessage({
+          type: "reset_session",
+          token,
+          seq: ++seq,
+        });
+      }
+
+      function sendBackspace(count) {
+        const normalizedCount = Math.max(0, Math.floor(count || 0));
+        if (!normalizedCount) {
+          return;
+        }
+        const ops = [];
+        let remaining = normalizedCount;
+        while (remaining > 0) {
+          const chunk = Math.min(remaining, 1000);
+          ops.push({ type: "backspace", count: chunk });
+          remaining -= chunk;
+        }
+        sendMessage({
+          type: "ops",
+          token,
+          seq: ++seq,
+          ops,
+        });
+      }
+
+      function sendExplicitBackspace() {
+        sendBackspace(1);
+      }
+
+      function maybeSendEmptyBackspace(event) {
+        const isKeyboardBackspace = event.key === "Backspace";
+        const isInputBackspace = event.inputType === "deleteContentBackward";
+        if (!isKeyboardBackspace && !isInputBackspace) {
+          return;
+        }
+        if (inputEl.value.length > 0 || inputEl.selectionStart !== 0 || inputEl.selectionEnd !== 0) {
+          return;
+        }
+        const now = performance.now();
+        if (now - lastExplicitBackspaceAt < 80) {
+          event.preventDefault();
+          return;
+        }
+        lastExplicitBackspaceAt = now;
+        event.preventDefault();
+        sendExplicitBackspace();
+      }
+
+      function connect() {
+        clearTimeout(reconnectTimer);
+        if (ws) {
+          ws.close();
+        }
+
+        setStatus("连接中", "idle");
+        ws = new WebSocket(socketUrl());
+
+        ws.addEventListener("open", () => {
+          setStatus("在线", "connected");
+          flushQueue();
+          syncSnapshot(true);
+          inputEl.focus();
+        });
+
+        ws.addEventListener("message", (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === "error") {
+              setStatus("错误", "error");
+            }
+          } catch (_) {
+            // Ignore non-JSON diagnostics.
+          }
+        });
+
+        ws.addEventListener("close", () => {
+          setStatus("断开", "error");
+          reconnectTimer = setTimeout(connect, 1200);
+        });
+
+        ws.addEventListener("error", () => {
+          setStatus("错误", "error");
+        });
+      }
+
+      inputEl.addEventListener("keydown", maybeSendEmptyBackspace);
+      inputEl.addEventListener("beforeinput", maybeSendEmptyBackspace);
+      inputEl.addEventListener("input", () => syncSnapshot());
+
+      clearButton.addEventListener("click", () => {
+        inputEl.value = "";
+        resetSession();
+        inputEl.focus();
+      });
+
+      settingsButton.addEventListener("click", () => {
+        settingsOverlay.dataset.open = "true";
+      });
+
+      closeSettingsButton.addEventListener("click", () => {
+        settingsOverlay.dataset.open = "false";
+        inputEl.focus();
+      });
+
+      settingsOverlay.addEventListener("click", (event) => {
+        if (event.target === settingsOverlay) {
+          settingsOverlay.dataset.open = "false";
+          inputEl.focus();
+        }
+      });
+
+      punctuationToggle.addEventListener("change", () => {
+        filterPunctuation = punctuationToggle.checked;
+        if (!filterPunctuation) {
+          convertSpokenPunctuation = false;
+          localStorage.setItem("flowVoice.convertSpokenPunctuation", "0");
+        }
+        localStorage.setItem("flowVoice.filterPunctuation", filterPunctuation ? "1" : "0");
+        applySettingsState();
+        syncSnapshot(true);
+      });
+
+      spokenPunctuationToggle.addEventListener("change", () => {
+        if (!filterPunctuation) {
+          return;
+        }
+        convertSpokenPunctuation = spokenPunctuationToggle.checked;
+        localStorage.setItem("flowVoice.convertSpokenPunctuation", convertSpokenPunctuation ? "1" : "0");
+        applySettingsState();
+        syncSnapshot(true);
+      });
+
+      voiceCommandToggle.addEventListener("change", () => {
+        enableVoiceCommands = voiceCommandToggle.checked;
+        localStorage.setItem("flowVoice.enableVoiceCommands", enableVoiceCommands ? "1" : "0");
+        applySettingsState();
+        syncSnapshot(true);
+      });
+
+      applySettingsState();
+      connect();
+    </script>
+  </body>
+</html>
