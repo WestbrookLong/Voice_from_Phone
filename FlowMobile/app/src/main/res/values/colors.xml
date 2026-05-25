@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="flow_bg">#08100D</color>
+    <color name="flow_surface">#112119</color>
+    <color name="flow_surface_alt">#173224</color>
+    <color name="flow_accent">#7BFFB5</color>
+    <color name="flow_text">#E9FFF2</color>
+    <color name="flow_muted">#95AF9E</color>
+</resources>

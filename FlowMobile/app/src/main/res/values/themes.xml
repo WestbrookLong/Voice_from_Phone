@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.FlowMobile" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/flow_accent</item>
+        <item name="colorPrimaryVariant">@color/flow_surface_alt</item>
+        <item name="colorOnPrimary">@color/flow_bg</item>
+        <item name="android:statusBarColor">@color/flow_bg</item>
+        <item name="android:navigationBarColor">@color/flow_bg</item>
+        <item name="colorSurface">@color/flow_surface</item>
+        <item name="colorOnSurface">@color/flow_text</item>
+        <item name="android:windowBackground">@color/flow_bg</item>
+    </style>
+
+    <style name="Widget.FlowMobile.Button" parent="Widget.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="backgroundTint">@color/flow_surface_alt</item>
+        <item name="android:textColor">@color/flow_text</item>
+        <item name="cornerRadius">18dp</item>
+    </style>
+
+    <style name="Widget.FlowMobile.Key" parent="Widget.MaterialComponents.Button">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_marginStart">3dp</item>
+        <item name="android:layout_marginEnd">3dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="backgroundTint">@color/flow_surface_alt</item>
+        <item name="android:textColor">@color/flow_text</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingLeft">0dp</item>
+        <item name="android:paddingRight">0dp</item>
+    </style>
+
+    <style name="Widget.FlowMobile.WideKey" parent="Widget.FlowMobile.Key">
+        <item name="android:layout_weight">1.6</item>
+    </style>
+
+    <style name="Widget.FlowMobile.SpaceKey" parent="Widget.FlowMobile.Key">
+        <item name="android:layout_weight">4</item>
+    </style>
+
+    <style name="Widget.FlowMobile.LongKey" parent="Widget.FlowMobile.Key">
+        <item name="android:layout_weight">10</item>
+    </style>
+</resources>

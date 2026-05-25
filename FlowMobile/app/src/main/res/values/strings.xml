@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Flow Mobile</string>
+    <string name="ime_name">Flow Mobile Voice IME</string>
+    <string name="accessibility_label">Flow Mobile Send Helper</string>
+    <string name="accessibility_description">Fallback send helper for apps that do not expose an IME send action.</string>
+    <string name="main_subtitle">Android MVP for continuous voice input, text injection, and English send commands inside WeChat and other apps.</string>
+    <string name="status_section">Setup status</string>
+    <string name="status_mic_permission">Microphone permission</string>
+    <string name="status_keyboard">Keyboard service</string>
+    <string name="status_accessibility">Accessibility send helper</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_missing">Missing</string>
+    <string name="status_pending">Pending</string>
+    <string name="status_optional">Optional</string>
+    <string name="action_allow_mic">Allow microphone</string>
+    <string name="action_enable_keyboard">Enable Flow Mobile keyboard</string>
+    <string name="action_switch_keyboard">Switch to Flow Mobile</string>
+    <string name="action_enable_accessibility">Enable send helper</string>
+    <string name="status_idle">Idle</string>
+    <string name="status_model_loading">Loading offline model</string>
+    <string name="status_model_failed">Offline model failed to load: %1$s</string>
+    <string name="status_listening">Listening</string>
+    <string name="status_start_failed">Speech recognizer failed to start.</string>
+    <string name="status_recognition_error">Recognizer error: %1$s</string>
+    <string name="status_mic_missing">Microphone permission is missing.</string>
+    <string name="preview_placeholder">Voice preview appears here. Say &quot;enter&quot; to send, &quot;back&quot; to delete one char, &quot;backspace&quot; to delete to punctuation, and &quot;delete all&quot; to clear.</string>
+    <string name="start_listening">Start listening</string>
+    <string name="stop_listening">Stop listening</string>
+    <string name="command_send">Send</string>
+    <string name="command_backspace">Backspace</string>
+    <string name="command_delete_word">Del</string>
+    <string name="shift_off">Shift</string>
+    <string name="shift_on">SHIFT</string>
+    <string name="mode_symbols">123</string>
+    <string name="mode_letters">ABC</string>
+    <string name="key_space">Space</string>
+    <string name="key_enter">Enter</string>
+    <string name="key_backspace">Back</string>
+    <string name="key_comma">,</string>
+    <string name="key_period">.</string>
+    <string name="key_slash">/</string>
+</resources>
