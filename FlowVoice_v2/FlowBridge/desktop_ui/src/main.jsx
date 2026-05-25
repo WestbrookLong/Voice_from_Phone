@@ -16,6 +16,10 @@ const fallbackState = {
     error: null,
     modelPath: "",
   },
+  desktopVoiceSettings: {
+    spokenPunctuation: true,
+    voiceCommands: true,
+  },
 };
 
 function desktopApi() {
@@ -25,12 +29,14 @@ function desktopApi() {
 function FlowVoiceDesktopConsole() {
   const [state, setState] = React.useState(fallbackState);
   const [message, setMessage] = React.useState("");
+  const [desktopVoiceSettingsOpen, setDesktopVoiceSettingsOpen] = React.useState(false);
 
   const ip = state.ip;
   const port = state.port;
   const token = state.token;
   const url = state.url || `http://${ip}:${port}/?token=${token}&v=voice`;
   const desktopVoice = state.desktopVoice || fallbackState.desktopVoice;
+  const desktopVoiceSettings = state.desktopVoiceSettings || fallbackState.desktopVoiceSettings;
 
   const refresh = React.useCallback(async () => {
     const api = desktopApi();
@@ -177,6 +183,57 @@ function FlowVoiceDesktopConsole() {
               </div>
             )}
 
+            <div className="mt-4 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">No Phone Voice</div>
+              <div className="mb-3 flex items-center gap-2 text-sm text-[#C8E7D2]">
+                <span className={`h-2 w-2 rounded-full ${desktopVoice.running ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
+                <span>{desktopVoice.error || desktopVoice.status || "STOPPED"}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDesktopVoiceSettingsOpen((open) => !open)}
+                className="mb-3 flex w-full items-center justify-between rounded-2xl border border-[#193324] bg-[#050C08]/70 px-3 py-2 text-xs font-semibold text-[#A8F7C4] transition hover:bg-[#0C1E14]"
+              >
+                <span>设置</span>
+                <span className="font-mono text-[#6F8878]">{desktopVoiceSettingsOpen ? "CLOSE" : "OPEN"}</span>
+              </button>
+              {desktopVoiceSettingsOpen && (
+                <div className="mb-3 grid gap-2 rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3 sm:grid-cols-2">
+                  <DesktopVoiceSetting
+                    title="口述标点"
+                    description="逗号、句号等词转为真实标点"
+                    enabled={desktopVoiceSettings.spokenPunctuation}
+                    onChange={(enabled) =>
+                      callApi("set_desktop_voice_settings", {
+                        ...desktopVoiceSettings,
+                        spokenPunctuation: enabled,
+                      })
+                    }
+                  />
+                  <DesktopVoiceSetting
+                    title="英文语音控制"
+                    description="enter / back / backspace / delete all"
+                    enabled={desktopVoiceSettings.voiceCommands}
+                    onChange={(enabled) =>
+                      callApi("set_desktop_voice_settings", {
+                        ...desktopVoiceSettings,
+                        voiceCommands: enabled,
+                      })
+                    }
+                  />
+                </div>
+              )}
+              {desktopVoice.running ? (
+                <button onClick={() => callApi("stop_desktop_voice")} className="w-full rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
+                  Stop Desktop Voice
+                </button>
+              ) : (
+                <button onClick={() => callApi("start_desktop_voice")} className="w-full rounded-2xl border border-[#2E7447] bg-[#10291B] py-3 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+                  Start Desktop Voice
+                </button>
+              )}
+            </div>
+
             <div className="mt-4 rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
               To control elevated windows, run the client with administrator privileges.
             </div>
@@ -200,23 +257,6 @@ function FlowVoiceDesktopConsole() {
               <code className="block truncate font-mono text-xs text-[#B9FFD4]">{token}</code>
               <div className="mt-3 h-px bg-[#193324]" />
               <code className="mt-3 block truncate font-mono text-xs text-[#82B995]">{ip}:{port}</code>
-            </div>
-
-            <div className="mt-3 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">No Phone Voice</div>
-              <div className="mb-3 flex items-center gap-2 text-sm text-[#C8E7D2]">
-                <span className={`h-2 w-2 rounded-full ${desktopVoice.running ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
-                <span>{desktopVoice.error || desktopVoice.status || "STOPPED"}</span>
-              </div>
-              {desktopVoice.running ? (
-                <button onClick={() => callApi("stop_desktop_voice")} className="w-full rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
-                  Stop Desktop Voice
-                </button>
-              ) : (
-                <button onClick={() => callApi("start_desktop_voice")} className="w-full rounded-2xl border border-[#2E7447] bg-[#10291B] py-3 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
-                  Start Desktop Voice
-                </button>
-              )}
             </div>
 
             <div className="mt-auto pt-3">
@@ -286,6 +326,25 @@ function ServiceBadge({ running }) {
     <div className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.12em] shadow-[0_0_26px_rgba(40,245,141,0.15)] ${running ? "border-[#28F58D]/35 bg-[#0D2A19] text-[#8BFFBA]" : "border-[#285C3B] bg-[#0C1E14] text-[#6C8A75]"}`}>
       <span className={`h-2 w-2 rounded-full ${running ? "bg-[#28F58D] shadow-[0_0_14px_rgba(40,245,141,0.9)]" : "bg-[#5B7062]"}`} />
       {running ? "Service Started" : "Service Stopped"}
+    </div>
+  );
+}
+
+function DesktopVoiceSetting({ title, description, enabled, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-xs font-semibold text-[#DDFCE7]">{title}</div>
+        <div className="mt-0.5 truncate text-[11px] text-[#6F8878]">{description}</div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!enabled)}
+        className={`relative h-7 w-12 shrink-0 rounded-full border transition ${enabled ? "border-[#28F58D]/30 bg-[#2F8E53]" : "border-[#285C3B] bg-[#0C1E14]"}`}
+        aria-pressed={enabled}
+      >
+        <span className={`absolute top-1 h-5 w-5 rounded-full transition ${enabled ? "left-6 bg-[#6DF59A] shadow-[0_0_12px_rgba(109,245,154,0.5)]" : "left-1 bg-[#6F8878]"}`} />
+      </button>
     </div>
   );
 }
