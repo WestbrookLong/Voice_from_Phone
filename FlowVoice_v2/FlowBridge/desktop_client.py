@@ -1,6 +1,9 @@
 import asyncio
 import ctypes
+import json
 import os
+import queue
+import re
 import secrets
 import sys
 import threading
@@ -11,7 +14,12 @@ from pathlib import Path
 from aiohttp import web
 import webview
 
-from server import create_app, get_lan_ip
+from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip
+
+
+DESKTOP_VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
+CJK_SPACE_PATTERN = re.compile(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])")
+MULTI_SPACE_PATTERN = re.compile(r"\s+")
 
 
 def app_root() -> Path:
@@ -33,6 +41,30 @@ def ui_url() -> str:
     if not index_path.exists():
         raise SystemExit(f"React desktop UI is not built: {index_path}")
     return index_path.as_uri()
+
+
+def desktop_voice_model_path() -> Path:
+    configured = os.environ.get("FLOWVOICE_VOSK_MODEL")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return app_root() / "models" / DESKTOP_VOICE_MODEL_NAME
+
+
+def normalize_asr_text(text: str) -> str:
+    normalized = CJK_SPACE_PATTERN.sub("", str(text or "").strip())
+    return MULTI_SPACE_PATTERN.sub(" ", normalized).strip()
+
+
+def should_insert_space(left: str, right: str) -> bool:
+    return bool(left and right and left[-1].isascii() and right[0].isascii() and left[-1].isalnum() and right[0].isalnum())
+
+
+def append_recognized_text(base: str, addition: str) -> str:
+    if not addition:
+        return base
+    if should_insert_space(base, addition):
+        return f"{base} {addition}"
+    return f"{base}{addition}"
 
 
 def copy_text_to_clipboard(text: str) -> None:
@@ -118,6 +150,107 @@ class BridgeServerThread(threading.Thread):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
 
+class DesktopVoiceThread(threading.Thread):
+    def __init__(self, model_path: Path, settings: BridgeSettings) -> None:
+        super().__init__(daemon=True)
+        self.model_path = model_path
+        self.settings = settings
+        self.session = FlowInputSession()
+        self.audio_queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
+        self.stop_event = threading.Event()
+        self.ready = threading.Event()
+        self.lock = threading.RLock()
+        self.error: str | None = None
+        self.status = "STARTING"
+        self.committed_text = ""
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            running = self.is_alive() and self.error is None and not self.stop_event.is_set()
+            return {
+                "running": running,
+                "status": self.status,
+                "error": self.error,
+                "modelPath": str(self.model_path),
+            }
+
+    def set_status(self, status: str) -> None:
+        with self.lock:
+            self.status = status
+
+    def set_error(self, message: str) -> None:
+        with self.lock:
+            self.error = message
+            self.status = "ERROR"
+
+    def run(self) -> None:
+        try:
+            self._run_recognizer()
+        except Exception as exc:
+            self.set_error(str(exc))
+            self.ready.set()
+        finally:
+            self.session.reset()
+            if self.error is None:
+                self.set_status("STOPPED")
+
+    def _run_recognizer(self) -> None:
+        try:
+            import sounddevice as sd
+            from vosk import KaldiRecognizer, Model, SetLogLevel
+        except Exception as exc:
+            self.set_error(f"Missing desktop voice dependency: {exc}")
+            self.ready.set()
+            return
+
+        if not self.model_path.exists():
+            self.set_error(f"Vosk model not found: {self.model_path}")
+            self.ready.set()
+            return
+
+        sample_rate = 16000
+        SetLogLevel(-1)
+        self.set_status("LOADING MODEL")
+        model = Model(str(self.model_path))
+        recognizer = KaldiRecognizer(model, sample_rate)
+        recognizer.SetWords(False)
+
+        def audio_callback(indata, frames, time_info, status) -> None:
+            if status:
+                self.set_status(f"AUDIO WARNING: {status}")
+            try:
+                self.audio_queue.put_nowait(bytes(indata))
+            except queue.Full:
+                pass
+
+        self.set_status("LISTENING")
+        self.ready.set()
+        with sd.RawInputStream(
+            samplerate=sample_rate,
+            blocksize=8000,
+            dtype="int16",
+            channels=1,
+            callback=audio_callback,
+        ):
+            while not self.stop_event.is_set():
+                try:
+                    data = self.audio_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
+                if recognizer.AcceptWaveform(data):
+                    final_text = normalize_asr_text(json.loads(recognizer.Result()).get("text", ""))
+                    if final_text:
+                        self.committed_text = append_recognized_text(self.committed_text, final_text)
+                        self.session.sync_state(self.committed_text, self.settings)
+                else:
+                    partial_text = normalize_asr_text(json.loads(recognizer.PartialResult()).get("partial", ""))
+                    self.session.sync_state(append_recognized_text(self.committed_text, partial_text), self.settings)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+
 class DesktopApi:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -126,6 +259,12 @@ class DesktopApi:
         self.token = secrets.token_urlsafe(12)
         self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
+        self.desktop_voice_thread: DesktopVoiceThread | None = None
+        self.desktop_voice_settings = BridgeSettings(
+            filter_punctuation=True,
+            convert_spoken_punctuation=True,
+            enable_voice_commands=True,
+        )
         self.window: webview.Window | None = None
         self.maximized = False
 
@@ -135,12 +274,36 @@ class DesktopApi:
     def _running(self) -> bool:
         return self.server_thread is not None and self.server_thread.error is None
 
+    def _desktop_voice_running(self) -> bool:
+        return (
+            self.desktop_voice_thread is not None
+            and self.desktop_voice_thread.is_alive()
+            and self.desktop_voice_thread.error is None
+            and not self.desktop_voice_thread.stop_event.is_set()
+        )
+
+    def _desktop_voice_settings_snapshot(self) -> dict:
+        return {
+            "spokenPunctuation": self.desktop_voice_settings.convert_spoken_punctuation,
+            "voiceCommands": self.desktop_voice_settings.enable_voice_commands,
+        }
+
     def _result(self, message: str = "") -> dict:
         return {"state": self.get_state(), "message": message}
 
     def get_state(self) -> dict:
         with self.lock:
             running = self._running()
+            voice_snapshot = (
+                self.desktop_voice_thread.snapshot()
+                if self.desktop_voice_thread is not None
+                else {
+                    "running": False,
+                    "status": "STOPPED",
+                    "error": None,
+                    "modelPath": str(desktop_voice_model_path()),
+                }
+            )
             return {
                 "running": running,
                 "token": self.token,
@@ -148,6 +311,8 @@ class DesktopApi:
                 "port": self.port,
                 "url": self._url(),
                 "status": "SERVICE STARTED" if running else "SERVICE STOPPED",
+                "desktopVoice": voice_snapshot,
+                "desktopVoiceSettings": self._desktop_voice_settings_snapshot(),
             }
 
     def set_port(self, value: str) -> dict:
@@ -216,6 +381,38 @@ class DesktopApi:
         webbrowser.open(self.get_state()["url"])
         return self._result("Opened the voice input page.")
 
+    def start_desktop_voice(self) -> dict:
+        with self.lock:
+            if self._desktop_voice_running():
+                return self._result("Desktop voice is already listening.")
+            thread = DesktopVoiceThread(desktop_voice_model_path(), self.desktop_voice_settings)
+            self.desktop_voice_thread = thread
+            thread.start()
+
+        thread.ready.wait(timeout=8)
+
+        with self.lock:
+            if thread.error:
+                return self._result(f"Failed to start desktop voice: {thread.error}")
+            return self._result("Desktop voice started.")
+
+    def stop_desktop_voice(self) -> dict:
+        with self.lock:
+            thread = self.desktop_voice_thread
+            self.desktop_voice_thread = None
+        if thread is not None:
+            thread.stop()
+            thread.join(timeout=2)
+        return self._result("Desktop voice stopped.")
+
+    def set_desktop_voice_settings(self, value: dict) -> dict:
+        with self.lock:
+            spoken_punctuation = bool(value.get("spokenPunctuation", False))
+            self.desktop_voice_settings.filter_punctuation = spoken_punctuation
+            self.desktop_voice_settings.convert_spoken_punctuation = spoken_punctuation
+            self.desktop_voice_settings.enable_voice_commands = bool(value.get("voiceCommands", False))
+            return self._result("Desktop voice settings updated.")
+
     def minimize_window(self) -> dict:
         if self.window is not None:
             self.window.minimize()
@@ -243,6 +440,7 @@ class DesktopApi:
         return state
 
     def shutdown(self) -> None:
+        self.stop_desktop_voice()
         self.stop_service()
 
 
@@ -279,7 +477,7 @@ def main() -> None:
 
     api = DesktopApi()
     window = webview.create_window(
-        "Flow Bridge",
+        "Flow Voice",
         ui_url(),
         js_api=api,
         width=1240,

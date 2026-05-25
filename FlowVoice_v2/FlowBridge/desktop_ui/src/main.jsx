@@ -10,6 +10,12 @@ const fallbackState = {
   port: "8787",
   url: "",
   status: "SERVICE STOPPED",
+  desktopVoice: {
+    running: false,
+    status: "STOPPED",
+    error: null,
+    modelPath: "",
+  },
 };
 
 function desktopApi() {
@@ -24,6 +30,7 @@ function FlowVoiceDesktopConsole() {
   const port = state.port;
   const token = state.token;
   const url = state.url || `http://${ip}:${port}/?token=${token}&v=voice`;
+  const desktopVoice = state.desktopVoice || fallbackState.desktopVoice;
 
   const refresh = React.useCallback(async () => {
     const api = desktopApi();
@@ -158,9 +165,10 @@ function FlowVoiceDesktopConsole() {
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-4">
+            <div className="mt-4 grid grid-cols-3 gap-4">
               <ThinInfo title="Status" value={state.running ? "Listening for mobile input" : "Service is stopped"} />
               <ThinInfo title="Network" value="Same Wi-Fi or LAN required" />
+              <ThinInfo title="Desktop Voice" value={desktopVoice.running ? "Local microphone is listening" : desktopVoice.status || "Stopped"} />
             </div>
 
             {message && (
@@ -192,6 +200,23 @@ function FlowVoiceDesktopConsole() {
               <code className="block truncate font-mono text-xs text-[#B9FFD4]">{token}</code>
               <div className="mt-3 h-px bg-[#193324]" />
               <code className="mt-3 block truncate font-mono text-xs text-[#82B995]">{ip}:{port}</code>
+            </div>
+
+            <div className="mt-3 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">No Phone Voice</div>
+              <div className="mb-3 flex items-center gap-2 text-sm text-[#C8E7D2]">
+                <span className={`h-2 w-2 rounded-full ${desktopVoice.running ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
+                <span>{desktopVoice.error || desktopVoice.status || "STOPPED"}</span>
+              </div>
+              {desktopVoice.running ? (
+                <button onClick={() => callApi("stop_desktop_voice")} className="w-full rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
+                  Stop Desktop Voice
+                </button>
+              ) : (
+                <button onClick={() => callApi("start_desktop_voice")} className="w-full rounded-2xl border border-[#2E7447] bg-[#10291B] py-3 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+                  Start Desktop Voice
+                </button>
+              )}
             </div>
 
             <div className="mt-auto pt-3">

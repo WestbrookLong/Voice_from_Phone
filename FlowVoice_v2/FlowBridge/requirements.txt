@@ -1,2 +1,4 @@
 aiohttp>=3.9,<4
 pywebview>=6.2,<7
+sounddevice>=0.5,<1
+vosk>=0.3,<1
