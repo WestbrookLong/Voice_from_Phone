@@ -374,8 +374,7 @@ class DesktopVoiceThread(threading.Thread):
                         silence_chunks = 0
                         if utterance_chunk_count < min_speech_chunks:
                             if self._uses_ime_composition():
-                                self._clear_composition()
-                                self._reset_streaming_text_state()
+                                self._discard_streaming_partial()
                             self.asr_engine.reset()
                             self.set_status("LISTENING")
                             continue
@@ -408,9 +407,12 @@ class DesktopVoiceThread(threading.Thread):
         return ""
 
     def _discard_paused_audio(self) -> None:
-        self._clear_composition()
+        if self._uses_ime_composition():
+            self._discard_streaming_partial()
         self.pending_partial_text = ""
+        self.committed_text = ""
         self._reset_streaming_text_state()
+        self.session.reset()
         if self.asr_engine is not None:
             self.asr_engine.reset()
         while True:
@@ -458,15 +460,15 @@ class DesktopVoiceThread(threading.Thread):
     def _handle_ime_asr_events(self, events: list[ASREvent]) -> None:
         for event in events:
             if event.type == "error":
-                self._clear_composition()
+                self._discard_streaming_partial()
                 self._reset_streaming_text_state()
                 self.set_error(event.error or event.text or "ASR engine error")
                 continue
             if event.type == "partial":
-                self._handle_streaming_partial(event)
+                self._handle_streaming_virtual_partial(event)
                 continue
             if event.type == "final":
-                self._handle_streaming_final(event)
+                self._handle_streaming_virtual_final(event)
 
     def _replace_composition(self, text: str) -> None:
         old = self.composition_text
@@ -485,6 +487,34 @@ class DesktopVoiceThread(threading.Thread):
         if self.composition_text:
             send_backspace_chunks(len(self.composition_text))
             self.composition_text = ""
+
+    def _handle_streaming_virtual_partial(self, event: ASREvent) -> None:
+        partial = event.text or ""
+        if not partial:
+            return
+        self.pending_partial_text = partial
+        self.session.sync_state(append_recognized_text(self.committed_text, partial), self.settings)
+
+    def _handle_streaming_virtual_final(self, event: ASREvent) -> None:
+        text = event.text
+        if self.punctuation_engine is not None:
+            text = self.punctuation_engine.apply_final(text)
+
+        if text:
+            self.committed_text = append_recognized_text(self.committed_text, text)
+            self.pending_partial_text = ""
+            self.session.sync_state(self.committed_text, self.settings)
+            return
+
+        if self.pending_partial_text:
+            self.committed_text = append_recognized_text(self.committed_text, self.pending_partial_text)
+            self.pending_partial_text = ""
+
+    def _discard_streaming_partial(self) -> None:
+        self._clear_composition()
+        if self.pending_partial_text:
+            self.session.sync_state(self.committed_text, self.settings)
+            self.pending_partial_text = ""
 
     def _handle_streaming_partial(self, event: ASREvent) -> None:
         full = render_text(event.text, self.settings)
