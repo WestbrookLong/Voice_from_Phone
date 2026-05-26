@@ -12,6 +12,7 @@ const fallbackState = {
   status: "SERVICE STOPPED",
   desktopVoice: {
     running: false,
+    paused: false,
     status: "STOPPED",
     error: null,
     modelPath: "",
@@ -185,7 +186,7 @@ function FlowVoiceDesktopConsole() {
             <div className="mt-4 grid grid-cols-3 gap-4">
               <ThinInfo title="Status" value={state.running ? "Listening for mobile input" : "Service is stopped"} />
               <ThinInfo title="Network" value="Same Wi-Fi or LAN required" />
-              <ThinInfo title="Desktop Voice" value={desktopVoice.running ? "Local microphone is listening" : desktopVoice.status || "Stopped"} />
+              <ThinInfo title="Desktop Voice" value={desktopVoice.running ? (desktopVoice.paused ? "Listening is paused" : "Local microphone is listening") : desktopVoice.status || "Stopped"} />
             </div>
 
             {message && (
@@ -197,7 +198,7 @@ function FlowVoiceDesktopConsole() {
             <div className="mt-4 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
               <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">No Phone Voice</div>
               <div className="mb-3 flex items-center gap-2 text-sm text-[#C8E7D2]">
-                <span className={`h-2 w-2 rounded-full ${desktopVoice.running ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
+                <span className={`h-2 w-2 rounded-full ${desktopVoice.running && !desktopVoice.paused ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.paused ? "bg-[#D7C47A]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
                 <span>{desktopVoice.error || desktopVoice.status || "STOPPED"}</span>
               </div>
               <button
@@ -209,9 +210,20 @@ function FlowVoiceDesktopConsole() {
                 <span className="font-mono text-[#6F8878]">OPEN</span>
               </button>
               {desktopVoice.running ? (
-                <button onClick={() => callApi("stop_desktop_voice")} className="w-full rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
-                  Stop Desktop Voice
-                </button>
+                <div className="grid grid-cols-2 gap-3">
+                  {desktopVoice.paused ? (
+                    <button onClick={() => callApi("resume_desktop_voice")} className="rounded-2xl bg-[#28F58D] py-3 text-sm font-bold text-[#041008] shadow-[0_0_28px_rgba(40,245,141,0.18)] transition hover:bg-[#67FFAD]">
+                      Resume Listening
+                    </button>
+                  ) : (
+                    <button onClick={() => callApi("pause_desktop_voice")} className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 py-3 text-sm font-semibold text-[#D7C47A] transition hover:bg-[#211C0B]">
+                      Pause Listening
+                    </button>
+                  )}
+                  <button onClick={() => callApi("stop_desktop_voice")} className="rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
+                    Stop
+                  </button>
+                </div>
               ) : (
                 <button onClick={() => callApi("start_desktop_voice")} className="w-full rounded-2xl border border-[#2E7447] bg-[#10291B] py-3 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
                   Start Desktop Voice

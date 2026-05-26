@@ -216,6 +216,7 @@ class DesktopVoiceThread(threading.Thread):
         self.punctuation_engine: PunctuationEngine | None = None
         self.audio_queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
         self.ready = threading.Event()
         self.lock = threading.RLock()
         self.error: str | None = None
@@ -229,12 +230,15 @@ class DesktopVoiceThread(threading.Thread):
             running = self.is_alive() and self.error is None and not self.stop_event.is_set()
             return {
                 "running": running,
+                "paused": self.pause_event.is_set(),
                 "status": self.status,
                 "error": self.error,
                 "modelPath": str(self.model_path),
                 "engine": self.config["engine"],
                 "funasrMode": self.config["funasrMode"],
                 "funasrModel": self.config["funasrModel"],
+                "activeModel": self._active_model_name(),
+                "finalRescoreModel": self._final_rescore_model_name(),
             }
 
     def set_status(self, status: str) -> None:
@@ -296,6 +300,7 @@ class DesktopVoiceThread(threading.Thread):
 
         silence_limit_chunks = 8
         min_speech_chunks = 3
+        max_utterance_chunks = 100
         energy_threshold = 450.0
 
         self.set_status("LISTENING")
@@ -316,6 +321,14 @@ class DesktopVoiceThread(threading.Thread):
                 try:
                     data = self.audio_queue.get(timeout=0.1)
                 except queue.Empty:
+                    continue
+
+                if self.pause_event.is_set():
+                    self._discard_paused_audio()
+                    speech_chunks = []
+                    pre_roll = []
+                    in_speech = False
+                    silence_chunks = 0
                     continue
 
                 if self.config["engine"] == "vosk":
@@ -339,7 +352,8 @@ class DesktopVoiceThread(threading.Thread):
                     speech_chunks.append(data)
                     self._handle_asr_events(self.asr_engine.accept_audio(data))
                     silence_chunks = 0 if is_voice else silence_chunks + 1
-                    if silence_chunks >= silence_limit_chunks:
+                    should_finalize = silence_chunks >= silence_limit_chunks or len(speech_chunks) >= max_utterance_chunks
+                    if should_finalize:
                         utterance_chunk_count = len(speech_chunks)
                         speech_chunks = []
                         in_speech = False
@@ -364,6 +378,29 @@ class DesktopVoiceThread(threading.Thread):
             return "LOADING FUNASR STREAMING"
         return "LOADING FUNASR"
 
+    def _active_model_name(self) -> str:
+        if self.config["engine"] == "vosk":
+            return "vosk"
+        if self.config.get("funasrMode") == "streaming":
+            return DEFAULT_STREAMING_MODEL
+        return self.config["funasrModel"]
+
+    def _final_rescore_model_name(self) -> str:
+        if self.config["engine"] == "funasr" and self.config.get("funasrMode") == "streaming":
+            return "iic/SenseVoiceSmall"
+        return ""
+
+    def _discard_paused_audio(self) -> None:
+        self._clear_composition()
+        self.pending_partial_text = ""
+        if self.asr_engine is not None:
+            self.asr_engine.reset()
+        while True:
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
     def _handle_asr_events(self, events: list[ASREvent]) -> None:
         if self._uses_ime_composition():
             self._handle_ime_asr_events(events)
@@ -374,8 +411,9 @@ class DesktopVoiceThread(threading.Thread):
                 self.set_error(event.error or event.text or "ASR engine error")
                 continue
             if event.type == "partial":
-                self.pending_partial_text = event.text
-                self.session.sync_state(append_recognized_text(self.committed_text, event.text), self.settings)
+                partial = self._select_partial(event.text)
+                self.pending_partial_text = partial
+                self.session.sync_state(append_recognized_text(self.committed_text, partial), self.settings)
                 continue
             if event.type == "final":
                 text = event.text
@@ -385,6 +423,16 @@ class DesktopVoiceThread(threading.Thread):
                 if text:
                     self.committed_text = append_recognized_text(self.committed_text, text)
                     self.session.sync_state(self.committed_text, self.settings)
+
+    def _select_partial(self, new_text: str) -> str:
+        old = self.pending_partial_text
+        if not old:
+            return new_text
+        if new_text.startswith(old):
+            return new_text
+        if len(new_text) + 2 < len(old):
+            return old
+        return new_text
 
     def _uses_ime_composition(self) -> bool:
         return self.config["engine"] == "funasr" and self.config.get("funasrMode") == "streaming"
@@ -420,6 +468,16 @@ class DesktopVoiceThread(threading.Thread):
 
     def stop(self) -> None:
         self.stop_event.set()
+
+    def pause(self) -> None:
+        self.pause_event.set()
+        self.set_status("PAUSED")
+        self._discard_paused_audio()
+
+    def resume(self) -> None:
+        self._discard_paused_audio()
+        self.pause_event.clear()
+        self.set_status("LISTENING")
 
 
 class DesktopApi:
@@ -464,12 +522,15 @@ class DesktopApi:
                 if self.desktop_voice_thread is not None
                 else {
                     "running": False,
+                    "paused": False,
                     "status": "STOPPED",
                     "error": None,
                     "modelPath": str(desktop_voice_model_path()),
                     "engine": self.desktop_voice_config["engine"],
                     "funasrMode": self.desktop_voice_config["funasrMode"],
                     "funasrModel": self.desktop_voice_config["funasrModel"],
+                    "activeModel": DEFAULT_STREAMING_MODEL if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] == "streaming" else self.desktop_voice_config["funasrModel"],
+                    "finalRescoreModel": "iic/SenseVoiceSmall" if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] == "streaming" else "",
                 }
             )
             return {
@@ -572,6 +633,22 @@ class DesktopApi:
             thread.stop()
             thread.join(timeout=2)
         return self._result("Desktop voice stopped.")
+
+    def pause_desktop_voice(self) -> dict:
+        with self.lock:
+            thread = self.desktop_voice_thread
+            if thread is None or not self._desktop_voice_running():
+                return self._result("Desktop voice is not running.")
+            thread.pause()
+            return self._result("Desktop voice paused.")
+
+    def resume_desktop_voice(self) -> dict:
+        with self.lock:
+            thread = self.desktop_voice_thread
+            if thread is None or not self._desktop_voice_running():
+                return self._result("Desktop voice is not running.")
+            thread.resume()
+            return self._result("Desktop voice resumed.")
 
     def set_desktop_voice_settings(self, value: dict) -> dict:
         with self.lock:
