@@ -15,6 +15,7 @@ class FunASRStreamingEngine(StreamingASREngine):
         self,
         model_name: str = DEFAULT_STREAMING_MODEL,
         hotwords: str = "",
+        target_chunk_ms: int = 600,
     ) -> None:
         self.model_name = model_name or DEFAULT_STREAMING_MODEL
         self.hotwords = hotwords.strip()
@@ -24,7 +25,7 @@ class FunASRStreamingEngine(StreamingASREngine):
         self.enable_final_rescore = True
         self.final_rescore_unavailable_reason = ""
         self.chunk_size = [5, 10, 5]
-        self.target_chunk_ms = 600
+        self.target_chunk_ms = max(100, min(1000, int(target_chunk_ms or 600)))
         self.target_chunk_bytes = SAMPLE_RATE * self.target_chunk_ms // 1000 * 2
         self.cache: dict = {}
         self.utterance_text = ""

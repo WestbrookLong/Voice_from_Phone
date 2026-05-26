@@ -25,6 +25,7 @@ DESKTOP_VOICE_DEFAULT_CONFIG = {
     "engine": "vosk",
     "funasrMode": "offline",
     "funasrModel": "iic/SenseVoiceSmall",
+    "funasrStreamingChunkMs": 600,
     "punctuationStrategy": "spoken",
     "voiceCommands": True,
     "hotwords": "",
@@ -91,6 +92,11 @@ def normalize_desktop_voice_config(value: dict | None) -> dict:
         config["funasrModel"] = funasr_model
     if config["engine"] == "funasr" and config["funasrMode"] == "streaming":
         config["funasrStreamingModel"] = DEFAULT_STREAMING_MODEL
+    try:
+        streaming_chunk_ms = int(source.get("funasrStreamingChunkMs", config["funasrStreamingChunkMs"]))
+    except (TypeError, ValueError):
+        streaming_chunk_ms = config["funasrStreamingChunkMs"]
+    config["funasrStreamingChunkMs"] = max(100, min(1000, streaming_chunk_ms))
 
     punctuation_strategy = str(source.get("punctuationStrategy", config["punctuationStrategy"])).strip().lower()
     if punctuation_strategy in VALID_PUNCTUATION_STRATEGIES:
@@ -114,7 +120,11 @@ def create_asr_engine(config: dict, model_path: Path) -> StreamingASREngine:
     if config["engine"] == "vosk":
         return VoskEngine(model_path)
     if config.get("funasrMode") == "streaming":
-        return FunASRStreamingEngine(DEFAULT_STREAMING_MODEL, hotwords=config.get("hotwords", ""))
+        return FunASRStreamingEngine(
+            DEFAULT_STREAMING_MODEL,
+            hotwords=config.get("hotwords", ""),
+            target_chunk_ms=config.get("funasrStreamingChunkMs", 600),
+        )
     return FunASROfflineEngine(
         model_name=config["funasrModel"],
         punctuation_strategy=config["punctuationStrategy"],
@@ -224,6 +234,8 @@ class DesktopVoiceThread(threading.Thread):
         self.committed_text = ""
         self.pending_partial_text = ""
         self.composition_text = ""
+        self.committed_partial_text = ""
+        self.composition_tail_chars = 6
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -239,6 +251,7 @@ class DesktopVoiceThread(threading.Thread):
                 "funasrModel": self.config["funasrModel"],
                 "activeModel": self._active_model_name(),
                 "finalRescoreModel": self._final_rescore_model_name(),
+                "streamingChunkMs": self.config.get("funasrStreamingChunkMs", 600),
             }
 
     def set_status(self, status: str) -> None:
@@ -259,6 +272,7 @@ class DesktopVoiceThread(threading.Thread):
         finally:
             if self._uses_ime_composition():
                 self._clear_composition()
+                self._reset_streaming_text_state()
             self.session.reset()
             if self.asr_engine is not None:
                 self.asr_engine.close()
@@ -359,6 +373,9 @@ class DesktopVoiceThread(threading.Thread):
                         in_speech = False
                         silence_chunks = 0
                         if utterance_chunk_count < min_speech_chunks:
+                            if self._uses_ime_composition():
+                                self._clear_composition()
+                                self._reset_streaming_text_state()
                             self.asr_engine.reset()
                             self.set_status("LISTENING")
                             continue
@@ -393,6 +410,7 @@ class DesktopVoiceThread(threading.Thread):
     def _discard_paused_audio(self) -> None:
         self._clear_composition()
         self.pending_partial_text = ""
+        self._reset_streaming_text_state()
         if self.asr_engine is not None:
             self.asr_engine.reset()
         while True:
@@ -440,31 +458,96 @@ class DesktopVoiceThread(threading.Thread):
     def _handle_ime_asr_events(self, events: list[ASREvent]) -> None:
         for event in events:
             if event.type == "error":
+                self._clear_composition()
+                self._reset_streaming_text_state()
                 self.set_error(event.error or event.text or "ASR engine error")
                 continue
             if event.type == "partial":
-                self._replace_composition(render_text(event.text, self.settings))
+                self._handle_streaming_partial(event)
                 continue
             if event.type == "final":
-                text = event.text
-                if self.punctuation_engine is not None:
-                    text = self.punctuation_engine.apply_final(text)
-                self._clear_composition()
-                if text:
-                    final_session = FlowInputSession()
-                    final_session.sync_state(text, self.settings)
+                self._handle_streaming_final(event)
 
     def _replace_composition(self, text: str) -> None:
-        if self.composition_text:
-            send_backspace_chunks(len(self.composition_text))
-        if text:
-            type_text(text)
-        self.composition_text = text
+        old = self.composition_text
+        new = text or ""
+        prefix_len = self._common_prefix_len(old, new)
+        delete_count = len(old) - prefix_len
+        append_text = new[prefix_len:]
+
+        if delete_count:
+            send_backspace_chunks(delete_count)
+        if append_text:
+            type_text(append_text)
+        self.composition_text = new
 
     def _clear_composition(self) -> None:
         if self.composition_text:
             send_backspace_chunks(len(self.composition_text))
             self.composition_text = ""
+
+    def _handle_streaming_partial(self, event: ASREvent) -> None:
+        full = render_text(event.text, self.settings)
+        stable = render_text(event.stable_text, self.settings)
+        if not full:
+            return
+
+        committed_target = stable if full.startswith(stable) else ""
+        if len(full) > self.composition_tail_chars:
+            forced_target = full[:-self.composition_tail_chars]
+            if len(forced_target) > len(committed_target):
+                committed_target = forced_target
+
+        if self.committed_partial_text and not full.startswith(self.committed_partial_text):
+            self._replace_composition(full[-self.composition_tail_chars :])
+            return
+
+        if len(committed_target) < len(self.committed_partial_text):
+            committed_target = self.committed_partial_text
+
+        newly_committed = committed_target[len(self.committed_partial_text) :]
+        if newly_committed:
+            self._clear_composition()
+            type_text(newly_committed)
+            self.committed_partial_text = committed_target
+
+        composition_target = full[len(self.committed_partial_text) :]
+        if len(composition_target) > self.composition_tail_chars:
+            composition_target = composition_target[-self.composition_tail_chars :]
+        self._replace_composition(composition_target)
+
+    def _handle_streaming_final(self, event: ASREvent) -> None:
+        text = event.text
+        if self.punctuation_engine is not None:
+            text = self.punctuation_engine.apply_final(text)
+        final_text = render_text(text, self.settings)
+
+        self._clear_composition()
+        if not final_text:
+            self._reset_streaming_text_state()
+            return
+
+        if not self.committed_partial_text:
+            final_session = FlowInputSession()
+            final_session.sync_state(final_text, self.settings)
+        elif final_text.startswith(self.committed_partial_text):
+            remaining = final_text[len(self.committed_partial_text) :]
+            if remaining:
+                final_session = FlowInputSession()
+                final_session.sync_state(remaining, self.settings)
+
+        self._reset_streaming_text_state()
+
+    def _common_prefix_len(self, left: str, right: str) -> int:
+        limit = min(len(left), len(right))
+        index = 0
+        while index < limit and left[index] == right[index]:
+            index += 1
+        return index
+
+    def _reset_streaming_text_state(self) -> None:
+        self.committed_partial_text = ""
+        self.composition_text = ""
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -531,6 +614,7 @@ class DesktopApi:
                     "funasrModel": self.desktop_voice_config["funasrModel"],
                     "activeModel": DEFAULT_STREAMING_MODEL if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] == "streaming" else self.desktop_voice_config["funasrModel"],
                     "finalRescoreModel": "iic/SenseVoiceSmall" if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] == "streaming" else "",
+                    "streamingChunkMs": self.desktop_voice_config.get("funasrStreamingChunkMs", 600),
                 }
             )
             return {
@@ -655,6 +739,7 @@ class DesktopApi:
             previous_engine = self.desktop_voice_config["engine"]
             previous_mode = self.desktop_voice_config["funasrMode"]
             previous_model = self.desktop_voice_config["funasrModel"]
+            previous_chunk_ms = self.desktop_voice_config.get("funasrStreamingChunkMs", 600)
             previous_hotwords = self.desktop_voice_config.get("hotwords", "")
             self.desktop_voice_config = normalize_desktop_voice_config(value)
             next_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
@@ -665,6 +750,7 @@ class DesktopApi:
                 previous_engine != self.desktop_voice_config["engine"]
                 or previous_mode != self.desktop_voice_config["funasrMode"]
                 or previous_model != self.desktop_voice_config["funasrModel"]
+                or previous_chunk_ms != self.desktop_voice_config.get("funasrStreamingChunkMs", 600)
                 or previous_hotwords != self.desktop_voice_config.get("hotwords", "")
             )
             if needs_restart:

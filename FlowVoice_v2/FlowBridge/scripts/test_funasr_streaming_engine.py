@@ -44,10 +44,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Test FlowVoice FunASR streaming engine with a wav file.")
     parser.add_argument("wav", type=Path, help="Path to wav file.")
     parser.add_argument("--hotwords", default="", help="Optional hotwords passed to FunASR.")
+    parser.add_argument("--chunk-ms", type=int, default=600, help="Streaming partial chunk interval in ms.")
     args = parser.parse_args()
 
     pcm = read_wav_as_16k_mono_pcm(args.wav)
-    engine = FunASRStreamingEngine(hotwords=args.hotwords)
+    engine = FunASRStreamingEngine(hotwords=args.hotwords, target_chunk_ms=args.chunk_ms)
     engine.start()
 
     for offset in range(0, len(pcm), CHUNK_BYTES):

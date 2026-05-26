@@ -21,6 +21,7 @@ const fallbackState = {
     engine: "vosk",
     funasrMode: "offline",
     funasrModel: "iic/SenseVoiceSmall",
+    funasrStreamingChunkMs: 600,
     punctuationStrategy: "spoken",
     voiceCommands: true,
     hotwords: "",
@@ -391,9 +392,20 @@ function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
                 onChange={(funasrMode) => onChange({ funasrMode })}
               />
               {settings.engine === "funasr" && settings.funasrMode === "streaming" && (
-                <div className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
-                  Streaming 模式固定使用 paraformer-zh-streaming；模型下拉中的 offline 模型不会用于 streaming。
-                </div>
+                <>
+                  <SettingNumber
+                    title="流式上屏间隔"
+                    value={settings.funasrStreamingChunkMs || 600}
+                    min={100}
+                    max={1000}
+                    step={50}
+                    suffix="ms"
+                    onChange={(funasrStreamingChunkMs) => onChange({ funasrStreamingChunkMs })}
+                  />
+                  <div className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
+                    Streaming 模式固定使用 paraformer-zh-streaming；上屏间隔越小越流畅，但模型调用更频繁，partial 稳定性可能下降。最终文本仍由 SenseVoiceSmall 重识别修正。
+                  </div>
+                </>
               )}
             </SettingsSection>
 
@@ -463,6 +475,32 @@ function SettingSelect({ title, value, options, onChange, disabled = false }) {
           </option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function SettingNumber({ title, value, onChange, min, max, step = 1, suffix = "", disabled = false }) {
+  return (
+    <label className={`block rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3 ${disabled ? "opacity-45" : ""}`}>
+      <span className="mb-2 block text-xs font-semibold text-[#DDFCE7]">{title}</span>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          disabled={disabled}
+          onChange={(event) => {
+            const next = Number.parseInt(event.target.value, 10);
+            if (Number.isFinite(next)) {
+              onChange(next);
+            }
+          }}
+          className="min-w-0 flex-1 rounded-xl border border-[#21462F] bg-[#030805] px-3 py-2 text-sm text-[#B9FFD4] outline-none transition focus:border-[#2E7447] disabled:cursor-not-allowed"
+        />
+        {suffix && <span className="font-mono text-xs text-[#6F8878]">{suffix}</span>}
+      </div>
     </label>
   );
 }
