@@ -1,9 +1,7 @@
 import asyncio
 import ctypes
-import json
 import os
 import queue
-import re
 import secrets
 import sys
 import threading
@@ -14,12 +12,27 @@ from pathlib import Path
 from aiohttp import web
 import webview
 
-from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip
+from asr.base import ASREvent, StreamingASREngine
+from asr.funasr_offline_engine import FunASROfflineEngine
+from asr.funasr_streaming_engine import DEFAULT_STREAMING_MODEL, FunASRStreamingEngine
+from asr.punctuation import PunctuationEngine
+from asr.vosk_engine import VoskEngine
+from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, render_text, send_backspace_chunks, type_text
 
 
 DESKTOP_VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
-CJK_SPACE_PATTERN = re.compile(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])")
-MULTI_SPACE_PATTERN = re.compile(r"\s+")
+DESKTOP_VOICE_DEFAULT_CONFIG = {
+    "engine": "vosk",
+    "funasrMode": "offline",
+    "funasrModel": "iic/SenseVoiceSmall",
+    "punctuationStrategy": "spoken",
+    "voiceCommands": True,
+    "hotwords": "",
+}
+VALID_DESKTOP_VOICE_ENGINES = {"vosk", "funasr"}
+VALID_FUNASR_MODELS = {"iic/SenseVoiceSmall", "paraformer-zh"}
+VALID_FUNASR_MODES = {"offline", "streaming"}
+VALID_PUNCTUATION_STRATEGIES = {"spoken", "model", "none"}
 
 
 def app_root() -> Path:
@@ -50,11 +63,6 @@ def desktop_voice_model_path() -> Path:
     return app_root() / "models" / DESKTOP_VOICE_MODEL_NAME
 
 
-def normalize_asr_text(text: str) -> str:
-    normalized = CJK_SPACE_PATTERN.sub("", str(text or "").strip())
-    return MULTI_SPACE_PATTERN.sub(" ", normalized).strip()
-
-
 def should_insert_space(left: str, right: str) -> bool:
     return bool(left and right and left[-1].isascii() and right[0].isascii() and left[-1].isalnum() and right[0].isalnum())
 
@@ -65,6 +73,53 @@ def append_recognized_text(base: str, addition: str) -> str:
     if should_insert_space(base, addition):
         return f"{base} {addition}"
     return f"{base}{addition}"
+
+
+def normalize_desktop_voice_config(value: dict | None) -> dict:
+    source = value if isinstance(value, dict) else {}
+    config = dict(DESKTOP_VOICE_DEFAULT_CONFIG)
+    engine = str(source.get("engine", config["engine"])).strip().lower()
+    if engine in VALID_DESKTOP_VOICE_ENGINES:
+        config["engine"] = engine
+
+    funasr_mode = str(source.get("funasrMode", config["funasrMode"])).strip().lower()
+    if funasr_mode in VALID_FUNASR_MODES:
+        config["funasrMode"] = funasr_mode
+
+    funasr_model = str(source.get("funasrModel", config["funasrModel"])).strip()
+    if funasr_model in VALID_FUNASR_MODELS:
+        config["funasrModel"] = funasr_model
+    if config["engine"] == "funasr" and config["funasrMode"] == "streaming":
+        config["funasrStreamingModel"] = DEFAULT_STREAMING_MODEL
+
+    punctuation_strategy = str(source.get("punctuationStrategy", config["punctuationStrategy"])).strip().lower()
+    if punctuation_strategy in VALID_PUNCTUATION_STRATEGIES:
+        config["punctuationStrategy"] = punctuation_strategy
+
+    config["voiceCommands"] = bool(source.get("voiceCommands", config["voiceCommands"]))
+    config["hotwords"] = str(source.get("hotwords", config["hotwords"])).strip()
+    return config
+
+
+def bridge_settings_from_desktop_config(config: dict) -> BridgeSettings:
+    use_spoken_punctuation = config.get("punctuationStrategy") == "spoken"
+    return BridgeSettings(
+        filter_punctuation=use_spoken_punctuation,
+        convert_spoken_punctuation=use_spoken_punctuation,
+        enable_voice_commands=bool(config.get("voiceCommands", True)),
+    )
+
+
+def create_asr_engine(config: dict, model_path: Path) -> StreamingASREngine:
+    if config["engine"] == "vosk":
+        return VoskEngine(model_path)
+    if config.get("funasrMode") == "streaming":
+        return FunASRStreamingEngine(DEFAULT_STREAMING_MODEL, hotwords=config.get("hotwords", ""))
+    return FunASROfflineEngine(
+        model_name=config["funasrModel"],
+        punctuation_strategy=config["punctuationStrategy"],
+        hotwords=config.get("hotwords", ""),
+    )
 
 
 def copy_text_to_clipboard(text: str) -> None:
@@ -151,11 +206,14 @@ class BridgeServerThread(threading.Thread):
 
 
 class DesktopVoiceThread(threading.Thread):
-    def __init__(self, model_path: Path, settings: BridgeSettings) -> None:
+    def __init__(self, model_path: Path, settings: BridgeSettings, config: dict) -> None:
         super().__init__(daemon=True)
         self.model_path = model_path
         self.settings = settings
+        self.config = normalize_desktop_voice_config(config)
         self.session = FlowInputSession()
+        self.asr_engine: StreamingASREngine | None = None
+        self.punctuation_engine: PunctuationEngine | None = None
         self.audio_queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
         self.stop_event = threading.Event()
         self.ready = threading.Event()
@@ -163,6 +221,8 @@ class DesktopVoiceThread(threading.Thread):
         self.error: str | None = None
         self.status = "STARTING"
         self.committed_text = ""
+        self.pending_partial_text = ""
+        self.composition_text = ""
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -172,6 +232,9 @@ class DesktopVoiceThread(threading.Thread):
                 "status": self.status,
                 "error": self.error,
                 "modelPath": str(self.model_path),
+                "engine": self.config["engine"],
+                "funasrMode": self.config["funasrMode"],
+                "funasrModel": self.config["funasrModel"],
             }
 
     def set_status(self, status: str) -> None:
@@ -190,30 +253,38 @@ class DesktopVoiceThread(threading.Thread):
             self.set_error(str(exc))
             self.ready.set()
         finally:
+            if self._uses_ime_composition():
+                self._clear_composition()
             self.session.reset()
+            if self.asr_engine is not None:
+                self.asr_engine.close()
+            if self.punctuation_engine is not None:
+                self.punctuation_engine.close()
             if self.error is None:
                 self.set_status("STOPPED")
 
     def _run_recognizer(self) -> None:
         try:
+            import numpy as np
             import sounddevice as sd
-            from vosk import KaldiRecognizer, Model, SetLogLevel
         except Exception as exc:
             self.set_error(f"Missing desktop voice dependency: {exc}")
             self.ready.set()
             return
 
-        if not self.model_path.exists():
-            self.set_error(f"Vosk model not found: {self.model_path}")
+        try:
+            self.set_status(self._loading_status())
+            self.asr_engine = create_asr_engine(self.config, self.model_path)
+            self.asr_engine.start()
+            self.punctuation_engine = PunctuationEngine(self.config["punctuationStrategy"])
+            self.punctuation_engine.start()
+        except Exception as exc:
+            self.set_error(str(exc))
             self.ready.set()
             return
 
         sample_rate = 16000
-        SetLogLevel(-1)
-        self.set_status("LOADING MODEL")
-        model = Model(str(self.model_path))
-        recognizer = KaldiRecognizer(model, sample_rate)
-        recognizer.SetWords(False)
+        blocksize = 8000 if self.config["engine"] == "vosk" else 1600
 
         def audio_callback(indata, frames, time_info, status) -> None:
             if status:
@@ -223,11 +294,20 @@ class DesktopVoiceThread(threading.Thread):
             except queue.Full:
                 pass
 
+        silence_limit_chunks = 8
+        min_speech_chunks = 3
+        energy_threshold = 450.0
+
         self.set_status("LISTENING")
         self.ready.set()
+        speech_chunks: list[bytes] = []
+        pre_roll: list[bytes] = []
+        in_speech = False
+        silence_chunks = 0
+
         with sd.RawInputStream(
             samplerate=sample_rate,
-            blocksize=8000,
+            blocksize=blocksize,
             dtype="int16",
             channels=1,
             callback=audio_callback,
@@ -238,14 +318,105 @@ class DesktopVoiceThread(threading.Thread):
                 except queue.Empty:
                     continue
 
-                if recognizer.AcceptWaveform(data):
-                    final_text = normalize_asr_text(json.loads(recognizer.Result()).get("text", ""))
-                    if final_text:
-                        self.committed_text = append_recognized_text(self.committed_text, final_text)
-                        self.session.sync_state(self.committed_text, self.settings)
-                else:
-                    partial_text = normalize_asr_text(json.loads(recognizer.PartialResult()).get("partial", ""))
-                    self.session.sync_state(append_recognized_text(self.committed_text, partial_text), self.settings)
+                if self.config["engine"] == "vosk":
+                    self._handle_asr_events(self.asr_engine.accept_audio(data))
+                    continue
+
+                frame = np.frombuffer(data, dtype=np.int16)
+                rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2))) if frame.size else 0.0
+                is_voice = rms >= energy_threshold
+
+                if is_voice and not in_speech:
+                    in_speech = True
+                    speech_chunks = pre_roll + [data]
+                    pre_roll = []
+                    silence_chunks = 0
+                    for chunk in speech_chunks:
+                        self._handle_asr_events(self.asr_engine.accept_audio(chunk))
+                    continue
+
+                if in_speech:
+                    speech_chunks.append(data)
+                    self._handle_asr_events(self.asr_engine.accept_audio(data))
+                    silence_chunks = 0 if is_voice else silence_chunks + 1
+                    if silence_chunks >= silence_limit_chunks:
+                        utterance_chunk_count = len(speech_chunks)
+                        speech_chunks = []
+                        in_speech = False
+                        silence_chunks = 0
+                        if utterance_chunk_count < min_speech_chunks:
+                            self.asr_engine.reset()
+                            self.set_status("LISTENING")
+                            continue
+                        self.set_status("RECOGNIZING")
+                        self._handle_asr_events(self.asr_engine.finalize())
+                        self.set_status("LISTENING")
+                    continue
+
+                pre_roll.append(data)
+                if len(pre_roll) > 3:
+                    pre_roll.pop(0)
+
+    def _loading_status(self) -> str:
+        if self.config["engine"] == "vosk":
+            return "LOADING MODEL"
+        if self.config.get("funasrMode") == "streaming":
+            return "LOADING FUNASR STREAMING"
+        return "LOADING FUNASR"
+
+    def _handle_asr_events(self, events: list[ASREvent]) -> None:
+        if self._uses_ime_composition():
+            self._handle_ime_asr_events(events)
+            return
+
+        for event in events:
+            if event.type == "error":
+                self.set_error(event.error or event.text or "ASR engine error")
+                continue
+            if event.type == "partial":
+                self.pending_partial_text = event.text
+                self.session.sync_state(append_recognized_text(self.committed_text, event.text), self.settings)
+                continue
+            if event.type == "final":
+                text = event.text
+                if self.punctuation_engine is not None:
+                    text = self.punctuation_engine.apply_final(text)
+                self.pending_partial_text = ""
+                if text:
+                    self.committed_text = append_recognized_text(self.committed_text, text)
+                    self.session.sync_state(self.committed_text, self.settings)
+
+    def _uses_ime_composition(self) -> bool:
+        return self.config["engine"] == "funasr" and self.config.get("funasrMode") == "streaming"
+
+    def _handle_ime_asr_events(self, events: list[ASREvent]) -> None:
+        for event in events:
+            if event.type == "error":
+                self.set_error(event.error or event.text or "ASR engine error")
+                continue
+            if event.type == "partial":
+                self._replace_composition(render_text(event.text, self.settings))
+                continue
+            if event.type == "final":
+                text = event.text
+                if self.punctuation_engine is not None:
+                    text = self.punctuation_engine.apply_final(text)
+                self._clear_composition()
+                if text:
+                    final_session = FlowInputSession()
+                    final_session.sync_state(text, self.settings)
+
+    def _replace_composition(self, text: str) -> None:
+        if self.composition_text:
+            send_backspace_chunks(len(self.composition_text))
+        if text:
+            type_text(text)
+        self.composition_text = text
+
+    def _clear_composition(self) -> None:
+        if self.composition_text:
+            send_backspace_chunks(len(self.composition_text))
+            self.composition_text = ""
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -260,11 +431,8 @@ class DesktopApi:
         self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
         self.desktop_voice_thread: DesktopVoiceThread | None = None
-        self.desktop_voice_settings = BridgeSettings(
-            filter_punctuation=True,
-            convert_spoken_punctuation=True,
-            enable_voice_commands=True,
-        )
+        self.desktop_voice_config = normalize_desktop_voice_config(None)
+        self.desktop_voice_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
         self.window: webview.Window | None = None
         self.maximized = False
 
@@ -283,10 +451,7 @@ class DesktopApi:
         )
 
     def _desktop_voice_settings_snapshot(self) -> dict:
-        return {
-            "spokenPunctuation": self.desktop_voice_settings.convert_spoken_punctuation,
-            "voiceCommands": self.desktop_voice_settings.enable_voice_commands,
-        }
+        return dict(self.desktop_voice_config)
 
     def _result(self, message: str = "") -> dict:
         return {"state": self.get_state(), "message": message}
@@ -302,6 +467,9 @@ class DesktopApi:
                     "status": "STOPPED",
                     "error": None,
                     "modelPath": str(desktop_voice_model_path()),
+                    "engine": self.desktop_voice_config["engine"],
+                    "funasrMode": self.desktop_voice_config["funasrMode"],
+                    "funasrModel": self.desktop_voice_config["funasrModel"],
                 }
             )
             return {
@@ -385,7 +553,7 @@ class DesktopApi:
         with self.lock:
             if self._desktop_voice_running():
                 return self._result("Desktop voice is already listening.")
-            thread = DesktopVoiceThread(desktop_voice_model_path(), self.desktop_voice_settings)
+            thread = DesktopVoiceThread(desktop_voice_model_path(), self.desktop_voice_settings, self.desktop_voice_config)
             self.desktop_voice_thread = thread
             thread.start()
 
@@ -407,10 +575,23 @@ class DesktopApi:
 
     def set_desktop_voice_settings(self, value: dict) -> dict:
         with self.lock:
-            spoken_punctuation = bool(value.get("spokenPunctuation", False))
-            self.desktop_voice_settings.filter_punctuation = spoken_punctuation
-            self.desktop_voice_settings.convert_spoken_punctuation = spoken_punctuation
-            self.desktop_voice_settings.enable_voice_commands = bool(value.get("voiceCommands", False))
+            previous_engine = self.desktop_voice_config["engine"]
+            previous_mode = self.desktop_voice_config["funasrMode"]
+            previous_model = self.desktop_voice_config["funasrModel"]
+            previous_hotwords = self.desktop_voice_config.get("hotwords", "")
+            self.desktop_voice_config = normalize_desktop_voice_config(value)
+            next_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
+            self.desktop_voice_settings.filter_punctuation = next_settings.filter_punctuation
+            self.desktop_voice_settings.convert_spoken_punctuation = next_settings.convert_spoken_punctuation
+            self.desktop_voice_settings.enable_voice_commands = next_settings.enable_voice_commands
+            needs_restart = self._desktop_voice_running() and (
+                previous_engine != self.desktop_voice_config["engine"]
+                or previous_mode != self.desktop_voice_config["funasrMode"]
+                or previous_model != self.desktop_voice_config["funasrModel"]
+                or previous_hotwords != self.desktop_voice_config.get("hotwords", "")
+            )
+            if needs_restart:
+                return self._result("Settings saved. Restart desktop voice to apply model or hotword changes.")
             return self._result("Desktop voice settings updated.")
 
     def minimize_window(self) -> dict:

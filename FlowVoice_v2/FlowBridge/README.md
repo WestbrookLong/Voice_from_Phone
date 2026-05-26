@@ -45,3 +45,30 @@ python desktop_client.py
 桌面客户端也会显示连接二维码。新版手机 App 点击“扫码连接”后扫描二维码，会自动填充电脑地址和 Token。
 
 如果要分享给别人使用，推荐直接分享 `dist/VoiceInput.exe`。打包说明见 `PACKAGING.md`。
+# Desktop ASR modes
+
+The desktop client has an independent ASR layer under `asr/`. Mobile/web input is not part of this layer and keeps the existing protocol.
+
+## FunASR offline mode
+
+`engine=funasr` and `funasrMode=offline` keeps the current MVP behavior: the microphone thread uses fixed RMS VAD to collect one utterance, then `FunASROfflineEngine.finalize()` runs one `AutoModel.generate()` call and emits a `final` event. This mode prioritizes compatibility and does not emit `partial` events.
+
+## FunASR streaming mode
+
+`engine=funasr` and `funasrMode=streaming` uses `paraformer-zh-streaming` through `FunASRStreamingEngine`. Audio chunks are passed to `accept_audio(pcm)`, which attempts to call `AutoModel.generate(input=..., cache=..., chunk_size=[0, 10, 5])` and emits `partial` events. If streaming is unavailable in the current FunASR environment, the engine emits an `error` event instead of crashing the desktop client.
+
+## Punctuation strategy
+
+- `spoken`: no punctuation model is run. The existing `BridgeSettings` spoken-punctuation path converts words like comma/period equivalents into real punctuation.
+- `model`: only `final` text is passed through `PunctuationEngine`, which lazily loads the FunASR `ct-punc` model. `partial` text is never punctuated by the model.
+- `none`: no punctuation model and no spoken-punctuation conversion are applied by the desktop ASR layer.
+
+## Partial text behavior
+
+ASR engines emit `ASREvent` objects:
+
+- `partial`: tentative text from streaming ASR. `split_stable_text(prev, curr)` also exposes `stable_text` and `unstable_text`; FunASR streaming displays partial text through IME-style temporary composition rather than the mobile raw-text prefix matching path.
+- `final`: committed utterance text. Final text may pass through the punctuation engine before entering `FlowInputSession`.
+- `error`: recoverable ASR engine errors surfaced to the desktop UI state.
+
+FunASR streaming uses IME-style composition in the desktop client. Partial text is treated as temporary composition: the previous composition is removed and the new composition is typed. It does not enter the mobile-style raw-text prefix matching path. Final text clears the temporary composition and is committed once.

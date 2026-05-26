@@ -17,8 +17,12 @@ const fallbackState = {
     modelPath: "",
   },
   desktopVoiceSettings: {
-    spokenPunctuation: true,
+    engine: "vosk",
+    funasrMode: "offline",
+    funasrModel: "iic/SenseVoiceSmall",
+    punctuationStrategy: "spoken",
     voiceCommands: true,
+    hotwords: "",
   },
 };
 
@@ -72,6 +76,13 @@ function FlowVoiceDesktopConsole() {
     } catch (error) {
       setMessage(`Desktop API error: ${error?.message || error}`);
     }
+  }
+
+  function updateDesktopVoiceSettings(patch) {
+    callApi("set_desktop_voice_settings", {
+      ...desktopVoiceSettings,
+      ...patch,
+    });
   }
 
   return (
@@ -191,38 +202,12 @@ function FlowVoiceDesktopConsole() {
               </div>
               <button
                 type="button"
-                onClick={() => setDesktopVoiceSettingsOpen((open) => !open)}
+                onClick={() => setDesktopVoiceSettingsOpen(true)}
                 className="mb-3 flex w-full items-center justify-between rounded-2xl border border-[#193324] bg-[#050C08]/70 px-3 py-2 text-xs font-semibold text-[#A8F7C4] transition hover:bg-[#0C1E14]"
               >
                 <span>设置</span>
-                <span className="font-mono text-[#6F8878]">{desktopVoiceSettingsOpen ? "CLOSE" : "OPEN"}</span>
+                <span className="font-mono text-[#6F8878]">OPEN</span>
               </button>
-              {desktopVoiceSettingsOpen && (
-                <div className="mb-3 grid gap-2 rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3 sm:grid-cols-2">
-                  <DesktopVoiceSetting
-                    title="口述标点"
-                    description="逗号、句号等词转为真实标点"
-                    enabled={desktopVoiceSettings.spokenPunctuation}
-                    onChange={(enabled) =>
-                      callApi("set_desktop_voice_settings", {
-                        ...desktopVoiceSettings,
-                        spokenPunctuation: enabled,
-                      })
-                    }
-                  />
-                  <DesktopVoiceSetting
-                    title="英文语音控制"
-                    description="enter / back / backspace / delete all"
-                    enabled={desktopVoiceSettings.voiceCommands}
-                    onChange={(enabled) =>
-                      callApi("set_desktop_voice_settings", {
-                        ...desktopVoiceSettings,
-                        voiceCommands: enabled,
-                      })
-                    }
-                  />
-                </div>
-              )}
               {desktopVoice.running ? (
                 <button onClick={() => callApi("stop_desktop_voice")} className="w-full rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
                   Stop Desktop Voice
@@ -273,6 +258,14 @@ function FlowVoiceDesktopConsole() {
           </aside>
         </section>
       </main>
+      {desktopVoiceSettingsOpen && (
+        <DesktopVoiceSettingsPage
+          settings={desktopVoiceSettings}
+          running={desktopVoice.running}
+          onChange={updateDesktopVoiceSettings}
+          onClose={() => setDesktopVoiceSettingsOpen(false)}
+        />
+      )}
       </div>
     </div>
   );
@@ -327,6 +320,138 @@ function ServiceBadge({ running }) {
       <span className={`h-2 w-2 rounded-full ${running ? "bg-[#28F58D] shadow-[0_0_14px_rgba(40,245,141,0.9)]" : "bg-[#5B7062]"}`} />
       {running ? "Service Started" : "Service Stopped"}
     </div>
+  );
+}
+
+function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
+  return (
+    <div className="fixed inset-0 z-40 bg-[#050807]/96 backdrop-blur-2xl">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute right-[-140px] top-[-160px] h-[420px] w-[420px] rounded-full bg-[#28F58D]/10 blur-[90px]" />
+        <div className="absolute bottom-[-220px] left-[-140px] h-[520px] w-[520px] rounded-full bg-[#1FA463]/12 blur-[110px]" />
+        <div className="absolute inset-0 opacity-[0.045] [background-image:linear-gradient(rgba(255,255,255,.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.6)_1px,transparent_1px)] [background-size:36px_36px]" />
+      </div>
+      <div className="relative mx-auto flex h-full max-w-5xl flex-col px-8 py-7">
+        <div className="mb-5 flex items-center justify-between">
+          <div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-[#74E7A5]/70">No Phone Voice</div>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-[#F2FFF7]">桌面语音输入设置</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-[#285C3B] bg-[#0C1E14] px-5 py-3 text-sm font-semibold text-[#A8F7C4] transition hover:bg-[#12301F]"
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto rounded-[28px] border border-[#1E3B2B] bg-[#08100D]/88 p-5 shadow-[0_26px_80px_rgba(0,0,0,0.5)]">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <SettingsSection title="模型" caption={running ? "引擎、模型和热词保存后需要重启桌面语音生效。" : "选择本地识别引擎和模型。"}>
+              <SettingSelect
+                title="识别引擎"
+                value={settings.engine}
+                options={[
+                  ["vosk", "Vosk MVP（当前稳定）"],
+                  ["funasr", "FunASR（高质量，可选）"],
+                ]}
+                onChange={(engine) => onChange({ engine })}
+              />
+              <SettingSelect
+                title="FunASR 模型"
+                value={settings.funasrModel}
+                disabled={settings.engine !== "funasr" || settings.funasrMode === "streaming"}
+                options={[
+                  ["iic/SenseVoiceSmall", "SenseVoiceSmall（中英混说）"],
+                  ["paraformer-zh", "Paraformer 中文"],
+                ]}
+                onChange={(funasrModel) => onChange({ funasrModel })}
+              />
+              <SettingSelect
+                title="FunASR 模式"
+                value={settings.funasrMode}
+                disabled={settings.engine !== "funasr"}
+                options={[
+                  ["offline", "Offline：句末识别，兼容当前行为"],
+                  ["streaming", "Streaming：paraformer-zh-streaming partial"],
+                ]}
+                onChange={(funasrMode) => onChange({ funasrMode })}
+              />
+              {settings.engine === "funasr" && settings.funasrMode === "streaming" && (
+                <div className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
+                  Streaming 模式固定使用 paraformer-zh-streaming；模型下拉中的 offline 模型不会用于 streaming。
+                </div>
+              )}
+            </SettingsSection>
+
+            <SettingsSection title="输入法策略" caption="这些设置控制识别文本进入光标前的处理方式。">
+              <SettingSelect
+                title="标点策略"
+                value={settings.punctuationStrategy}
+                options={[
+                  ["spoken", "口述标点：逗号/句号 -> 标点"],
+                  ["model", "模型标点：保留 ASR 输出标点"],
+                  ["none", "不处理标点"],
+                ]}
+                onChange={(punctuationStrategy) => onChange({ punctuationStrategy })}
+              />
+              <DesktopVoiceSetting
+                title="英文语音控制"
+                description="enter / back / backspace / delete all"
+                enabled={settings.voiceCommands}
+                onChange={(voiceCommands) => onChange({ voiceCommands })}
+              />
+            </SettingsSection>
+          </div>
+
+          <SettingsSection title="热词" caption="每行一个词，用于增强人名、软件名、项目名和中英混合专有词。" className="mt-4">
+            <textarea
+              value={settings.hotwords || ""}
+              onChange={(event) => onChange({ hotwords: event.target.value })}
+              spellCheck={false}
+              placeholder={"OpenAI\nVS Code\nObsidian\nPhotoshop"}
+              className="min-h-36 w-full resize-none rounded-2xl border border-[#21462F] bg-[#030805] px-4 py-3 font-mono text-sm text-[#B9FFD4] outline-none transition placeholder:text-[#3D5647] focus:border-[#2E7447]"
+            />
+            <div className="mt-3 rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
+              FunASR 支持热词增强；Vosk 当前保留这个配置但不会使用。后续可以继续把这里扩展为词库文件。
+            </div>
+          </SettingsSection>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsSection({ title, caption, className = "", children }) {
+  return (
+    <section className={`rounded-3xl border border-[#1E3B2B] bg-[#06100B]/86 p-5 ${className}`}>
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold text-[#F2FFF7]">{title}</h3>
+        <p className="mt-1 text-xs leading-5 text-[#6F8878]">{caption}</p>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
+}
+
+function SettingSelect({ title, value, options, onChange, disabled = false }) {
+  return (
+    <label className={`block rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3 ${disabled ? "opacity-45" : ""}`}>
+      <span className="mb-2 block text-xs font-semibold text-[#DDFCE7]">{title}</span>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-xl border border-[#21462F] bg-[#030805] px-3 py-2 text-sm text-[#B9FFD4] outline-none transition focus:border-[#2E7447] disabled:cursor-not-allowed"
+      >
+        {options.map(([optionValue, label]) => (
+          <option key={optionValue} value={optionValue}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
