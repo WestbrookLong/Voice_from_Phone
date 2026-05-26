@@ -253,6 +253,16 @@ class FlowInputSession:
                 self.text_session.reset()
                 continue
 
+            punctuation_command = parse_spoken_punctuation_command(active_text) if settings.convert_spoken_punctuation else None
+            if punctuation_command is not None:
+                prefix_raw, punctuation_text, consumed_length = punctuation_command
+                self.sync_processed_text(render_text(prefix_raw, settings))
+                log(f"[inject] punctuation {punctuation_text!r} (spoken punctuation)")
+                type_text(punctuation_text)
+                self.raw_session_start += consumed_length
+                self.text_session.reset()
+                continue
+
             command = parse_voice_command(active_text) if settings.enable_voice_commands else None
             if command is not None:
                 command_name, prefix_raw, consumed_length = command
@@ -376,6 +386,39 @@ def punctuation_style(text: str, start: int, end: int) -> str:
     return "zh"
 
 
+def spoken_punctuation_symbol(phrase: str, text: str, start: int, end: int) -> str:
+    is_english = punctuation_style(text, start, end) == "en"
+    mapping = {
+        "逗号": "," if is_english else "，",
+        "句号": "." if is_english else "。",
+        "顿号": "、",
+        "问号": "?" if is_english else "？",
+        "感叹号": "!" if is_english else "！",
+        "叹号": "!" if is_english else "！",
+        "冒号": ":" if is_english else "：",
+        "分号": ";" if is_english else "；",
+        "省略号": "..." if is_english else "……",
+        "破折号": "--" if is_english else "——",
+        "左括号": "(" if is_english else "（",
+        "右括号": ")" if is_english else "）",
+        "左双引号": '"' if is_english else "“",
+        "右双引号": '"' if is_english else "”",
+        "左单引号": "'" if is_english else "‘",
+        "右单引号": "'" if is_english else "’",
+        "引号": '"' if is_english else "”",
+    }
+    return mapping.get(phrase, phrase)
+
+
+def parse_spoken_punctuation_command(raw_text: str) -> tuple[str, str, int] | None:
+    match = SPOKEN_PUNCTUATION_PATTERN.search(raw_text)
+    if match is None:
+        return None
+    prefix_raw = raw_text[: match.start()].rstrip()
+    punctuation_text = spoken_punctuation_symbol(match.group(0), raw_text, match.start(), match.end())
+    return prefix_raw, punctuation_text, match.end()
+
+
 def cleanup_converted_punctuation(text: str) -> str:
     text = re.sub(r"\s+([，。！？、；：）】》」』”’])", r"\1", text)
     text = re.sub(r"([（【《「『“‘])\s+", r"\1", text)
@@ -387,28 +430,7 @@ def cleanup_converted_punctuation(text: str) -> str:
 
 def convert_spoken_punctuation(text: str) -> str:
     def replace_phrase(match: re.Match[str]) -> str:
-        phrase = match.group(0)
-        is_english = punctuation_style(text, match.start(), match.end()) == "en"
-        mapping = {
-            "逗号": "," if is_english else "，",
-            "句号": "." if is_english else "。",
-            "顿号": "、",
-            "问号": "?" if is_english else "？",
-            "感叹号": "!" if is_english else "！",
-            "叹号": "!" if is_english else "！",
-            "冒号": ":" if is_english else "：",
-            "分号": ";" if is_english else "；",
-            "省略号": "..." if is_english else "……",
-            "破折号": "--" if is_english else "——",
-            "左括号": "(" if is_english else "（",
-            "右括号": ")" if is_english else "）",
-            "左双引号": '"' if is_english else "“",
-            "右双引号": '"' if is_english else "”",
-            "左单引号": "'" if is_english else "‘",
-            "右单引号": "'" if is_english else "’",
-            "引号": '"' if is_english else "”",
-        }
-        return mapping.get(phrase, phrase)
+        return spoken_punctuation_symbol(match.group(0), text, match.start(), match.end())
 
     return cleanup_converted_punctuation(SPOKEN_PUNCTUATION_PATTERN.sub(replace_phrase, text))
 
