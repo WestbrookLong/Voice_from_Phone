@@ -7,3 +7,6 @@ build/
 *.exe
 *.zip
 AGENTS.md
+FlowVoice_v2/mobile_app/FlowVoice_v2.apk
+FlowVoice_v2/mobile_app/FlowVoice.apk
+FlowMobile/FlowMobile.apk
