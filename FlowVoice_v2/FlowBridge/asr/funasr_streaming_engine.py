@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 from .base import ASREvent, StreamingASREngine
 from .funasr_offline_engine import extract_text
 from .text_stability import split_stable_text
@@ -33,6 +37,11 @@ class FunASRStreamingEngine(StreamingASREngine):
         self.last_partial = ""
         self.streaming_buffer = bytearray()
         self.full_audio_buffer = bytearray()
+        self.pending_events: queue.Queue[ASREvent] = queue.Queue()
+        self.rescore_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="funasr-final-rescore")
+        self.rescore_generation = 0
+        self.utterance_id = 0
+        self.rescore_lock = threading.Lock()
         self.available = True
         self.unavailable_reason = ""
 
@@ -74,6 +83,14 @@ class FunASRStreamingEngine(StreamingASREngine):
             del self.streaming_buffer[: self.target_chunk_bytes]
             events.extend(self._generate_streaming_chunk(chunk, is_final=False))
         return events
+
+    def poll_events(self) -> list[ASREvent]:
+        events: list[ASREvent] = []
+        while True:
+            try:
+                events.append(self.pending_events.get_nowait())
+            except queue.Empty:
+                return events
 
     def _generate_streaming_chunk(self, pcm: bytes, is_final: bool) -> list[ASREvent]:
         if not self.available:
@@ -147,19 +164,27 @@ class FunASRStreamingEngine(StreamingASREngine):
         except Exception:
             streaming_final = ""
 
-        final_rescore_text = self._generate_final_rescore()
-        text = final_rescore_text or streaming_final or self.last_partial
+        immediate_text = streaming_final or self.last_partial
+        full_audio = bytes(self.full_audio_buffer)
+        with self.rescore_lock:
+            self.utterance_id += 1
+            utterance_id = self.utterance_id
+        self._schedule_final_rescore(full_audio, immediate_text, utterance_id)
 
-        self.reset()
-        return [ASREvent(type="final", text=text)] if text else []
+        self._clear_utterance_state()
+        return [ASREvent(type="final", text=immediate_text, source="streaming_final", utterance_id=utterance_id)] if immediate_text else []
 
     def _generate_final_rescore(self) -> str:
-        if not self.enable_final_rescore or self.final_model is None or not self.full_audio_buffer:
+        return self._generate_final_rescore_from_pcm(bytes(self.full_audio_buffer))
+
+    def _generate_final_rescore_from_pcm(self, pcm: bytes, model=None) -> str:
+        final_model = model or self.final_model
+        if not self.enable_final_rescore or final_model is None or not pcm:
             return ""
 
         import numpy as np
 
-        audio = np.frombuffer(bytes(self.full_audio_buffer), dtype=np.int16).astype(np.float32) / 32768.0
+        audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         if audio.size == 0:
             return ""
 
@@ -179,13 +204,38 @@ class FunASRStreamingEngine(StreamingASREngine):
             for key in removable_keys[:remove_count]:
                 attempt_kwargs.pop(key, None)
             try:
-                return extract_text(self.final_model.generate(**attempt_kwargs))
+                return extract_text(final_model.generate(**attempt_kwargs))
             except TypeError:
                 continue
             except Exception as exc:
                 self.final_rescore_unavailable_reason = str(exc)
                 return ""
         return ""
+
+    def _schedule_final_rescore(self, pcm: bytes, streaming_text: str, utterance_id: int) -> None:
+        final_model = self.final_model
+        if not self.enable_final_rescore or final_model is None or not pcm:
+            return
+        with self.rescore_lock:
+            generation = self.rescore_generation
+        self.rescore_executor.submit(self._run_final_rescore_job, final_model, pcm, streaming_text, generation, utterance_id)
+
+    def _run_final_rescore_job(self, final_model, pcm: bytes, streaming_text: str, generation: int, utterance_id: int) -> None:
+        text = self._generate_final_rescore_from_pcm(pcm, final_model)
+        if not text or text == streaming_text:
+            return
+        with self.rescore_lock:
+            if generation != self.rescore_generation:
+                return
+        self.pending_events.put(
+            ASREvent(
+                type="final",
+                text=text,
+                stable_text=streaming_text,
+                source="final_rescore",
+                utterance_id=utterance_id,
+            )
+        )
 
     def _generate_with_compat(self, model, generate_kwargs: dict):
         removable_keys = ["hotword", "fs"]
@@ -222,7 +272,7 @@ class FunASRStreamingEngine(StreamingASREngine):
             self.utterance_text += update
         return self.utterance_text
 
-    def reset(self) -> None:
+    def _clear_utterance_state(self) -> None:
         self.cache = {}
         self.utterance_text = ""
         self.prev_partial = ""
@@ -230,7 +280,18 @@ class FunASRStreamingEngine(StreamingASREngine):
         self.streaming_buffer = bytearray()
         self.full_audio_buffer = bytearray()
 
+    def reset(self) -> None:
+        with self.rescore_lock:
+            self.rescore_generation += 1
+        self._clear_utterance_state()
+        while True:
+            try:
+                self.pending_events.get_nowait()
+            except queue.Empty:
+                break
+
     def close(self) -> None:
         self.reset()
+        self.rescore_executor.shutdown(wait=False, cancel_futures=True)
         self.model = None
         self.final_model = None

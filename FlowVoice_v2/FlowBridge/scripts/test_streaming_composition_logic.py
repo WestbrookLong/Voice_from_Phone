@@ -112,6 +112,71 @@ def test_streaming_final_commits_virtual_text() -> None:
     assert thread.pending_partial_text == "流式输入"
 
 
+def test_virtual_input_window_resets_after_50_chars_without_deleting() -> None:
+    ops = with_input_recorder()
+    thread = make_thread()
+    text = "a" * desktop_client.DESKTOP_VOICE_VIRTUAL_RESET_CHARS
+
+    thread._handle_ime_asr_events([ASREvent(type="final", text=text)])
+    thread._handle_ime_asr_events([ASREvent(type="partial", text="next")])
+
+    assert ops == [
+        ("sync", text),
+        ("reset", None),
+        ("sync", "next"),
+    ]
+    assert thread.committed_text == ""
+    assert thread.pending_partial_text == "next"
+
+
+def test_async_final_rescore_replaces_matching_suffix() -> None:
+    ops = with_input_recorder()
+    thread = make_thread()
+
+    thread._handle_ime_asr_events([ASREvent(type="final", text="我们讨论", source="streaming_final")])
+    thread._handle_ime_asr_events(
+        [
+            ASREvent(
+                type="final",
+                text="我们正在讨论",
+                stable_text="我们讨论",
+                source="final_rescore",
+            )
+        ]
+    )
+
+    assert ops == [
+        ("sync", "我们讨论"),
+        ("sync", "我们正在讨论"),
+    ]
+    assert thread.committed_text == "我们正在讨论"
+    assert thread.pending_partial_text == ""
+
+
+def test_async_final_rescore_skips_when_suffix_no_longer_matches() -> None:
+    ops = with_input_recorder()
+    thread = make_thread()
+
+    thread._handle_ime_asr_events([ASREvent(type="final", text="第一段", source="streaming_final")])
+    thread._handle_ime_asr_events([ASREvent(type="final", text="第二段", source="streaming_final")])
+    thread._handle_ime_asr_events(
+        [
+            ASREvent(
+                type="final",
+                text="第一段修正",
+                stable_text="第一段",
+                source="final_rescore",
+            )
+        ]
+    )
+
+    assert ops == [
+        ("sync", "第一段"),
+        ("sync", "第一段第二段"),
+    ]
+    assert thread.committed_text == "第一段第二段"
+
+
 def test_final_only_commits_remaining_text() -> None:
     ops = with_input_recorder()
     thread = make_thread()
@@ -180,6 +245,9 @@ def main() -> None:
         test_streaming_route_uses_virtual_input_session_for_partial,
         test_streaming_route_allows_virtual_prefix_revision,
         test_streaming_final_commits_virtual_text,
+        test_virtual_input_window_resets_after_50_chars_without_deleting,
+        test_async_final_rescore_replaces_matching_suffix,
+        test_async_final_rescore_skips_when_suffix_no_longer_matches,
         test_final_only_commits_remaining_text,
         test_final_without_committed_text_commits_full_text,
         test_final_prefix_mismatch_skips_full_rewrite,

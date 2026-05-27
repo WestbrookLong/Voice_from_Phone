@@ -15,6 +15,8 @@ class ASREvent:
     stable_text: str = ""
     unstable_text: str = ""
     error: str = ""
+    source: str = ""
+    utterance_id: int = 0
 
 
 class StreamingASREngine(ABC):
@@ -30,6 +32,9 @@ class StreamingASREngine(ABC):
     def finalize(self) -> list[ASREvent]:
         raise NotImplementedError
 
+    def poll_events(self) -> list[ASREvent]:
+        return []
+
     @abstractmethod
     def reset(self) -> None:
         raise NotImplementedError
@@ -37,4 +42,3 @@ class StreamingASREngine(ABC):
     @abstractmethod
     def close(self) -> None:
         raise NotImplementedError
-

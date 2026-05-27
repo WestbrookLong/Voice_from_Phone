@@ -34,6 +34,7 @@ VALID_DESKTOP_VOICE_ENGINES = {"vosk", "funasr"}
 VALID_FUNASR_MODELS = {"iic/SenseVoiceSmall", "paraformer-zh"}
 VALID_FUNASR_MODES = {"offline", "streaming"}
 VALID_PUNCTUATION_STRATEGIES = {"spoken", "model", "none"}
+DESKTOP_VOICE_VIRTUAL_RESET_CHARS = 50
 
 
 def app_root() -> Path:
@@ -236,6 +237,7 @@ class DesktopVoiceThread(threading.Thread):
         self.composition_text = ""
         self.committed_partial_text = ""
         self.composition_tail_chars = 6
+        self.latest_rescore_utterance_id = 0
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -332,9 +334,11 @@ class DesktopVoiceThread(threading.Thread):
             callback=audio_callback,
         ):
             while not self.stop_event.is_set():
+                self._poll_asr_events()
                 try:
                     data = self.audio_queue.get(timeout=0.1)
                 except queue.Empty:
+                    self._poll_asr_events()
                     continue
 
                 if self.pause_event.is_set():
@@ -443,6 +447,7 @@ class DesktopVoiceThread(threading.Thread):
                 if text:
                     self.committed_text = append_recognized_text(self.committed_text, text)
                     self.session.sync_state(self.committed_text, self.settings)
+                    self._reset_virtual_input_window_if_needed()
 
     def _select_partial(self, new_text: str) -> str:
         old = self.pending_partial_text
@@ -468,6 +473,9 @@ class DesktopVoiceThread(threading.Thread):
                 self._handle_streaming_virtual_partial(event)
                 continue
             if event.type == "final":
+                if event.source == "final_rescore":
+                    self._handle_streaming_virtual_rescore(event)
+                    continue
                 self._handle_streaming_virtual_final(event)
 
     def _replace_composition(self, text: str) -> None:
@@ -497,6 +505,8 @@ class DesktopVoiceThread(threading.Thread):
 
     def _handle_streaming_virtual_final(self, event: ASREvent) -> None:
         text = event.text
+        if event.source == "streaming_final" and event.utterance_id:
+            self.latest_rescore_utterance_id = event.utterance_id
         if self.punctuation_engine is not None:
             text = self.punctuation_engine.apply_final(text)
 
@@ -504,11 +514,33 @@ class DesktopVoiceThread(threading.Thread):
             self.committed_text = append_recognized_text(self.committed_text, text)
             self.pending_partial_text = ""
             self.session.sync_state(self.committed_text, self.settings)
+            self._reset_virtual_input_window_if_needed()
             return
 
         if self.pending_partial_text:
             self.committed_text = append_recognized_text(self.committed_text, self.pending_partial_text)
             self.pending_partial_text = ""
+            self._reset_virtual_input_window_if_needed()
+
+    def _handle_streaming_virtual_rescore(self, event: ASREvent) -> None:
+        if event.utterance_id and event.utterance_id != self.latest_rescore_utterance_id:
+            return
+        original_text = event.stable_text or ""
+        text = event.text
+        if self.punctuation_engine is not None:
+            text = self.punctuation_engine.apply_final(text)
+        if not original_text or not text:
+            return
+        if not self.committed_text.endswith(original_text):
+            return
+        prefix = self.committed_text[: -len(original_text)]
+        next_committed_text = append_recognized_text(prefix, text) if prefix else text
+        if next_committed_text == self.committed_text:
+            return
+        self.committed_text = next_committed_text
+        self.pending_partial_text = ""
+        self.session.sync_state(self.committed_text, self.settings)
+        self._reset_virtual_input_window_if_needed()
 
     def _discard_streaming_partial(self) -> None:
         self._clear_composition()
@@ -578,6 +610,19 @@ class DesktopVoiceThread(threading.Thread):
     def _reset_streaming_text_state(self) -> None:
         self.committed_partial_text = ""
         self.composition_text = ""
+        self.latest_rescore_utterance_id = 0
+
+    def _reset_virtual_input_window_if_needed(self) -> None:
+        if len(self.committed_text) < DESKTOP_VOICE_VIRTUAL_RESET_CHARS:
+            return
+        self.committed_text = ""
+        self.pending_partial_text = ""
+        self.session.reset()
+
+    def _poll_asr_events(self) -> None:
+        if self.asr_engine is None:
+            return
+        self._handle_asr_events(self.asr_engine.poll_events())
 
     def stop(self) -> None:
         self.stop_event.set()
