@@ -13,11 +13,12 @@ from aiohttp import web
 import webview
 
 from asr.base import ASREvent, StreamingASREngine
+from asr.endpointing import EndpointConfig, EndpointDecision, EndpointDetector
 from asr.funasr_offline_engine import FunASROfflineEngine
 from asr.funasr_streaming_engine import DEFAULT_STREAMING_MODEL, FunASRStreamingEngine
 from asr.punctuation import PunctuationEngine
 from asr.vosk_engine import VoskEngine
-from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, render_text, send_backspace_chunks, type_text
+from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, log, render_text, send_backspace_chunks, type_text
 
 
 DESKTOP_VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
@@ -230,8 +231,11 @@ class DesktopVoiceThread(threading.Thread):
         self.pause_event = threading.Event()
         self.ready = threading.Event()
         self.lock = threading.RLock()
+        self.audio_drop_count = 0
+        self.audio_total_drop_count = 0
         self.error: str | None = None
         self.status = "STARTING"
+        self.endpoint_status: dict = {}
         self.committed_text = ""
         self.pending_partial_text = ""
         self.composition_text = ""
@@ -254,6 +258,7 @@ class DesktopVoiceThread(threading.Thread):
                 "activeModel": self._active_model_name(),
                 "finalRescoreModel": self._final_rescore_model_name(),
                 "streamingChunkMs": self.config.get("funasrStreamingChunkMs", 600),
+                "endpoint": dict(self.endpoint_status),
             }
 
     def set_status(self, status: str) -> None:
@@ -285,7 +290,6 @@ class DesktopVoiceThread(threading.Thread):
 
     def _run_recognizer(self) -> None:
         try:
-            import numpy as np
             import sounddevice as sd
         except Exception as exc:
             self.set_error(f"Missing desktop voice dependency: {exc}")
@@ -312,19 +316,16 @@ class DesktopVoiceThread(threading.Thread):
             try:
                 self.audio_queue.put_nowait(bytes(indata))
             except queue.Full:
-                pass
-
-        silence_limit_chunks = 8
-        min_speech_chunks = 3
-        max_utterance_chunks = 100
-        energy_threshold = 450.0
+                self._record_audio_drop()
 
         self.set_status("LISTENING")
         self.ready.set()
-        speech_chunks: list[bytes] = []
-        pre_roll: list[bytes] = []
-        in_speech = False
-        silence_chunks = 0
+        endpoint_detector = EndpointDetector(
+            EndpointConfig(
+                sample_rate=sample_rate,
+                frame_ms=max(1, int(blocksize * 1000 / sample_rate)),
+            )
+        )
 
         with sd.RawInputStream(
             samplerate=sample_rate,
@@ -343,53 +344,86 @@ class DesktopVoiceThread(threading.Thread):
 
                 if self.pause_event.is_set():
                     self._discard_paused_audio()
-                    speech_chunks = []
-                    pre_roll = []
-                    in_speech = False
-                    silence_chunks = 0
+                    endpoint_detector.reset()
                     continue
 
                 if self.config["engine"] == "vosk":
+                    drops = self._consume_audio_drops()
+                    if drops:
+                        log(f"[endpoint] audio queue dropped {drops} frame(s) while using vosk")
                     self._handle_asr_events(self.asr_engine.accept_audio(data))
                     continue
 
-                frame = np.frombuffer(data, dtype=np.int16)
-                rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2))) if frame.size else 0.0
-                is_voice = rms >= energy_threshold
+                drops = self._consume_audio_drops()
+                if drops:
+                    drop_decision = endpoint_detector.handle_dropped_frames(drops)
+                    self._update_endpoint_status(drop_decision)
+                    log(f"[endpoint] audio queue dropped {drops} frame(s), state={drop_decision.state}")
+                    if drop_decision.reset_asr:
+                        self._handle_endpoint_reset(drop_decision)
+                        continue
 
-                if is_voice and not in_speech:
-                    in_speech = True
-                    speech_chunks = pre_roll + [data]
-                    pre_roll = []
-                    silence_chunks = 0
-                    for chunk in speech_chunks:
-                        self._handle_asr_events(self.asr_engine.accept_audio(chunk))
-                    continue
+                decision = endpoint_detector.process(data)
+                self._update_endpoint_status(decision)
+                self._handle_endpoint_decision(decision)
 
-                if in_speech:
-                    speech_chunks.append(data)
-                    self._handle_asr_events(self.asr_engine.accept_audio(data))
-                    silence_chunks = 0 if is_voice else silence_chunks + 1
-                    should_finalize = silence_chunks >= silence_limit_chunks or len(speech_chunks) >= max_utterance_chunks
-                    if should_finalize:
-                        utterance_chunk_count = len(speech_chunks)
-                        speech_chunks = []
-                        in_speech = False
-                        silence_chunks = 0
-                        if utterance_chunk_count < min_speech_chunks:
-                            if self._uses_ime_composition():
-                                self._discard_streaming_partial()
-                            self.asr_engine.reset()
-                            self.set_status("LISTENING")
-                            continue
-                        self.set_status("RECOGNIZING")
-                        self._handle_asr_events(self.asr_engine.finalize())
-                        self.set_status("LISTENING")
-                    continue
+    def _handle_endpoint_decision(self, decision: EndpointDecision) -> None:
+        if decision.started:
+            log(
+                "[endpoint] speech start "
+                f"snr={decision.features.snr_db:.1f}dB noise={decision.features.noise_rms:.1f} "
+                f"rms={decision.features.rms:.1f}"
+            )
 
-                pre_roll.append(data)
-                if len(pre_roll) > 3:
-                    pre_roll.pop(0)
+        for chunk in decision.frames:
+            self._handle_asr_events(self.asr_engine.accept_audio(chunk))
+
+        if not decision.endpoint:
+            return
+
+        log(
+            "[endpoint] speech end "
+            f"reason={decision.reason} snr={decision.features.snr_db:.1f}dB "
+            f"noise={decision.features.noise_rms:.1f} dropped={decision.dropped_frames}"
+        )
+        if decision.too_short or decision.reset_asr:
+            self._handle_endpoint_reset(decision)
+            return
+
+        self.set_status("RECOGNIZING")
+        self._handle_asr_events(self.asr_engine.finalize())
+        self.set_status("LISTENING")
+
+    def _handle_endpoint_reset(self, decision: EndpointDecision) -> None:
+        if self._uses_ime_composition():
+            self._discard_streaming_partial()
+        if self.asr_engine is not None:
+            self.asr_engine.reset()
+        self.set_status("LISTENING")
+        log(f"[endpoint] reset ASR reason={decision.reason}")
+
+    def _update_endpoint_status(self, decision: EndpointDecision) -> None:
+        with self.lock:
+            self.endpoint_status = {
+                "state": decision.state,
+                "reason": decision.reason,
+                "noiseRms": round(decision.features.noise_rms, 2),
+                "rms": round(decision.features.rms, 2),
+                "snrDb": round(decision.features.snr_db, 2),
+                "dropCount": self.audio_drop_count,
+                "totalDropCount": self.audio_total_drop_count,
+            }
+
+    def _record_audio_drop(self) -> None:
+        with self.lock:
+            self.audio_drop_count += 1
+            self.audio_total_drop_count += 1
+
+    def _consume_audio_drops(self) -> int:
+        with self.lock:
+            drops = self.audio_drop_count
+            self.audio_drop_count = 0
+            return drops
 
     def _loading_status(self) -> str:
         if self.config["engine"] == "vosk":
