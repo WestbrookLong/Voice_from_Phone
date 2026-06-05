@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -17,6 +17,7 @@ class ASREvent:
     error: str = ""
     source: str = ""
     utterance_id: int = 0
+    candidate_spans: list[dict] = field(default_factory=list)
 
 
 class StreamingASREngine(ABC):

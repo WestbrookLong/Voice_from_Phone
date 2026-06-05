@@ -13,7 +13,9 @@ from aiohttp import web
 import webview
 
 from asr.base import ASREvent, StreamingASREngine
+from asr.bert_reranker import DEFAULT_BERT_RERANKER_MODEL
 from asr.endpointing import EndpointConfig, EndpointDecision, EndpointDetector
+from asr.funasr_candidate_streaming_engine import FunASRCandidateStreamingEngine
 from asr.funasr_offline_engine import FunASROfflineEngine
 from asr.funasr_streaming_engine import DEFAULT_STREAMING_MODEL, FunASRStreamingEngine
 from asr.punctuation import PunctuationEngine
@@ -27,13 +29,16 @@ DESKTOP_VOICE_DEFAULT_CONFIG = {
     "funasrMode": "offline",
     "funasrModel": "iic/SenseVoiceSmall",
     "funasrStreamingChunkMs": 600,
+    "semanticReranker": "bert",
+    "semanticModel": DEFAULT_BERT_RERANKER_MODEL,
     "punctuationStrategy": "spoken",
     "voiceCommands": True,
     "hotwords": "",
 }
 VALID_DESKTOP_VOICE_ENGINES = {"vosk", "funasr"}
 VALID_FUNASR_MODELS = {"iic/SenseVoiceSmall", "paraformer-zh"}
-VALID_FUNASR_MODES = {"offline", "streaming"}
+VALID_FUNASR_MODES = {"offline", "streaming", "candidate_streaming"}
+VALID_SEMANTIC_RERANKERS = {"bert", "heuristic"}
 VALID_PUNCTUATION_STRATEGIES = {"spoken", "model", "none"}
 DESKTOP_VOICE_VIRTUAL_RESET_CHARS = 50
 
@@ -92,13 +97,19 @@ def normalize_desktop_voice_config(value: dict | None) -> dict:
     funasr_model = str(source.get("funasrModel", config["funasrModel"])).strip()
     if funasr_model in VALID_FUNASR_MODELS:
         config["funasrModel"] = funasr_model
-    if config["engine"] == "funasr" and config["funasrMode"] == "streaming":
+    if config["engine"] == "funasr" and config["funasrMode"] in {"streaming", "candidate_streaming"}:
         config["funasrStreamingModel"] = DEFAULT_STREAMING_MODEL
     try:
         streaming_chunk_ms = int(source.get("funasrStreamingChunkMs", config["funasrStreamingChunkMs"]))
     except (TypeError, ValueError):
         streaming_chunk_ms = config["funasrStreamingChunkMs"]
     config["funasrStreamingChunkMs"] = max(100, min(1000, streaming_chunk_ms))
+
+    semantic_reranker = str(source.get("semanticReranker", config["semanticReranker"])).strip().lower()
+    if semantic_reranker in VALID_SEMANTIC_RERANKERS:
+        config["semanticReranker"] = semantic_reranker
+    semantic_model = str(source.get("semanticModel", config["semanticModel"])).strip()
+    config["semanticModel"] = semantic_model or DEFAULT_BERT_RERANKER_MODEL
 
     punctuation_strategy = str(source.get("punctuationStrategy", config["punctuationStrategy"])).strip().lower()
     if punctuation_strategy in VALID_PUNCTUATION_STRATEGIES:
@@ -121,6 +132,14 @@ def bridge_settings_from_desktop_config(config: dict) -> BridgeSettings:
 def create_asr_engine(config: dict, model_path: Path) -> StreamingASREngine:
     if config["engine"] == "vosk":
         return VoskEngine(model_path)
+    if config.get("funasrMode") == "candidate_streaming":
+        return FunASRCandidateStreamingEngine(
+            DEFAULT_STREAMING_MODEL,
+            hotwords=config.get("hotwords", ""),
+            target_chunk_ms=config.get("funasrStreamingChunkMs", 600),
+            semantic_reranker=config.get("semanticReranker", "bert"),
+            semantic_model=config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL),
+        )
     if config.get("funasrMode") == "streaming":
         return FunASRStreamingEngine(
             DEFAULT_STREAMING_MODEL,
@@ -428,6 +447,8 @@ class DesktopVoiceThread(threading.Thread):
     def _loading_status(self) -> str:
         if self.config["engine"] == "vosk":
             return "LOADING MODEL"
+        if self.config.get("funasrMode") == "candidate_streaming":
+            return "LOADING FUNASR CANDIDATE STREAMING"
         if self.config.get("funasrMode") == "streaming":
             return "LOADING FUNASR STREAMING"
         return "LOADING FUNASR"
@@ -435,13 +456,17 @@ class DesktopVoiceThread(threading.Thread):
     def _active_model_name(self) -> str:
         if self.config["engine"] == "vosk":
             return "vosk"
-        if self.config.get("funasrMode") == "streaming":
+        if self.config.get("funasrMode") in {"streaming", "candidate_streaming"}:
             return DEFAULT_STREAMING_MODEL
         return self.config["funasrModel"]
 
     def _final_rescore_model_name(self) -> str:
         if self.config["engine"] == "funasr" and self.config.get("funasrMode") == "streaming":
             return "iic/SenseVoiceSmall"
+        if self.config["engine"] == "funasr" and self.config.get("funasrMode") == "candidate_streaming":
+            if self.config.get("semanticReranker") == "bert":
+                return self.config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL)
+            return "candidate heuristic reranker"
         return ""
 
     def _discard_paused_audio(self) -> None:
@@ -494,7 +519,10 @@ class DesktopVoiceThread(threading.Thread):
         return new_text
 
     def _uses_ime_composition(self) -> bool:
-        return self.config["engine"] == "funasr" and self.config.get("funasrMode") == "streaming"
+        return self.config["engine"] == "funasr" and self.config.get("funasrMode") in {
+            "streaming",
+            "candidate_streaming",
+        }
 
     def _handle_ime_asr_events(self, events: list[ASREvent]) -> None:
         for event in events:
@@ -703,6 +731,17 @@ class DesktopApi:
     def _desktop_voice_settings_snapshot(self) -> dict:
         return dict(self.desktop_voice_config)
 
+    def _desktop_voice_final_rescore_model_name(self) -> str:
+        if self.desktop_voice_config["engine"] != "funasr":
+            return ""
+        if self.desktop_voice_config["funasrMode"] == "streaming":
+            return "iic/SenseVoiceSmall"
+        if self.desktop_voice_config["funasrMode"] == "candidate_streaming":
+            if self.desktop_voice_config.get("semanticReranker") == "bert":
+                return self.desktop_voice_config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL)
+            return "candidate heuristic reranker"
+        return ""
+
     def _result(self, message: str = "") -> dict:
         return {"state": self.get_state(), "message": message}
 
@@ -721,8 +760,8 @@ class DesktopApi:
                     "engine": self.desktop_voice_config["engine"],
                     "funasrMode": self.desktop_voice_config["funasrMode"],
                     "funasrModel": self.desktop_voice_config["funasrModel"],
-                    "activeModel": DEFAULT_STREAMING_MODEL if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] == "streaming" else self.desktop_voice_config["funasrModel"],
-                    "finalRescoreModel": "iic/SenseVoiceSmall" if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] == "streaming" else "",
+                    "activeModel": DEFAULT_STREAMING_MODEL if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] in {"streaming", "candidate_streaming"} else self.desktop_voice_config["funasrModel"],
+                    "finalRescoreModel": self._desktop_voice_final_rescore_model_name(),
                     "streamingChunkMs": self.desktop_voice_config.get("funasrStreamingChunkMs", 600),
                 }
             )
@@ -850,6 +889,8 @@ class DesktopApi:
             previous_model = self.desktop_voice_config["funasrModel"]
             previous_chunk_ms = self.desktop_voice_config.get("funasrStreamingChunkMs", 600)
             previous_hotwords = self.desktop_voice_config.get("hotwords", "")
+            previous_reranker = self.desktop_voice_config.get("semanticReranker", "bert")
+            previous_semantic_model = self.desktop_voice_config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL)
             self.desktop_voice_config = normalize_desktop_voice_config(value)
             next_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
             self.desktop_voice_settings.filter_punctuation = next_settings.filter_punctuation
@@ -861,6 +902,8 @@ class DesktopApi:
                 or previous_model != self.desktop_voice_config["funasrModel"]
                 or previous_chunk_ms != self.desktop_voice_config.get("funasrStreamingChunkMs", 600)
                 or previous_hotwords != self.desktop_voice_config.get("hotwords", "")
+                or previous_reranker != self.desktop_voice_config.get("semanticReranker", "bert")
+                or previous_semantic_model != self.desktop_voice_config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL)
             )
             if needs_restart:
                 return self._result("Settings saved. Restart desktop voice to apply model or hotword changes.")

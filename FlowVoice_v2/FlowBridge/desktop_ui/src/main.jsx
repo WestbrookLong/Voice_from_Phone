@@ -22,6 +22,8 @@ const fallbackState = {
     funasrMode: "offline",
     funasrModel: "iic/SenseVoiceSmall",
     funasrStreamingChunkMs: 600,
+    semanticReranker: "bert",
+    semanticModel: "hfl/chinese-macbert-base",
     punctuationStrategy: "spoken",
     voiceCommands: true,
     hotwords: "",
@@ -374,7 +376,7 @@ function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
               <SettingSelect
                 title="FunASR 模型"
                 value={settings.funasrModel}
-                disabled={settings.engine !== "funasr" || settings.funasrMode === "streaming"}
+                disabled={settings.engine !== "funasr" || ["streaming", "candidate_streaming"].includes(settings.funasrMode)}
                 options={[
                   ["iic/SenseVoiceSmall", "SenseVoiceSmall（中英混说）"],
                   ["paraformer-zh", "Paraformer 中文"],
@@ -388,10 +390,11 @@ function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
                 options={[
                   ["offline", "Offline：句末识别，兼容当前行为"],
                   ["streaming", "Streaming：paraformer-zh-streaming partial"],
+                  ["candidate_streaming", "Candidate Streaming：top-k + 语义纠察"],
                 ]}
                 onChange={(funasrMode) => onChange({ funasrMode })}
               />
-              {settings.engine === "funasr" && settings.funasrMode === "streaming" && (
+              {settings.engine === "funasr" && ["streaming", "candidate_streaming"].includes(settings.funasrMode) && (
                 <>
                   <SettingNumber
                     title="流式上屏间隔"
@@ -403,7 +406,29 @@ function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
                     onChange={(funasrStreamingChunkMs) => onChange({ funasrStreamingChunkMs })}
                   />
                   <div className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
-                    Streaming 模式固定使用 paraformer-zh-streaming；上屏间隔越小越流畅，但模型调用更频繁，partial 稳定性可能下降。最终文本仍由 SenseVoiceSmall 重识别修正。
+                    Streaming 模式固定使用 paraformer-zh-streaming；Candidate Streaming 会读取 decoder top-k 并在候选空间内做语义纠察。上屏间隔越小越流畅，但模型调用更频繁，partial 稳定性可能下降。
+                  </div>
+                </>
+              )}
+              {settings.engine === "funasr" && settings.funasrMode === "candidate_streaming" && (
+                <>
+                  <SettingSelect
+                    title="语义纠察模型"
+                    value={settings.semanticReranker || "bert"}
+                    options={[
+                      ["bert", "BERT MLM：MacBERT 候选重排"],
+                      ["heuristic", "Heuristic：热词/规则回退"],
+                    ]}
+                    onChange={(semanticReranker) => onChange({ semanticReranker })}
+                  />
+                  <SettingText
+                    title="BERT 模型"
+                    value={settings.semanticModel || "hfl/chinese-macbert-base"}
+                    disabled={(settings.semanticReranker || "bert") !== "bert"}
+                    onChange={(semanticModel) => onChange({ semanticModel })}
+                  />
+                  <div className="rounded-2xl border border-[#21462F] bg-[#06100B]/80 px-4 py-3 text-xs leading-5 text-[#8EA99A]">
+                    BERT MLM 只在 ASR top-k 候选空间内打分，不自由生成文本；模型加载失败时会自动回退到 Heuristic，不会中断语音输入。
                   </div>
                 </>
               )}
@@ -501,6 +526,21 @@ function SettingNumber({ title, value, onChange, min, max, step = 1, suffix = ""
         />
         {suffix && <span className="font-mono text-xs text-[#6F8878]">{suffix}</span>}
       </div>
+    </label>
+  );
+}
+
+function SettingText({ title, value, onChange, disabled = false }) {
+  return (
+    <label className={`block rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3 ${disabled ? "opacity-45" : ""}`}>
+      <span className="mb-2 block text-xs font-semibold text-[#DDFCE7]">{title}</span>
+      <input
+        value={value}
+        disabled={disabled}
+        spellCheck={false}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-xl border border-[#21462F] bg-[#030805] px-3 py-2 font-mono text-sm text-[#B9FFD4] outline-none transition focus:border-[#2E7447] disabled:cursor-not-allowed"
+      />
     </label>
   );
 }
