@@ -21,6 +21,7 @@ from asr.funasr_streaming_engine import DEFAULT_STREAMING_MODEL, FunASRStreaming
 from asr.punctuation import PunctuationEngine
 from asr.vosk_engine import VoskEngine
 from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, log, render_text, send_backspace_chunks, type_text
+from voice_agent import VoiceAgentManager
 
 
 DESKTOP_VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
@@ -41,6 +42,8 @@ VALID_FUNASR_MODES = {"offline", "streaming", "candidate_streaming"}
 VALID_SEMANTIC_RERANKERS = {"bert", "heuristic"}
 VALID_PUNCTUATION_STRATEGIES = {"spoken", "model", "none"}
 DESKTOP_VOICE_VIRTUAL_RESET_CHARS = 50
+VK_CONTROL = 0x11
+VK_V = 0x56
 
 
 def app_root() -> Path:
@@ -195,12 +198,25 @@ def copy_text_to_clipboard(text: str) -> None:
         user32.CloseClipboard()
 
 
+def paste_clipboard_to_cursor() -> None:
+    if sys.platform != "win32":
+        raise RuntimeError("Clipboard paste is only implemented for Windows.")
+
+    from server import _send_keyboard_input
+
+    _send_keyboard_input(vk=VK_CONTROL)
+    _send_keyboard_input(vk=VK_V)
+    _send_keyboard_input(vk=VK_V, flags=0x0002)
+    _send_keyboard_input(vk=VK_CONTROL, flags=0x0002)
+
+
 class BridgeServerThread(threading.Thread):
-    def __init__(self, host: str, port: int, token: str) -> None:
+    def __init__(self, host: str, port: int, token: str, voice_agent: VoiceAgentManager | None = None) -> None:
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.token = token
+        self.voice_agent = voice_agent
         self.loop: asyncio.AbstractEventLoop | None = None
         self.runner: web.AppRunner | None = None
         self.ready = threading.Event()
@@ -221,7 +237,7 @@ class BridgeServerThread(threading.Thread):
             self.loop.close()
 
     async def _start(self) -> None:
-        app = create_app(self.token)
+        app = create_app(self.token, voice_agent=self.voice_agent)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)
@@ -700,6 +716,151 @@ class DesktopVoiceThread(threading.Thread):
         self.set_status("LISTENING")
 
 
+class VoiceAgentRecorderThread(threading.Thread):
+    def __init__(self, voice_agent: VoiceAgentManager, style: str) -> None:
+        super().__init__(daemon=True)
+        self.voice_agent = voice_agent
+        self.style = style
+        self.session_id: str | None = None
+        self.stop_event = threading.Event()
+        self.ready = threading.Event()
+        self.lock = threading.RLock()
+        self.error: str | None = None
+        self.status = "STARTING"
+        self.audio_queue: queue.Queue[bytes] = queue.Queue(maxsize=48)
+        self.final_text = ""
+        self.partial_text = ""
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {
+                "running": self.is_alive() and self.error is None and not self.stop_event.is_set(),
+                "status": self.status,
+                "error": self.error,
+                "sessionId": self.session_id,
+                "partialText": self.partial_text,
+            }
+
+    def set_status(self, status: str) -> None:
+        with self.lock:
+            self.status = status
+
+    def set_error(self, message: str) -> None:
+        with self.lock:
+            self.error = message
+            self.status = "ERROR"
+        if self.session_id:
+            self.voice_agent.fail_session(self.session_id, message)
+
+    def run(self) -> None:
+        recognition = None
+        try:
+            self._run_recorder()
+        except Exception as exc:
+            self.set_error(str(exc))
+            self.ready.set()
+        finally:
+            try:
+                if recognition is not None:
+                    recognition.stop()
+            except Exception:
+                pass
+
+    def _run_recorder(self) -> None:
+        try:
+            import dashscope
+            import sounddevice as sd
+            from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
+        except Exception as exc:
+            raise RuntimeError(f"Missing Voice Agent recording dependency: {exc}") from exc
+
+        api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("DASHSCOPE_API_KEY is not configured.")
+        dashscope.api_key = api_key
+
+        session = self.voice_agent.start_session(self.style)
+        self.session_id = session.id
+
+        owner = self
+
+        class Callback(RecognitionCallback):
+            def on_open(self) -> None:
+                owner.set_status("LISTENING")
+                owner.ready.set()
+
+            def on_complete(self) -> None:
+                owner.set_status("FINALIZING")
+
+            def on_error(self, result) -> None:
+                message = getattr(result, "message", None) or str(result)
+                owner.set_error(message)
+
+            def on_close(self) -> None:
+                if owner.error is None and owner.stop_event.is_set():
+                    owner.set_status("STOPPED")
+
+            def on_event(self, result) -> None:
+                sentence = result.get_sentence()
+                text = str(sentence.get("text", "")).strip() if isinstance(sentence, dict) else ""
+                if not text:
+                    return
+                with owner.lock:
+                    owner.partial_text = text
+                if RecognitionResult.is_sentence_end(sentence):
+                    owner._handle_sentence_text(text)
+
+        recognition = Recognition(
+            model=os.environ.get("FLOWVOICE_ASR_MODEL", "paraformer-realtime-v2"),
+            format="pcm",
+            sample_rate=16000,
+            language_hints=["zh", "en"],
+            semantic_punctuation_enabled=False,
+            callback=Callback(),
+        )
+        self.set_status("CONNECTING ASR")
+        recognition.start()
+
+        def audio_callback(indata, frames, time_info, status) -> None:
+            try:
+                self.audio_queue.put_nowait(bytes(indata))
+            except queue.Full:
+                pass
+
+        with sd.RawInputStream(
+            samplerate=16000,
+            blocksize=1600,
+            dtype="int16",
+            channels=1,
+            callback=audio_callback,
+        ):
+            while not self.stop_event.is_set() and self.error is None:
+                try:
+                    data = self.audio_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                recognition.send_audio_frame(data)
+                if self.session_id:
+                    self.voice_agent.append_audio_chunk(self.session_id, data)
+
+        self.set_status("FINALIZING")
+        recognition.stop()
+        if self.session_id:
+            self.voice_agent.finalize_session(self.session_id, style=self.style)
+        self.set_status("DONE")
+
+    def _handle_sentence_text(self, text: str) -> None:
+        if not self.session_id:
+            return
+        if text == self.final_text or self.final_text.endswith(text):
+            return
+        self.final_text = append_recognized_text(self.final_text, text)
+        self.voice_agent.append_transcript(self.session_id, text, replace=False, final=False)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+
 class DesktopApi:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -709,8 +870,13 @@ class DesktopApi:
         self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
         self.desktop_voice_thread: DesktopVoiceThread | None = None
+        self.voice_agent_recorder_thread: VoiceAgentRecorderThread | None = None
         self.desktop_voice_config = normalize_desktop_voice_config(None)
         self.desktop_voice_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
+        self.voice_agent = VoiceAgentManager(
+            insert_callback=lambda text: paste_clipboard_to_cursor(),
+            copy_callback=copy_text_to_clipboard,
+        )
         self.window: webview.Window | None = None
         self.maximized = False
 
@@ -726,6 +892,14 @@ class DesktopApi:
             and self.desktop_voice_thread.is_alive()
             and self.desktop_voice_thread.error is None
             and not self.desktop_voice_thread.stop_event.is_set()
+        )
+
+    def _voice_agent_recording(self) -> bool:
+        return (
+            self.voice_agent_recorder_thread is not None
+            and self.voice_agent_recorder_thread.is_alive()
+            and self.voice_agent_recorder_thread.error is None
+            and not self.voice_agent_recorder_thread.stop_event.is_set()
         )
 
     def _desktop_voice_settings_snapshot(self) -> dict:
@@ -765,6 +939,12 @@ class DesktopApi:
                     "streamingChunkMs": self.desktop_voice_config.get("funasrStreamingChunkMs", 600),
                 }
             )
+            voice_agent_state = self.voice_agent.get_state()
+            voice_agent_state["recorder"] = (
+                self.voice_agent_recorder_thread.snapshot()
+                if self.voice_agent_recorder_thread is not None
+                else {"running": False, "status": "STOPPED", "error": None, "sessionId": None, "partialText": ""}
+            )
             return {
                 "running": running,
                 "token": self.token,
@@ -774,6 +954,7 @@ class DesktopApi:
                 "status": "SERVICE STARTED" if running else "SERVICE STOPPED",
                 "desktopVoice": voice_snapshot,
                 "desktopVoiceSettings": self._desktop_voice_settings_snapshot(),
+                "voiceAgent": voice_agent_state,
             }
 
     def set_port(self, value: str) -> dict:
@@ -809,7 +990,7 @@ class DesktopApi:
             except ValueError:
                 return self._result("Port must be between 1 and 65535.")
 
-            thread = BridgeServerThread("0.0.0.0", port, self.token)
+            thread = BridgeServerThread("0.0.0.0", port, self.token, voice_agent=self.voice_agent)
             self.server_thread = thread
             thread.start()
 
@@ -909,6 +1090,70 @@ class DesktopApi:
                 return self._result("Settings saved. Restart desktop voice to apply model or hotword changes.")
             return self._result("Desktop voice settings updated.")
 
+    def start_voice_agent_session(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        style = str(payload.get("style", "formal_paragraph"))
+        with self.lock:
+            if self._voice_agent_recording():
+                return self._result("Voice Agent recorder is already running.")
+            thread = VoiceAgentRecorderThread(self.voice_agent, style)
+            self.voice_agent_recorder_thread = thread
+            thread.start()
+
+        thread.ready.wait(timeout=8)
+
+        with self.lock:
+            if thread.error:
+                return self._result(f"Failed to start Voice Agent recorder: {thread.error}")
+            if not thread.session_id:
+                return self._result("Voice Agent recorder is starting; waiting for microphone and ASR connection.")
+            return self._result(f"Voice Agent recorder started: {thread.session_id}")
+
+    def append_voice_agent_transcript(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        session_id = payload.get("sessionId")
+        text = str(payload.get("text", ""))
+        replace = bool(payload.get("replace", False))
+        final = bool(payload.get("final", False))
+        self.voice_agent.append_transcript(str(session_id) if session_id else None, text, replace=replace, final=final)
+        return self._result("Voice Agent draft updated.")
+
+    def finalize_voice_agent_session(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        session_id = payload.get("sessionId")
+        style = payload.get("style")
+        with self.lock:
+            thread = self.voice_agent_recorder_thread
+        if thread is not None and thread.is_alive():
+            thread.stop()
+            thread.join(timeout=12)
+            if thread.error:
+                return self._result(f"Voice Agent recorder failed: {thread.error}")
+            if thread.is_alive():
+                return self._result("Voice Agent recorder is finalizing. Please wait a moment.")
+            return self._result("Voice Agent final result is ready.")
+        self.voice_agent.finalize_session(str(session_id) if session_id else None, style=str(style) if style else None)
+        return self._result("Voice Agent final result is ready.")
+
+    def rerun_voice_agent_session(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        session_id = payload.get("sessionId")
+        style = payload.get("style")
+        self.voice_agent.rerun_session(str(session_id) if session_id else None, style=str(style) if style else None)
+        return self._result("Voice Agent result regenerated.")
+
+    def copy_voice_agent_result(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        session_id = payload.get("sessionId")
+        self.voice_agent.copy_result(str(session_id) if session_id else None)
+        return self._result("Voice Agent result copied to clipboard.")
+
+    def insert_voice_agent_result(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        session_id = payload.get("sessionId")
+        self.voice_agent.insert_result(str(session_id) if session_id else None)
+        return self._result("Voice Agent result inserted and copied to clipboard.")
+
     def minimize_window(self) -> dict:
         if self.window is not None:
             self.window.minimize()
@@ -936,6 +1181,12 @@ class DesktopApi:
         return state
 
     def shutdown(self) -> None:
+        with self.lock:
+            recorder_thread = self.voice_agent_recorder_thread
+            self.voice_agent_recorder_thread = None
+        if recorder_thread is not None:
+            recorder_thread.stop()
+            recorder_thread.join(timeout=4)
         self.stop_desktop_voice()
         self.stop_service()
 

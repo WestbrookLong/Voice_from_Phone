@@ -1,4 +1,5 @@
 import argparse
+import base64
 import ctypes
 import json
 import logging
@@ -487,9 +488,15 @@ def validate_ops(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def create_app(token: str) -> web.Application:
+def create_app(token: str, voice_agent: Any = None) -> web.Application:
     app = web.Application()
     session = FlowInputSession()
+
+    def require_token(request: web.Request, payload: dict[str, Any] | None = None) -> None:
+        request_token = request.query.get("token")
+        payload_token = payload.get("token") if isinstance(payload, dict) else None
+        if request_token != token and payload_token != token:
+            raise web.HTTPUnauthorized(text="invalid token")
 
     def html_response(path: Path) -> web.FileResponse:
         return web.FileResponse(
@@ -506,6 +513,102 @@ def create_app(token: str) -> web.Application:
 
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"ok": True})
+
+    async def voice_agent_state(request: web.Request) -> web.Response:
+        require_token(request)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        return web.json_response(voice_agent.get_state())
+
+    async def voice_agent_start(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        style = str(payload.get("style", "formal_paragraph")) if isinstance(payload, dict) else "formal_paragraph"
+        source = str(payload.get("source", "")) if isinstance(payload, dict) else ""
+        if source == "phone_microphone":
+            result = voice_agent.start_audio_session(style)
+        else:
+            result = voice_agent.start_session(style)
+        return web.json_response(result.snapshot())
+
+    async def voice_agent_transcript(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        result = voice_agent.append_transcript(
+            payload.get("sessionId"),
+            str(payload.get("text", "")),
+            replace=bool(payload.get("replace", False)),
+            final=bool(payload.get("final", False)),
+        )
+        return web.json_response(result.snapshot())
+
+    async def voice_agent_audio_chunk(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        encoded = payload.get("audio")
+        audio = b""
+        if isinstance(encoded, str) and encoded:
+            try:
+                audio = base64.b64decode(encoded, validate=True)
+            except ValueError as exc:
+                raise web.HTTPBadRequest(text="audio must be base64") from exc
+        result = voice_agent.append_audio_chunk(
+            payload.get("sessionId"),
+            audio,
+            transcript_text=str(payload.get("transcriptText", "")),
+            final=bool(payload.get("final", False)),
+        )
+        return web.json_response(result.snapshot())
+
+    async def voice_agent_finalize(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        result = voice_agent.finalize_session(payload.get("sessionId"), style=payload.get("style"))
+        return web.json_response(result.snapshot())
+
+    async def voice_agent_rerun(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        result = voice_agent.rerun_session(payload.get("sessionId"), style=payload.get("style"))
+        return web.json_response(result.snapshot())
+
+    async def voice_agent_copy(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        result = voice_agent.copy_result(payload.get("sessionId"))
+        return web.json_response(result.snapshot())
+
+    async def voice_agent_insert(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if voice_agent is None:
+            raise web.HTTPServiceUnavailable(text="voice agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        result = voice_agent.insert_result(payload.get("sessionId"))
+        return web.json_response(result.snapshot())
 
     async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
         if request.query.get("token") != token:
@@ -564,6 +667,14 @@ def create_app(token: str) -> web.Application:
 
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
+    app.router.add_get("/api/voice-agent/state", voice_agent_state)
+    app.router.add_post("/api/voice-agent/session", voice_agent_start)
+    app.router.add_post("/api/voice-agent/transcript", voice_agent_transcript)
+    app.router.add_post("/api/voice-agent/audio-chunk", voice_agent_audio_chunk)
+    app.router.add_post("/api/voice-agent/finalize", voice_agent_finalize)
+    app.router.add_post("/api/voice-agent/rerun", voice_agent_rerun)
+    app.router.add_post("/api/voice-agent/copy", voice_agent_copy)
+    app.router.add_post("/api/voice-agent/insert", voice_agent_insert)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_static("/static", STATIC_DIR)
     return app

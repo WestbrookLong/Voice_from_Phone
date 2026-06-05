@@ -28,7 +28,23 @@ const fallbackState = {
     voiceCommands: true,
     hotwords: "",
   },
+  voiceAgent: {
+    provider: "preview",
+    configured: false,
+    activeSessionId: null,
+    activeSession: null,
+    recentSessions: [],
+  },
 };
+
+const voiceAgentStyles = [
+  ["formal_paragraph", "Formal paragraph"],
+  ["faithful_cleanup", "Faithful cleanup"],
+  ["summary_bullets", "Summary bullets"],
+  ["meeting_notes", "Meeting notes"],
+  ["email_draft", "Email draft"],
+  ["todo_items", "Todo items"],
+];
 
 function desktopApi() {
   return window.pywebview?.api;
@@ -38,6 +54,9 @@ function FlowVoiceDesktopConsole() {
   const [state, setState] = React.useState(fallbackState);
   const [message, setMessage] = React.useState("");
   const [desktopVoiceSettingsOpen, setDesktopVoiceSettingsOpen] = React.useState(false);
+  const [voiceAgentText, setVoiceAgentText] = React.useState("");
+  const [voiceAgentStyle, setVoiceAgentStyle] = React.useState("formal_paragraph");
+  const voiceAgentDraftTimer = React.useRef(null);
 
   const ip = state.ip;
   const port = state.port;
@@ -45,6 +64,8 @@ function FlowVoiceDesktopConsole() {
   const url = state.url || `http://${ip}:${port}/?token=${token}&v=voice`;
   const desktopVoice = state.desktopVoice || fallbackState.desktopVoice;
   const desktopVoiceSettings = state.desktopVoiceSettings || fallbackState.desktopVoiceSettings;
+  const voiceAgent = state.voiceAgent || fallbackState.voiceAgent;
+  const voiceAgentSession = voiceAgent.activeSession;
 
   const refresh = React.useCallback(async () => {
     const api = desktopApi();
@@ -65,6 +86,14 @@ function FlowVoiceDesktopConsole() {
       window.removeEventListener("pywebviewready", ready);
     };
   }, [refresh]);
+
+  React.useEffect(() => {
+    return () => {
+      if (voiceAgentDraftTimer.current) {
+        window.clearTimeout(voiceAgentDraftTimer.current);
+      }
+    };
+  }, []);
 
   async function callApi(action, payload) {
     const api = desktopApi();
@@ -89,6 +118,45 @@ function FlowVoiceDesktopConsole() {
     });
   }
 
+  async function startVoiceAgent() {
+    setVoiceAgentText("");
+    await callApi("start_voice_agent_session", { style: voiceAgentStyle });
+  }
+
+  function updateVoiceAgentText(text, final = false) {
+    setVoiceAgentText(text);
+    const sessionId = voiceAgentSession?.id || voiceAgent.activeSessionId;
+    if (voiceAgentDraftTimer.current) {
+      window.clearTimeout(voiceAgentDraftTimer.current);
+    }
+    const update = () =>
+      callApi("append_voice_agent_transcript", {
+        sessionId,
+        text,
+        replace: true,
+        final,
+      });
+    if (final) {
+      return update();
+    }
+    voiceAgentDraftTimer.current = window.setTimeout(update, 1200);
+    return undefined;
+  }
+
+  async function stopVoiceAgent() {
+    const sessionId = voiceAgentSession?.id || voiceAgent.activeSessionId;
+    if (voiceAgentText) {
+      await updateVoiceAgentText(voiceAgentText, true);
+    }
+    await callApi("finalize_voice_agent_session", { sessionId, style: voiceAgentStyle });
+  }
+
+  async function rerunVoiceAgent(style = voiceAgentStyle) {
+    setVoiceAgentStyle(style);
+    const sessionId = voiceAgentSession?.id || voiceAgent.activeSessionId;
+    await callApi("rerun_voice_agent_session", { sessionId, style });
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#050807] text-[#DDE7DF]">
       <div className="pointer-events-none fixed inset-0">
@@ -105,7 +173,7 @@ function FlowVoiceDesktopConsole() {
           onClose={() => callApi("close_window")}
         />
 
-      <main className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-8 py-5">
+      <main className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-y-auto px-8 py-5">
         <header className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="grid h-11 w-11 place-items-center rounded-xl border border-[#28F58D]/25 bg-[#0B1D14] font-mono text-sm font-black text-[#80FFBA] shadow-[0_0_32px_rgba(40,245,141,0.15)]">
@@ -123,7 +191,7 @@ function FlowVoiceDesktopConsole() {
           </div>
         </header>
 
-        <section className="grid min-h-0 flex-1 grid-cols-12 gap-5">
+        <section className="grid flex-none grid-cols-12 items-start gap-5 pb-6">
           <div className="col-span-12 rounded-[26px] border border-[#1E3B2B] bg-[#08100D]/88 p-5 shadow-[0_26px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl lg:col-span-8">
             <div className="mb-4 flex items-start justify-between gap-6">
               <div>
@@ -237,6 +305,26 @@ function FlowVoiceDesktopConsole() {
             <div className="mt-4 rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
               To control elevated windows, run the client with administrator privileges.
             </div>
+
+            <VoiceAgentPanel
+              className="mt-4"
+              voiceAgent={voiceAgent}
+              session={voiceAgentSession}
+              text={voiceAgentText}
+              style={voiceAgentStyle}
+              onStyleChange={(style) => {
+                setVoiceAgentStyle(style);
+                if (voiceAgentSession?.rawTranscript) {
+                  rerunVoiceAgent(style);
+                }
+              }}
+              onStart={startVoiceAgent}
+              onTextChange={(text) => updateVoiceAgentText(text, false)}
+              onStop={stopVoiceAgent}
+              onRerun={() => rerunVoiceAgent()}
+              onCopy={() => callApi("copy_voice_agent_result", { sessionId: voiceAgentSession?.id })}
+              onInsert={() => callApi("insert_voice_agent_result", { sessionId: voiceAgentSession?.id })}
+            />
           </div>
 
           <aside className="col-span-12 flex min-h-0 flex-col rounded-[26px] border border-[#1E3B2B] bg-[#08100D]/88 p-5 shadow-[0_26px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl lg:col-span-4">
@@ -613,6 +701,146 @@ function ThinInfo({ title, value }) {
       <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#5B7062]">{title}</div>
       <div className="mt-1 text-sm text-[#C8E7D2]">{value}</div>
     </div>
+  );
+}
+
+function VoiceAgentPanel({
+  className = "",
+  voiceAgent,
+  session,
+  text,
+  style,
+  onStyleChange,
+  onStart,
+  onTextChange,
+  onStop,
+  onRerun,
+  onCopy,
+  onInsert,
+}) {
+  const status = session?.status || "idle";
+  const isRecording = status === "recording";
+  const isPolishing = status === "polishing";
+  const hasResult = Boolean(session?.polishedText || session?.draftText || session?.rawTranscript);
+  const displayText = session?.polishedText || session?.draftText || "";
+  const recorder = voiceAgent?.recorder || {};
+
+  return (
+    <section className={`rounded-2xl border border-[#21462F] bg-[#06100B] p-4 ${className}`}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Voice Agent</div>
+          <div className="mt-1 text-sm font-semibold text-[#DDFCE7]">录音整理输入</div>
+        </div>
+        <div className="rounded-xl border border-[#193324] bg-[#050C08]/70 px-3 py-2 text-right">
+          <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#5B7062]">Provider</div>
+          <div className="mt-0.5 font-mono text-xs text-[#9CFCC4]">{voiceAgent?.provider || "preview"}</div>
+        </div>
+      </div>
+
+      {!voiceAgent?.configured && (
+        <div className="mb-3 rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
+          未检测到 DASHSCOPE_API_KEY，当前使用本地预览整理器；配置后会自动切到百炼 Qwen。
+        </div>
+      )}
+
+      <label className="mb-3 block rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3">
+        <span className="mb-2 block text-xs font-semibold text-[#DDFCE7]">整理风格</span>
+        <select
+          value={style}
+          onChange={(event) => onStyleChange(event.target.value)}
+          className="w-full rounded-xl border border-[#21462F] bg-[#030805] px-3 py-2 text-sm text-[#B9FFD4] outline-none transition focus:border-[#2E7447]"
+        >
+          {voiceAgentStyles.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {!isRecording && !hasResult && (
+        <button onClick={onStart} className="w-full rounded-2xl bg-[#28F58D] py-3 text-sm font-bold text-[#041008] shadow-[0_0_28px_rgba(40,245,141,0.18)] transition hover:bg-[#67FFAD]">
+          开始录音整理
+        </button>
+      )}
+
+      {isRecording && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between rounded-2xl border border-[#193324] bg-[#050C08]/70 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-[#C8E7D2]">
+              <span className="h-2 w-2 rounded-full bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" />
+              电脑麦克风正在录音
+            </div>
+            <button onClick={onStop} className="min-h-0 rounded-xl border border-[#2F2A17] bg-[#161308]/75 px-3 py-2 text-xs font-semibold text-[#D7C47A] transition hover:bg-[#211C0B]">
+              停止录音
+            </button>
+          </div>
+          <div className="rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#DDFCE7]">实时转写</span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#5B7062]">{recorder.status || "LISTENING"}</span>
+            </div>
+            <div className="min-h-20 whitespace-pre-wrap text-sm leading-6 text-[#C8E7D2]">
+              {session?.rawTranscript || recorder.partialText || "正在等待语音..."}
+            </div>
+            {recorder.partialText && session?.rawTranscript && (
+              <div className="mt-2 border-t border-[#193324] pt-2 text-xs leading-5 text-[#8EA99A]">
+                {recorder.partialText}
+              </div>
+            )}
+          </div>
+          <div className="rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3">
+            <div className="mb-2 text-xs font-semibold text-[#DDFCE7]">实时整理草稿</div>
+            <div className="min-h-16 whitespace-pre-wrap text-sm leading-6 text-[#C8E7D2]">
+              {session?.draftText || "识别到完整句子后会自动生成草稿。"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isPolishing && (
+        <div className="rounded-2xl border border-[#193324] bg-[#050C08]/70 px-4 py-3 text-sm text-[#C8E7D2]">
+          正在完成最终整理...
+        </div>
+      )}
+
+      {hasResult && (
+        <div className="mt-3 space-y-3">
+          <div className="rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3">
+            <div className="mb-2 text-xs font-semibold text-[#DDFCE7]">整理结果</div>
+            <div className="max-h-40 overflow-auto whitespace-pre-wrap text-sm leading-6 text-[#C8E7D2]">
+              {displayText || "等待整理结果..."}
+            </div>
+          </div>
+          <details className="rounded-2xl border border-[#193324] bg-[#050C08]/70 p-3">
+            <summary className="cursor-pointer text-xs font-semibold text-[#8EA99A]">原始转写</summary>
+            <div className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-xs leading-5 text-[#8EA99A]">
+              {session?.rawTranscript || "暂无原始转写"}
+            </div>
+          </details>
+          {session?.error && (
+            <div className="rounded-2xl border border-[#3A1616] bg-[#1B0A0A]/80 px-4 py-3 text-xs leading-5 text-[#FFD9D9]">
+              {session.error}
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-3">
+            <button onClick={onInsert} className="rounded-2xl bg-[#28F58D] py-3 text-sm font-bold text-[#041008] shadow-[0_0_28px_rgba(40,245,141,0.18)] transition hover:bg-[#67FFAD]">
+              插入光标处
+            </button>
+            <button onClick={onCopy} className="rounded-2xl border border-[#2E7447] bg-[#10291B] py-3 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+              复制
+            </button>
+            <button onClick={onRerun} className="rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] transition hover:bg-[#12301F]">
+              重新整理
+            </button>
+          </div>
+          <button onClick={onStart} className="w-full rounded-2xl border border-[#193324] bg-[#050C08]/70 py-3 text-sm font-semibold text-[#A8F7C4] transition hover:bg-[#0C1E14]">
+            新录音整理
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
