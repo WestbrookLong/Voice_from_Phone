@@ -1245,6 +1245,14 @@ def create_native_agent_float(api: DesktopApi) -> object:
     user32.SetWindowLongPtrW.restype = ctypes.c_void_p
     user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
     user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    user32.SendMessageW.argtypes = [
+        ctypes.c_void_p,
+        wintypes.UINT,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+    ]
     user32.GetDC.restype = ctypes.c_void_p
     user32.GetDC.argtypes = [ctypes.c_void_p]
     user32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
@@ -1293,7 +1301,7 @@ def create_native_agent_float(api: DesktopApi) -> object:
         return lines[-max_lines:] or [""]
 
     def update_layered(bitmap: Bitmap) -> None:
-        hwnd = form.Handle.ToInt64()
+        hwnd = ctypes.c_void_p(form.Handle.ToInt64())
         screen_dc = user32.GetDC(0)
         memory_dc = gdi32.CreateCompatibleDC(screen_dc)
         bitmap_info = BitmapInfo()
@@ -1419,31 +1427,37 @@ def create_native_agent_float(api: DesktopApi) -> object:
         threading.Thread(target=callback, daemon=True).start()
 
     def begin_drag(_sender, event) -> None:
-        if event.Button != MouseButtons.Left:
-            return
-        x, y = event.X, event.Y
-        if 274 <= x <= 306 and 8 <= y <= 34:
-            form.Hide()
-            return
-        if 114 <= x <= 154 and 128 <= y <= 168:
-            callback = api.stop_text_agent_recording if state["recording"] or state["paused"] else api.toggle_text_agent_recording
-            run_async(callback)
-            return
-        if 166 <= x <= 206 and 128 <= y <= 168:
-            if state["recording"] or state["paused"]:
-                callback = api.resume_text_agent_recording if state["paused"] else api.pause_text_agent_recording
+        try:
+            if event.Button != MouseButtons.Left:
+                return
+            x, y = event.X, event.Y
+            if 274 <= x <= 306 and 8 <= y <= 34:
+                form.Hide()
+                return
+            if 114 <= x <= 154 and 128 <= y <= 168:
+                callback = api.stop_text_agent_recording if state["recording"] or state["paused"] else api.toggle_text_agent_recording
                 run_async(callback)
-            return
-        if event.Y <= 112:
-            run_async(api.show_main_window)
-        user32.ReleaseCapture()
-        user32.SendMessageW(form.Handle.ToInt64(), 0x00A1, 2, 0)
+                return
+            if 166 <= x <= 206 and 128 <= y <= 168:
+                if state["recording"] or state["paused"]:
+                    callback = api.resume_text_agent_recording if state["paused"] else api.pause_text_agent_recording
+                    run_async(callback)
+                return
+            if event.Y <= 112:
+                run_async(api.show_main_window)
+            user32.ReleaseCapture()
+            user32.SendMessageW(ctypes.c_void_p(form.Handle.ToInt64()), 0x00A1, 2, 0)
+        except Exception as exc:
+            log(f"[desktop] agent mouse callback failed: {exc}\n{traceback.format_exc()}")
 
     form.MouseDown += begin_drag
 
     def refresh(_sender=None, _event=None) -> None:
-        if form.Visible:
-            render()
+        try:
+            if form.Visible:
+                render()
+        except Exception as exc:
+            log(f"[desktop] agent refresh failed: {exc}\n{traceback.format_exc()}")
 
     timer = Timer()
     timer.Interval = 500
@@ -1451,8 +1465,9 @@ def create_native_agent_float(api: DesktopApi) -> object:
     timer.Start()
     form.FormClosed += lambda _sender, _event: timer.Stop()
     form.Show()
-    ex_style = user32.GetWindowLongPtrW(form.Handle.ToInt64(), -20)
-    user32.SetWindowLongPtrW(form.Handle.ToInt64(), -20, ex_style | 0x00080000)
+    hwnd = ctypes.c_void_p(form.Handle.ToInt64())
+    ex_style = user32.GetWindowLongPtrW(hwnd, -20)
+    user32.SetWindowLongPtrW(hwnd, -20, ctypes.c_void_p(ex_style | 0x00080000))
     render()
     api._agent_render = render
     return form
