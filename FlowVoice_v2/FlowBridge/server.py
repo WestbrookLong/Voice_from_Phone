@@ -219,8 +219,9 @@ class FlowInputSession:
 
     def sync_processed_text(self, text: str) -> None:
         normalized = text[:MAX_SYNC_TEXT_LEN]
+        preview = normalized[-120:]
         log(
-            f"[sync] replace {len(self.text_session.text)} chars -> {len(normalized)} chars: {normalized!r}",
+            f"[sync] replace {len(self.text_session.text)} chars -> {len(normalized)} chars; tail={preview!r}",
         )
         self.text_session.replace(normalized)
 
@@ -487,9 +488,16 @@ def validate_ops(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def create_app(token: str) -> web.Application:
+def create_app(token: str, text_agent: Any = None) -> web.Application:
     app = web.Application()
     session = FlowInputSession()
+    text_agent_route_active = False
+
+    def require_token(request: web.Request, payload: dict[str, Any] | None = None) -> None:
+        request_token = request.query.get("token")
+        payload_token = payload.get("token") if isinstance(payload, dict) else None
+        if request_token != token and payload_token != token:
+            raise web.HTTPUnauthorized(text="invalid token")
 
     def html_response(path: Path) -> web.FileResponse:
         return web.FileResponse(
@@ -507,7 +515,24 @@ def create_app(token: str) -> web.Application:
     async def health(_: web.Request) -> web.Response:
         return web.json_response({"ok": True})
 
+    async def text_agent_state(request: web.Request) -> web.Response:
+        require_token(request)
+        if text_agent is None:
+            raise web.HTTPServiceUnavailable(text="text agent is not configured")
+        return web.json_response(text_agent.get_state())
+
+    async def text_agent_mode(request: web.Request) -> web.Response:
+        payload = await request.json()
+        require_token(request, payload)
+        if text_agent is None:
+            raise web.HTTPServiceUnavailable(text="text agent is not configured")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="payload must be an object")
+        text_agent.set_mode(bool(payload.get("enabled", False)))
+        return web.json_response(text_agent.get_state())
+
     async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
+        nonlocal text_agent_route_active
         if request.query.get("token") != token:
             raise web.HTTPUnauthorized(text="invalid token")
 
@@ -533,15 +558,30 @@ def create_app(token: str) -> web.Application:
                     text = payload.get("text")
                     if not isinstance(text, str):
                         raise ValueError("sync_state.text must be a string")
-                    settings = BridgeSettings.from_payload(payload.get("settings"))
-                    session.sync_state(text, settings)
+                    if text_agent is not None and text_agent.should_capture_text():
+                        text_agent_route_active = True
+                        text_agent.update_text(text)
+                    else:
+                        if text_agent_route_active:
+                            baseline_text = text_agent.get_last_mobile_text() if text_agent is not None else text
+                            session.reset()
+                            session.raw_text = trim_raw_text(baseline_text, session)
+                            session.raw_session_start = len(session.raw_text)
+                            text_agent_route_active = False
+                        if text_agent is not None:
+                            text_agent.observe_mobile_text(text)
+                        settings = BridgeSettings.from_payload(payload.get("settings"))
+                        session.sync_state(text, settings)
                 elif message_type == "sync_text":
                     text = payload.get("text")
                     if not isinstance(text, str):
                         raise ValueError("sync_text.text must be a string")
                     session.sync_processed_text(text)
                 elif message_type == "reset_session":
-                    session.reset()
+                    if text_agent is not None and text_agent.should_capture_text():
+                        text_agent.update_text("")
+                    else:
+                        session.reset()
                 else:
                     ops = validate_ops(payload)
                     for op in ops:
@@ -564,6 +604,8 @@ def create_app(token: str) -> web.Application:
 
     app.router.add_get("/", index)
     app.router.add_get("/health", health)
+    app.router.add_get("/api/text-agent/state", text_agent_state)
+    app.router.add_post("/api/text-agent/mode", text_agent_mode)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_static("/static", STATIC_DIR)
     return app

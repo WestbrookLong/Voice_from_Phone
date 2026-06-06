@@ -21,6 +21,7 @@ from asr.funasr_streaming_engine import DEFAULT_STREAMING_MODEL, FunASRStreaming
 from asr.punctuation import PunctuationEngine
 from asr.vosk_engine import VoskEngine
 from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, log, render_text, send_backspace_chunks, type_text
+from text_agent import TextAgentManager
 
 
 DESKTOP_VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
@@ -196,11 +197,12 @@ def copy_text_to_clipboard(text: str) -> None:
 
 
 class BridgeServerThread(threading.Thread):
-    def __init__(self, host: str, port: int, token: str) -> None:
+    def __init__(self, host: str, port: int, token: str, text_agent: TextAgentManager | None = None) -> None:
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.token = token
+        self.text_agent = text_agent
         self.loop: asyncio.AbstractEventLoop | None = None
         self.runner: web.AppRunner | None = None
         self.ready = threading.Event()
@@ -221,7 +223,7 @@ class BridgeServerThread(threading.Thread):
             self.loop.close()
 
     async def _start(self) -> None:
-        app = create_app(self.token)
+        app = create_app(self.token, text_agent=self.text_agent)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)
@@ -234,6 +236,50 @@ class BridgeServerThread(threading.Thread):
     def stop(self) -> None:
         if self.loop is not None:
             self.loop.call_soon_threadsafe(self.loop.stop)
+
+
+class TextAgentHotkeyThread(threading.Thread):
+    HOTKEY_ID = 0x4641
+    MOD_ALT = 0x0001
+    MOD_CONTROL = 0x0002
+    VK_SPACE = 0x20
+    WM_HOTKEY = 0x0312
+    WM_QUIT = 0x0012
+
+    def __init__(self, callback) -> None:
+        super().__init__(daemon=True)
+        self.callback = callback
+        self.thread_id: int | None = None
+        self.ready = threading.Event()
+        self.error: str | None = None
+        self.stop_event = threading.Event()
+
+    def run(self) -> None:
+        if sys.platform != "win32":
+            self.error = "Global hotkeys are only supported on Windows."
+            self.ready.set()
+            return
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.thread_id = kernel32.GetCurrentThreadId()
+        if not user32.RegisterHotKey(None, self.HOTKEY_ID, self.MOD_CONTROL | self.MOD_ALT, self.VK_SPACE):
+            self.error = f"RegisterHotKey failed: {ctypes.get_last_error()}"
+            self.ready.set()
+            return
+        self.ready.set()
+        msg = wintypes.MSG()
+        try:
+            while not self.stop_event.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                if msg.message == self.WM_HOTKEY and msg.wParam == self.HOTKEY_ID:
+                    self.callback()
+        finally:
+            user32.UnregisterHotKey(None, self.HOTKEY_ID)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread_id is not None:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.PostThreadMessageW(self.thread_id, self.WM_QUIT, 0, 0)
 
 
 class DesktopVoiceThread(threading.Thread):
@@ -709,9 +755,18 @@ class DesktopApi:
         self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
         self.desktop_voice_thread: DesktopVoiceThread | None = None
+        self.text_agent = TextAgentManager(
+            copy_callback=copy_text_to_clipboard,
+            insert_callback=type_text,
+            history_path=Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "FlowBridge" / "text_agent_sessions.jsonl",
+            trigger_chars=80,
+        )
+        self.text_agent_style = "meeting_notes"
+        self.text_agent_hotkey_thread: TextAgentHotkeyThread | None = None
         self.desktop_voice_config = normalize_desktop_voice_config(None)
         self.desktop_voice_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
         self.window: webview.Window | None = None
+        self.agent_window: webview.Window | None = None
         self.maximized = False
 
     def _url(self) -> str:
@@ -745,6 +800,16 @@ class DesktopApi:
     def _result(self, message: str = "") -> dict:
         return {"state": self.get_state(), "message": message}
 
+    def get_agent_float_state(self) -> dict:
+        return {
+            "textAgent": self.text_agent.get_float_state(),
+            "textAgentHotkey": {
+                "registered": self.text_agent_hotkey_thread is not None and self.text_agent_hotkey_thread.error is None,
+                "error": self.text_agent_hotkey_thread.error if self.text_agent_hotkey_thread is not None else None,
+                "label": "Ctrl+Alt+Space",
+            },
+        }
+
     def get_state(self) -> dict:
         with self.lock:
             running = self._running()
@@ -774,6 +839,13 @@ class DesktopApi:
                 "status": "SERVICE STARTED" if running else "SERVICE STOPPED",
                 "desktopVoice": voice_snapshot,
                 "desktopVoiceSettings": self._desktop_voice_settings_snapshot(),
+                "textAgent": self.text_agent.get_state(),
+                "textAgentStyle": self.text_agent_style,
+                "textAgentHotkey": {
+                    "registered": self.text_agent_hotkey_thread is not None and self.text_agent_hotkey_thread.error is None,
+                    "error": self.text_agent_hotkey_thread.error if self.text_agent_hotkey_thread is not None else None,
+                    "label": "Ctrl+Alt+Space",
+                },
             }
 
     def set_port(self, value: str) -> dict:
@@ -809,7 +881,7 @@ class DesktopApi:
             except ValueError:
                 return self._result("Port must be between 1 and 65535.")
 
-            thread = BridgeServerThread("0.0.0.0", port, self.token)
+            thread = BridgeServerThread("0.0.0.0", port, self.token, self.text_agent)
             self.server_thread = thread
             thread.start()
 
@@ -841,6 +913,83 @@ class DesktopApi:
     def open_url(self) -> dict:
         webbrowser.open(self.get_state()["url"])
         return self._result("Opened the voice input page.")
+
+    def set_text_agent_mode(self, value: dict | bool) -> dict:
+        enabled = bool(value.get("enabled")) if isinstance(value, dict) else bool(value)
+        self.text_agent.set_mode(enabled)
+        return self._result("Text agent mode enabled." if enabled else "Text agent mode disabled.")
+
+    def set_text_agent_style(self, value: str) -> dict:
+        self.text_agent_style = str(value or "meeting_notes")
+        return self._result("Text agent style updated.")
+
+    def start_text_agent_recording(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        style = str(payload.get("style", self.text_agent_style))
+        self.text_agent_style = style
+        session = self.text_agent.start(style)
+        return self._result(f"Text agent recording started: {session.id}")
+
+    def stop_text_agent_recording(self) -> dict:
+        try:
+            session = self.text_agent.stop(copy=True, insert=False)
+            return self._result(f"Text agent copied {len(session.final_text or session.draft_text)} chars to clipboard.")
+        except Exception as exc:
+            return self._result(f"Text agent stop failed: {exc}")
+
+    def pause_text_agent_recording(self) -> dict:
+        try:
+            self.text_agent.pause()
+            return self._result("Text agent paused. Mobile text will use normal injection.")
+        except Exception as exc:
+            return self._result(f"Text agent pause failed: {exc}")
+
+    def resume_text_agent_recording(self) -> dict:
+        try:
+            self.text_agent.resume()
+            return self._result("Text agent recording resumed.")
+        except Exception as exc:
+            return self._result(f"Text agent resume failed: {exc}")
+
+    def toggle_text_agent_recording(self) -> dict:
+        try:
+            session = self.text_agent.toggle_recording(self.text_agent_style)
+            if session.status == "recording":
+                return self._result("Text agent recording started.")
+            return self._result("Text agent final text copied to clipboard.")
+        except Exception as exc:
+            return self._result(f"Text agent hotkey failed: {exc}")
+
+    def rerun_text_agent(self, value: dict | None = None) -> dict:
+        payload = value if isinstance(value, dict) else {}
+        style = payload.get("style")
+        if isinstance(style, str) and style:
+            self.text_agent_style = style
+        try:
+            self.text_agent.rerun(style if isinstance(style, str) else None)
+            return self._result("Text agent result refreshed.")
+        except Exception as exc:
+            return self._result(f"Text agent refresh failed: {exc}")
+
+    def copy_text_agent_result(self) -> dict:
+        try:
+            self.text_agent.copy_result()
+            return self._result("Text agent result copied.")
+        except Exception as exc:
+            return self._result(f"Copy failed: {exc}")
+
+    def insert_text_agent_result(self) -> dict:
+        try:
+            self.text_agent.insert_result()
+            return self._result("Text agent result inserted.")
+        except Exception as exc:
+            return self._result(f"Insert failed: {exc}")
+
+    def show_main_window(self) -> dict:
+        if self.window is not None:
+            self.window.show()
+            self.window.restore()
+        return self._result()
 
     def start_desktop_voice(self) -> dict:
         with self.lock:
@@ -936,8 +1085,26 @@ class DesktopApi:
         return state
 
     def shutdown(self) -> None:
+        if self.text_agent_hotkey_thread is not None:
+            self.text_agent_hotkey_thread.stop()
+            self.text_agent_hotkey_thread.join(timeout=2)
+            self.text_agent_hotkey_thread = None
         self.stop_desktop_voice()
         self.stop_service()
+
+    def start_hotkeys(self) -> None:
+        if self.text_agent_hotkey_thread is not None:
+            return
+
+        def callback() -> None:
+            self.toggle_text_agent_recording()
+
+        thread = TextAgentHotkeyThread(callback)
+        self.text_agent_hotkey_thread = thread
+        thread.start()
+        thread.ready.wait(timeout=2)
+        if thread.error:
+            log(f"[text-agent] hotkey unavailable: {thread.error}")
 
 
 def apply_window_chrome(window: webview.Window) -> None:
@@ -972,9 +1139,10 @@ def main() -> None:
         raise SystemExit("This program injects text with Windows SendInput and must run on Windows.")
 
     api = DesktopApi()
+    page_url = ui_url()
     window = webview.create_window(
         "Flow Voice",
-        ui_url(),
+        page_url,
         js_api=api,
         width=1240,
         height=860,
@@ -986,8 +1154,42 @@ def main() -> None:
         background_color="#050807",
     )
     api.window = window
-    window.events.loaded += lambda: apply_window_chrome(window)
+
+    def create_agent_window() -> None:
+        if api.agent_window is not None:
+            return
+        try:
+            log("[desktop] creating agent window")
+            agent_window = webview.create_window(
+                "FlowVoice Agent",
+                f"{page_url}#agent-float",
+                js_api=api,
+                width=380,
+                height=220,
+                frameless=True,
+                easy_drag=False,
+                draggable=True,
+                resizable=False,
+                on_top=True,
+                shadow=True,
+                background_color="#050807",
+            )
+            api.agent_window = agent_window
+            if agent_window is not None:
+                agent_window.events.loaded += lambda: apply_window_chrome(agent_window)
+            log("[desktop] agent window created")
+        except Exception as exc:
+            log(f"[desktop] agent window creation failed: {exc}")
+
+    def on_main_window_loaded() -> None:
+        log("[desktop] main window loaded")
+        apply_window_chrome(window)
+        threading.Timer(0.8, create_agent_window).start()
+
+    window.events.loaded += on_main_window_loaded
     window.events.closing += lambda: api.shutdown()
+    api.start_hotkeys()
+    log("[desktop] starting webview")
     webview.start(gui="edgechromium", debug=False)
 
 

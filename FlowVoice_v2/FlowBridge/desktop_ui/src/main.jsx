@@ -28,6 +28,23 @@ const fallbackState = {
     voiceCommands: true,
     hotwords: "",
   },
+  textAgent: {
+    modeEnabled: false,
+    recording: false,
+    paused: false,
+    provider: "preview",
+    configured: false,
+    triggerChars: 80,
+    activeSession: null,
+    recentSessions: [],
+    polishing: false,
+  },
+  textAgentStyle: "meeting_notes",
+  textAgentHotkey: {
+    registered: false,
+    error: null,
+    label: "Ctrl+Alt+Space",
+  },
 };
 
 function desktopApi() {
@@ -35,9 +52,11 @@ function desktopApi() {
 }
 
 function FlowVoiceDesktopConsole() {
+  const isAgentFloat = window.location.hash === "#agent-float";
   const [state, setState] = React.useState(fallbackState);
   const [message, setMessage] = React.useState("");
   const [desktopVoiceSettingsOpen, setDesktopVoiceSettingsOpen] = React.useState(false);
+  const refreshInFlight = React.useRef(false);
 
   const ip = state.ip;
   const port = state.port;
@@ -45,26 +64,58 @@ function FlowVoiceDesktopConsole() {
   const url = state.url || `http://${ip}:${port}/?token=${token}&v=voice`;
   const desktopVoice = state.desktopVoice || fallbackState.desktopVoice;
   const desktopVoiceSettings = state.desktopVoiceSettings || fallbackState.desktopVoiceSettings;
+  const textAgent = state.textAgent || fallbackState.textAgent;
+  const textAgentSession = textAgent.activeSession || {
+    rawText: textAgent.rawText || "",
+    status: textAgent.status || "idle",
+  };
+  const textAgentStyle = state.textAgentStyle || fallbackState.textAgentStyle;
+  const textAgentHotkey = state.textAgentHotkey || fallbackState.textAgentHotkey;
 
   const refresh = React.useCallback(async () => {
     const api = desktopApi();
-    if (!api) {
+    if (!api || refreshInFlight.current) {
       return;
     }
-    const next = await api.get_state();
-    setState(next);
-  }, []);
+    refreshInFlight.current = true;
+    try {
+      const next = isAgentFloat ? await api.get_agent_float_state() : await api.get_state();
+      setState((previous) => ({ ...previous, ...next }));
+    } finally {
+      refreshInFlight.current = false;
+    }
+  }, [isAgentFloat]);
 
   React.useEffect(() => {
-    const timer = window.setInterval(refresh, 600);
-    const ready = () => refresh();
+    let cancelled = false;
+    let timer = null;
+    let started = false;
+    const interval = isAgentFloat ? 500 : 1200;
+    const poll = async () => {
+      await refresh();
+      if (!cancelled) {
+        timer = window.setTimeout(poll, interval);
+      }
+    };
+    const ready = () => {
+      if (started) {
+        return;
+      }
+      started = true;
+      poll();
+    };
     window.addEventListener("pywebviewready", ready);
-    refresh();
+    if (desktopApi()) {
+      ready();
+    }
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
       window.removeEventListener("pywebviewready", ready);
     };
-  }, [refresh]);
+  }, [isAgentFloat, refresh]);
 
   async function callApi(action, payload) {
     const api = desktopApi();
@@ -89,6 +140,25 @@ function FlowVoiceDesktopConsole() {
     });
   }
 
+  function updateTextAgentStyle(style) {
+    callApi("set_text_agent_style", style);
+  }
+
+  if (isAgentFloat) {
+    return (
+      <AgentFloat
+        textAgent={textAgent}
+        session={textAgentSession}
+        hotkey={textAgentHotkey}
+        onOpen={() => callApi("show_main_window")}
+        onToggle={() => callApi("toggle_text_agent_recording")}
+        onStop={() => callApi("stop_text_agent_recording")}
+        onPause={() => callApi("pause_text_agent_recording")}
+        onResume={() => callApi("resume_text_agent_recording")}
+      />
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#050807] text-[#DDE7DF]">
       <div className="pointer-events-none fixed inset-0">
@@ -105,7 +175,7 @@ function FlowVoiceDesktopConsole() {
           onClose={() => callApi("close_window")}
         />
 
-      <main className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-8 py-5">
+      <main className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col overflow-y-auto px-8 py-5">
         <header className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="grid h-11 w-11 place-items-center rounded-xl border border-[#28F58D]/25 bg-[#0B1D14] font-mono text-sm font-black text-[#80FFBA] shadow-[0_0_32px_rgba(40,245,141,0.15)]">
@@ -234,6 +304,20 @@ function FlowVoiceDesktopConsole() {
               )}
             </div>
 
+            <TextAgentPanel
+              textAgent={textAgent}
+              session={textAgentSession}
+              style={textAgentStyle}
+              hotkey={textAgentHotkey}
+              onModeChange={(enabled) => callApi("set_text_agent_mode", { enabled })}
+              onStyleChange={updateTextAgentStyle}
+              onStart={() => callApi("start_text_agent_recording", { style: textAgentStyle })}
+              onStop={() => callApi("stop_text_agent_recording")}
+              onPause={() => callApi("pause_text_agent_recording")}
+              onResume={() => callApi("resume_text_agent_recording")}
+              onCopy={() => callApi("copy_text_agent_result")}
+            />
+
             <div className="mt-4 rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
               To control elevated windows, run the client with administrator privileges.
             </div>
@@ -281,6 +365,256 @@ function FlowVoiceDesktopConsole() {
           onClose={() => setDesktopVoiceSettingsOpen(false)}
         />
       )}
+      </div>
+    </div>
+  );
+}
+
+const textAgentStyles = [
+  ["meeting_notes", "Meeting Notes"],
+  ["formal_paragraph", "Formal Paragraph"],
+  ["summary_bullets", "Summary Bullets"],
+  ["todo_items", "Todo Items"],
+  ["faithful_cleanup", "Faithful Cleanup"],
+];
+
+function AgentFloat({ textAgent, session, hotkey, onOpen, onToggle, onStop, onPause, onResume }) {
+  const recording = Boolean(textAgent.recording);
+  const paused = Boolean(textAgent.paused);
+  const finalizing = session.status === "finalizing" || textAgent.polishing;
+  const completed = Boolean(textAgent.completed) || (session.status === "done" && Boolean(session.finalText));
+  const preview = session.rawText || (completed ? "本次会议纪要已保存至剪贴板" : "等待手机端输入原始文本");
+  const status = finalizing ? "整理中" : recording ? "记录中" : paused ? "已暂停" : completed ? "已完成" : "待机";
+
+  return (
+    <div className="h-screen overflow-hidden bg-transparent px-3 py-2 text-[#DDE7DF]">
+      <div className="pywebview-drag-region flex h-full flex-col items-center justify-center">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="relative min-h-24 w-full rounded-[30px] border border-[#1E3B2B] bg-[#FAFFF9] px-5 py-4 text-left text-[#06100B] shadow-[0_20px_45px_rgba(0,0,0,0.22)] transition hover:bg-white"
+        >
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#2A6F45]">{status}</span>
+            <span className="font-mono text-[10px] text-[#789484]">{hotkey.label}</span>
+          </div>
+          <div className="line-clamp-3 text-sm font-semibold leading-5">{preview}</div>
+          <span className="absolute bottom-[-13px] left-1/2 h-7 w-7 -translate-x-1/2 rotate-45 border-b border-r border-[#1E3B2B] bg-[#FAFFF9]" />
+        </button>
+        <div className="mt-5 flex items-center gap-3 rounded-[22px] border border-[#1E3B2B] bg-[#06100B]/96 px-4 py-3 shadow-[0_16px_36px_rgba(0,0,0,0.36)]">
+          {recording || paused ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="rounded-full border border-[#28F58D]/35 bg-[#10291B] px-5 py-2 text-xs font-black uppercase tracking-[0.12em] text-[#B9FFD4] transition hover:bg-[#163A26]"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="rounded-full border border-[#28F58D]/35 bg-[#10291B] px-5 py-2 text-xs font-black uppercase tracking-[0.12em] text-[#B9FFD4] transition hover:bg-[#163A26]"
+            >
+              Start
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={paused ? onResume : onPause}
+            disabled={!recording && !paused}
+            className="rounded-full border border-[#285C3B] bg-[#0C1E14] px-5 py-2 text-xs font-black uppercase tracking-[0.12em] text-[#A8F7C4] transition hover:bg-[#12301F] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {paused ? "Resume" : "Pause"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TextAgentPanel({ textAgent, session, style, hotkey, onModeChange, onStyleChange, onStart, onStop, onPause, onResume, onCopy }) {
+  const recording = Boolean(textAgent.recording);
+  const paused = Boolean(textAgent.paused);
+  const finalText = session.finalText || "";
+  const segments = Array.isArray(session.segmentSummaries) ? session.segmentSummaries : [];
+  const finalizing = session.status === "finalizing" || textAgent.polishing;
+
+  return (
+    <div className="mt-4 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div>
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Text Agent</div>
+          <div className="flex items-center gap-2 text-sm text-[#C8E7D2]">
+            <span className={`h-2 w-2 rounded-full ${recording ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : paused ? "bg-[#D7C47A]" : textAgent.polishing ? "bg-[#D7C47A]" : session.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
+            <span>{recording ? "Recording mobile text" : paused ? "Paused: normal injection" : textAgent.polishing ? "Polishing" : session.status || "Idle"}</span>
+          </div>
+          <div className="mt-1 text-xs text-[#6F8878]">
+            Provider {textAgent.provider} · trigger every {textAgent.triggerChars || 80} chars · {hotkey.label}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onModeChange(!textAgent.modeEnabled)}
+          className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${textAgent.modeEnabled ? "border-[#28F58D]/35 bg-[#0D2A19] text-[#8BFFBA]" : "border-[#285C3B] bg-[#0C1E14] text-[#7EA88E]"}`}
+        >
+          {textAgent.modeEnabled ? "Mode On" : "Mode Off"}
+        </button>
+      </div>
+
+      <div className="mb-3 grid gap-3 lg:grid-cols-[1fr_auto]">
+        <select
+          value={style}
+          onChange={(event) => onStyleChange(event.target.value)}
+          className="rounded-xl border border-[#21462F] bg-[#030805] px-3 py-2 text-sm text-[#B9FFD4] outline-none transition focus:border-[#2E7447]"
+        >
+          {textAgentStyles.map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+        {recording || paused ? (
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={onStop} className="rounded-xl bg-[#28F58D] px-4 py-2 text-sm font-bold text-[#041008] shadow-[0_0_24px_rgba(40,245,141,0.18)] transition hover:bg-[#67FFAD]">
+              Stop + Copy
+            </button>
+            <button onClick={paused ? onResume : onPause} className="rounded-xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-2 text-sm font-semibold text-[#D7C47A] transition hover:bg-[#211C0B]">
+              {paused ? "Resume" : "Pause"}
+            </button>
+          </div>
+        ) : (
+          <button onClick={onStart} className="rounded-xl border border-[#2E7447] bg-[#10291B] px-4 py-2 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+            Start Recording
+          </button>
+        )}
+      </div>
+
+      <MeetingMinutesFlow
+        segments={segments}
+        polishing={finalizing}
+        completed={session.status === "done" && Boolean(finalText)}
+      />
+      {session.error && <TextAgentBlock title="Error" text={session.error} danger />}
+
+      {finalText && (
+        <div className="mt-3 flex justify-end">
+          <button onClick={onCopy} className="rounded-xl border border-[#2E7447] bg-[#10291B] px-5 py-2 text-xs font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+            Copy Final Notes
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MeetingMinutesFlow({ segments, polishing, completed }) {
+  return (
+    <section className="mt-4 min-h-[420px] rounded-2xl border border-[#193324] bg-[#030805]/72 p-5">
+      <div className="mb-5 flex items-center justify-between gap-4 border-b border-[#193324] pb-4">
+        <div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#5B7062]">Meeting Minutes Flow</div>
+          <h3 className="mt-1 text-lg font-semibold text-[#F2FFF7]">实时会议纪要</h3>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-[#6F8878]">
+          <span>{segments.length} 段</span>
+          {polishing && <span className="rounded-full border border-[#6A5A20] bg-[#211C0B] px-3 py-1 text-[#D7C47A]">AI 整理中</span>}
+          {completed && <span className="rounded-full border border-[#2E7447] bg-[#10291B] px-3 py-1 text-[#8BFFBA]">已完成</span>}
+        </div>
+      </div>
+
+      {segments.length === 0 ? (
+        <div className="grid min-h-[300px] place-items-center text-center">
+          <div>
+            <div className="mx-auto mb-3 h-2 w-2 rounded-full bg-[#28F58D] shadow-[0_0_18px_rgba(40,245,141,0.65)]" />
+            <div className="text-sm font-semibold text-[#BFDAC8]">
+              {polishing ? "AI 正在生成第一段纪要" : "每新增约 80 字后生成一段会议纪要"}
+            </div>
+            <div className="mt-1 text-xs text-[#587060]">原始文本仅显示在浮标中</div>
+          </div>
+        </div>
+      ) : (
+        <div className="max-h-[560px] overflow-y-auto pr-2">
+          {segments.map((segment, index) => (
+            <MeetingMinuteItem key={segment.id || index} segment={segment} isLast={index === segments.length - 1} />
+          ))}
+          {polishing && (
+            <div className="ml-[88px] mt-2 flex items-center gap-2 text-xs text-[#D7C47A]">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-[#D7C47A]" />
+              正在整理新的会议片段
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MeetingMinuteItem({ segment, isLast }) {
+  const time = formatMeetingTime(segment.createdAt);
+  const points = Array.isArray(segment.keyPoints) ? segment.keyPoints : [];
+  const actions = Array.isArray(segment.actionItems) ? segment.actionItems : [];
+
+  return (
+    <article className="grid grid-cols-[64px_24px_minmax(0,1fr)] gap-3">
+      <div className="pt-1 text-right font-mono text-[11px] text-[#5F7767]">{time}</div>
+      <div className="relative flex justify-center">
+        <span className="relative z-10 mt-1.5 h-3 w-3 rounded-full border-2 border-[#06100B] bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.5)]" />
+        {!isLast && <span className="absolute bottom-0 top-4 w-px bg-[#21462F]" />}
+      </div>
+      <div className="mb-6 min-w-0 rounded-2xl border border-[#193324] bg-[#06100B]/86 p-4">
+        <h4 className="text-sm font-semibold text-[#E8FFF0]">{segment.title || `会议片段 ${segment.index || ""}`}</h4>
+        {segment.summary && <p className="mt-2 text-sm leading-6 text-[#A9C7B3]">{segment.summary}</p>}
+        {points.length > 0 && (
+          <ul className="mt-3 space-y-2">
+            {points.map((point, index) => (
+              <li key={index} className="flex gap-2 text-xs leading-5 text-[#91B69E]">
+                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[#28F58D]" />
+                <span>{point}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {actions.length > 0 && (
+          <div className="mt-4 border-t border-[#193324] pt-3">
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[#6F8878]">Action Items</div>
+            <div className="space-y-2">
+              {actions.map((action, index) => (
+                <label key={index} className="flex items-start gap-2 text-xs leading-5 text-[#B5D2BE]">
+                  <input type="checkbox" className="mt-1 accent-[#28F58D]" />
+                  <span>
+                    {action.text}
+                    {(action.owner || action.deadline) && (
+                      <span className="ml-2 text-[#667D6D]">
+                        {[action.owner, action.deadline].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function formatMeetingTime(value) {
+  if (!value) {
+    return "--:--";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--:--";
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function TextAgentBlock({ title, text, muted = false, danger = false }) {
+  return (
+    <div className={`mt-3 rounded-2xl border px-4 py-3 ${danger ? "border-[#663A16] bg-[#1B0A0A]/50" : "border-[#193324] bg-[#050C08]/70"}`}>
+      <div className={`mb-1 text-xs font-semibold ${danger ? "text-[#FFD9D9]" : "text-[#DDFCE7]"}`}>{title}</div>
+      <div className={`max-h-28 overflow-auto whitespace-pre-wrap text-xs leading-5 ${danger ? "text-[#FFD9D9]" : muted ? "text-[#6F8878]" : "text-[#A8F7C4]"}`}>
+        {text}
       </div>
     </div>
   );
