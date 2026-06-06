@@ -1,3 +1,4 @@
+from server import BridgeSettings, render_text
 from text_agent.manager import TextAgentManager
 from text_agent.providers.preview import PreviewTextPolishProvider
 
@@ -28,7 +29,7 @@ class CapturingProvider:
 
 def test_text_agent_polishes_segments_with_context():
     provider = CapturingProvider()
-    manager = TextAgentManager(provider=provider, trigger_chars=20)
+    manager = TextAgentManager(provider=provider, trigger_chars=20, active_tail_chars=0)
 
     manager.observe_mobile_text("baseline")
     manager.start("meeting_notes")
@@ -94,3 +95,57 @@ def test_text_agent_pause_preserves_temp_but_ignores_mobile_text_until_resume():
     manager.update_text("记录中的文本暂停期间普通注入文本恢复后的文本")
     session = manager.get_state()["activeSession"]
     assert session["rawText"] == "记录中的文本恢复后的文本"
+
+
+def test_text_agent_keeps_fifteen_character_active_tail_until_stop():
+    provider = CapturingProvider()
+    manager = TextAgentManager(provider=provider, trigger_chars=20, active_tail_chars=15)
+    source = "abcdefghijklmnopqrstuvwxyz123456789"
+
+    manager.start("meeting_notes")
+    manager.update_text(source)
+    if manager.polish_thread is not None:
+        manager.polish_thread.join(timeout=2)
+
+    assert provider.segment_calls[0][2] == source[:-15]
+    assert manager.get_state()["activeSession"]["rawText"] == source
+
+    manager.stop(copy=False, insert=False)
+    assert provider.segment_calls[-1][2] == source[-15:]
+    assert provider.global_calls[-1][0] == source
+
+
+def test_text_agent_replaces_revised_mobile_tail_and_invalidates_affected_segments():
+    provider = CapturingProvider()
+    manager = TextAgentManager(provider=provider, trigger_chars=20, active_tail_chars=0)
+    original = "A" * 20 + "B" * 20
+    revised = "A" * 10 + "C" * 30
+
+    manager.start("meeting_notes")
+    manager.update_text(original)
+    if manager.polish_thread is not None:
+        manager.polish_thread.join(timeout=2)
+
+    manager.update_text(revised)
+    if manager.polish_thread is not None:
+        manager.polish_thread.join(timeout=2)
+
+    session = manager.get_state()["activeSession"]
+    assert session["rawText"] == revised
+    assert session["segmentSummaries"][0]["summary"] == f"segment:{revised}"
+
+
+def test_text_agent_uses_phone_punctuation_filter_for_processed_snapshot():
+    manager = TextAgentManager(provider=PreviewTextPolishProvider(), trigger_chars=20)
+    source = "你好，世界！这是测试。"
+    settings = BridgeSettings(filter_punctuation=True)
+
+    manager.start("meeting_notes")
+    active_source = manager.capture_active_source(source)
+    manager.update_text(
+        source,
+        render_text(active_source, settings),
+        active_source_text=active_source,
+    )
+
+    assert manager.get_state()["activeSession"]["rawText"] == "你好世界这是测试"

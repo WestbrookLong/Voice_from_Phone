@@ -26,6 +26,7 @@ class TextAgentManager:
         provider: TextPolishProvider | None = None,
         history_path: Path | None = None,
         trigger_chars: int = 80,
+        active_tail_chars: int = 15,
         max_sessions: int = 20,
     ) -> None:
         self.lock = threading.RLock()
@@ -34,6 +35,7 @@ class TextAgentManager:
         self.provider = provider or self._default_provider()
         self.history_path = history_path
         self.trigger_chars = max(20, trigger_chars)
+        self.active_tail_chars = max(0, active_tail_chars)
         self.max_sessions = max_sessions
         self.mode_enabled = False
         self.recording = False
@@ -83,7 +85,9 @@ class TextAgentManager:
             self.recording = True
             self.paused = False
             session.capture_baseline_text = self.last_mobile_text
+            session.capture_prefix_text = ""
             session.last_captured_source_text = self.last_mobile_text
+            session.captured_source_text = ""
             self._trim_sessions()
             return session
 
@@ -104,7 +108,9 @@ class TextAgentManager:
             self.paused = False
             session.status = "recording"
             session.capture_baseline_text = self.last_mobile_text
+            session.capture_prefix_text = session.raw_text
             session.last_captured_source_text = self.last_mobile_text
+            session.captured_source_text = ""
             session.touch()
             return session
 
@@ -122,7 +128,7 @@ class TextAgentManager:
             session = self.sessions[session.id]
             has_unpolished_tail = len(session.raw_text) > session.last_segment_raw_len
         if has_unpolished_tail:
-            self._polish_session(session.id, incremental=True)
+            self._polish_session(session.id, incremental=True, include_active_tail=True)
         session = self._polish_session(session.id, incremental=False)
         text = session.final_text or session.draft_text or session.raw_text
         if copy and self.copy_callback is not None and text:
@@ -152,20 +158,44 @@ class TextAgentManager:
             return self.stop(copy=True, insert=False)
         return self.start(style)
 
-    def update_text(self, text: str) -> TextAgentSession | None:
+    def capture_active_source(self, source_text: str) -> str:
         with self.lock:
-            self.last_mobile_text = text
+            session = self._get_or_active()
+            baseline = session.capture_baseline_text
+            if source_text.startswith(baseline):
+                return source_text[len(baseline) :]
+
+            previous_source = session.last_captured_source_text
+            previous_active = session.captured_source_text
+            prefix_len = self._common_prefix_len(previous_source, source_text)
+            active_start = max(0, len(previous_source) - len(previous_active))
+            preserved_active_len = max(0, min(len(previous_active), prefix_len - active_start))
+            return f"{previous_active[:preserved_active_len]}{source_text[prefix_len:]}"
+
+    def update_text(
+        self,
+        source_text: str,
+        processed_text: str | None = None,
+        *,
+        active_source_text: str | None = None,
+    ) -> TextAgentSession | None:
+        with self.lock:
+            self.last_mobile_text = source_text
             if not self.mode_enabled or not self.recording or self.paused:
                 return None
             session = self._get_or_active()
-            increment = self._extract_increment(session, text)
-            if increment:
-                session.raw_text = f"{session.raw_text}{increment}"
-            session.last_captured_source_text = text
+            if active_source_text is None:
+                active_source_text = self.capture_active_source(source_text)
+            captured_text = active_source_text if processed_text is None else processed_text
+            next_text = f"{session.capture_prefix_text}{captured_text}"
+            self._replace_session_text_locked(session, next_text)
+            session.captured_source_text = active_source_text
+            session.last_captured_source_text = source_text
             session.status = "recording"
             session.error = None
             session.touch()
-            should_polish = len(session.raw_text) - session.last_segment_raw_len >= self.trigger_chars
+            stable_length = max(0, len(session.raw_text) - self.active_tail_chars)
+            should_polish = stable_length - session.last_segment_raw_len >= self.trigger_chars
             if should_polish:
                 self._schedule_polish_locked(session.id)
             return session
@@ -223,6 +253,7 @@ class TextAgentManager:
                 "provider": self.provider_name(),
                 "configured": self.provider_name() != "preview",
                 "triggerChars": self.trigger_chars,
+                "activeTailChars": self.active_tail_chars,
                 "activeSessionId": self.active_session_id,
                 "activeSession": active.snapshot() if active else None,
                 "recentSessions": recent,
@@ -279,19 +310,30 @@ class TextAgentManager:
                 session is not None
                 and self.recording
                 and not self.paused
-                and len(session.raw_text) - session.last_segment_raw_len >= self.trigger_chars
+                and max(0, len(session.raw_text) - self.active_tail_chars) - session.last_segment_raw_len
+                >= self.trigger_chars
             ):
                 self._schedule_polish_locked(session_id)
 
-    def _polish_session(self, session_id: str, *, incremental: bool) -> TextAgentSession:
+    def _polish_session(
+        self,
+        session_id: str,
+        *,
+        incremental: bool,
+        include_active_tail: bool = False,
+    ) -> TextAgentSession:
         with self.lock:
             session = self.sessions[session_id]
             raw_text = session.raw_text
             style = session.style
             previous_summaries = list(session.segment_summaries)
             previous_raw_text = raw_text[: session.last_segment_raw_len]
-            new_raw_text = raw_text[session.last_segment_raw_len :]
+            segment_end = len(raw_text)
+            if incremental and not include_active_tail:
+                segment_end = max(session.last_segment_raw_len, len(raw_text) - self.active_tail_chars)
+            new_raw_text = raw_text[session.last_segment_raw_len : segment_end]
             segment_start = session.last_segment_raw_len
+            revision = session.revision
             if not raw_text.strip():
                 session.status = "recording" if incremental else "done"
                 session.touch()
@@ -319,6 +361,10 @@ class TextAgentManager:
 
         with self.lock:
             session = self.sessions[session_id]
+            if incremental and session.revision != revision:
+                session.status = "recording" if self.recording else "paused" if self.paused else "idle"
+                session.touch()
+                return session
             if incremental:
                 if result:
                     segment = self._normalize_segment(
@@ -332,7 +378,7 @@ class TextAgentManager:
                     item.get("summary", "") for item in session.segment_summaries if item.get("summary")
                 )
                 session.status = "recording" if self.recording else "paused" if self.paused else "idle"
-                session.last_segment_raw_len = max(session.last_segment_raw_len, segment_start + len(new_raw_text))
+                session.last_segment_raw_len = max(session.last_segment_raw_len, segment_end)
             else:
                 session.final_text = result
                 session.draft_text = result
@@ -381,21 +427,37 @@ class TextAgentManager:
             "actionItems": normalized_actions,
         }
 
-    def _extract_increment(self, session: TextAgentSession, current_text: str) -> str:
-        previous_source = session.last_captured_source_text or session.capture_baseline_text
-        if current_text.startswith(previous_source):
-            return current_text[len(previous_source) :]
-        baseline = session.capture_baseline_text
-        if baseline and current_text.startswith(baseline):
-            composed = current_text[len(baseline) :]
-            if composed.startswith(session.raw_text):
-                return composed[len(session.raw_text) :]
-            if len(composed) > len(session.raw_text):
-                return composed[len(session.raw_text) :]
-            return ""
-        if not session.raw_text:
-            return current_text
-        return ""
+    def _replace_session_text_locked(self, session: TextAgentSession, next_text: str) -> None:
+        if next_text == session.raw_text:
+            return
+        prefix_len = self._common_prefix_len(session.raw_text, next_text)
+        if prefix_len < session.last_segment_raw_len:
+            first_affected = next(
+                (
+                    index
+                    for index, segment in enumerate(session.segment_summaries)
+                    if int(segment.get("endChar", 0)) > prefix_len
+                ),
+                len(session.segment_summaries),
+            )
+            if first_affected < len(session.segment_summaries):
+                rollback_at = int(session.segment_summaries[first_affected].get("startChar", 0))
+                session.segment_summaries = session.segment_summaries[:first_affected]
+                session.last_segment_raw_len = rollback_at
+                session.last_polished_raw_len = min(session.last_polished_raw_len, rollback_at)
+                session.draft_text = "\n\n".join(
+                    item.get("summary", "") for item in session.segment_summaries if item.get("summary")
+                )
+        session.raw_text = next_text
+        session.revision += 1
+
+    @staticmethod
+    def _common_prefix_len(left: str, right: str) -> int:
+        length = min(len(left), len(right))
+        index = 0
+        while index < length and left[index] == right[index]:
+            index += 1
+        return index
 
     def _clear_temp_after_stop(self, session_id: str) -> TextAgentSession:
         with self.lock:
@@ -404,7 +466,9 @@ class TextAgentManager:
             session.last_polished_raw_len = 0
             session.last_segment_raw_len = 0
             session.capture_baseline_text = self.last_mobile_text
+            session.capture_prefix_text = ""
             session.last_captured_source_text = self.last_mobile_text
+            session.captured_source_text = ""
             session.touch()
             return session
 

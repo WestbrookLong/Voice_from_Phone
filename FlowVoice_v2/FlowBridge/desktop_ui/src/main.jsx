@@ -385,47 +385,83 @@ function AgentFloat({ textAgent, session, hotkey, onOpen, onToggle, onStop, onPa
   const completed = Boolean(textAgent.completed) || (session.status === "done" && Boolean(session.finalText));
   const preview = session.rawText || (completed ? "本次会议纪要已保存至剪贴板" : "等待手机端输入原始文本");
   const status = finalizing ? "整理中" : recording ? "记录中" : paused ? "已暂停" : completed ? "已完成" : "待机";
+  const previewRef = React.useRef(null);
+  const autoFollowRef = React.useRef(true);
+
+  React.useEffect(() => {
+    const element = previewRef.current;
+    if (element && autoFollowRef.current) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [preview, status]);
+
+  function trackPreviewScroll() {
+    const element = previewRef.current;
+    if (!element) {
+      return;
+    }
+    autoFollowRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 10;
+  }
 
   return (
-    <div className="h-screen overflow-hidden bg-transparent px-3 py-2 text-[#DDE7DF]">
+    <div className="h-screen overflow-hidden bg-transparent px-2 py-1 text-[#DDE7DF]">
       <div className="pywebview-drag-region flex h-full flex-col items-center justify-center">
         <button
           type="button"
           onClick={onOpen}
-          className="relative min-h-24 w-full rounded-[30px] border border-[#1E3B2B] bg-[#FAFFF9] px-5 py-4 text-left text-[#06100B] shadow-[0_20px_45px_rgba(0,0,0,0.22)] transition hover:bg-white"
+          className="relative h-[104px] w-full rounded-[24px] border border-[#CFE0D4] bg-[#FAFFF9] px-4 py-3 text-left text-[#06100B] shadow-[0_16px_38px_rgba(0,0,0,0.2)] transition hover:bg-white"
         >
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#2A6F45]">{status}</span>
             <span className="font-mono text-[10px] text-[#789484]">{hotkey.label}</span>
           </div>
-          <div className="line-clamp-3 text-sm font-semibold leading-5">{preview}</div>
-          <span className="absolute bottom-[-13px] left-1/2 h-7 w-7 -translate-x-1/2 rotate-45 border-b border-r border-[#1E3B2B] bg-[#FAFFF9]" />
+          <div
+            ref={previewRef}
+            onScroll={trackPreviewScroll}
+            className="h-[58px] overflow-y-auto whitespace-pre-wrap pr-1 text-[13px] font-semibold leading-5 [scrollbar-width:thin]"
+          >
+            {preview}
+          </div>
+          <span className="absolute bottom-[-10px] left-1/2 h-5 w-5 -translate-x-1/2 rotate-45 border-b border-r border-[#CFE0D4] bg-[#FAFFF9]" />
         </button>
-        <div className="mt-5 flex items-center gap-3 rounded-[22px] border border-[#1E3B2B] bg-[#06100B]/96 px-4 py-3 shadow-[0_16px_36px_rgba(0,0,0,0.36)]">
+        <div className="mt-4 flex h-11 items-center gap-3">
           {recording || paused ? (
             <button
               type="button"
               onClick={onStop}
-              className="rounded-full border border-[#28F58D]/35 bg-[#10291B] px-5 py-2 text-xs font-black uppercase tracking-[0.12em] text-[#B9FFD4] transition hover:bg-[#163A26]"
+              title="停止并整理"
+              aria-label="停止并整理"
+              className="grid h-10 w-10 place-items-center rounded-full bg-[#E04747] shadow-[0_8px_20px_rgba(224,71,71,0.32)] transition hover:bg-[#F05A5A]"
             >
-              Stop
+              <span className="h-3 w-3 rounded-[2px] bg-white" />
             </button>
           ) : (
             <button
               type="button"
               onClick={onToggle}
-              className="rounded-full border border-[#28F58D]/35 bg-[#10291B] px-5 py-2 text-xs font-black uppercase tracking-[0.12em] text-[#B9FFD4] transition hover:bg-[#163A26]"
+              title="开始记录"
+              aria-label="开始记录"
+              className="grid h-10 w-10 place-items-center rounded-full bg-[#20C975] shadow-[0_8px_20px_rgba(32,201,117,0.32)] transition hover:bg-[#35DB89]"
             >
-              Start
+              <span className="h-3.5 w-3.5 rounded-full border-[3px] border-white" />
             </button>
           )}
           <button
             type="button"
             onClick={paused ? onResume : onPause}
             disabled={!recording && !paused}
-            className="rounded-full border border-[#285C3B] bg-[#0C1E14] px-5 py-2 text-xs font-black uppercase tracking-[0.12em] text-[#A8F7C4] transition hover:bg-[#12301F] disabled:cursor-not-allowed disabled:opacity-45"
+            title={paused ? "继续记录" : "暂停记录"}
+            aria-label={paused ? "继续记录" : "暂停记录"}
+            className="grid h-10 w-10 place-items-center rounded-full border border-[#C8D8CD] bg-white text-[#163824] shadow-[0_8px_20px_rgba(0,0,0,0.16)] transition hover:bg-[#EFF8F2] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {paused ? "Resume" : "Pause"}
+            {paused ? (
+              <span className="ml-0.5 h-0 w-0 border-y-[7px] border-l-[11px] border-y-transparent border-l-[#1E5B38]" />
+            ) : (
+              <span className="flex gap-1">
+                <span className="h-4 w-1 rounded-full bg-[#1E5B38]" />
+                <span className="h-4 w-1 rounded-full bg-[#1E5B38]" />
+              </span>
+            )}
           </button>
         </div>
       </div>

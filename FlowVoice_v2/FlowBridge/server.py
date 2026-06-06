@@ -558,9 +558,15 @@ def create_app(token: str, text_agent: Any = None) -> web.Application:
                     text = payload.get("text")
                     if not isinstance(text, str):
                         raise ValueError("sync_state.text must be a string")
+                    settings = BridgeSettings.from_payload(payload.get("settings"))
                     if text_agent is not None and text_agent.should_capture_text():
                         text_agent_route_active = True
-                        text_agent.update_text(text)
+                        active_source_text = text_agent.capture_active_source(text)
+                        text_agent.update_text(
+                            text,
+                            render_text(active_source_text, settings),
+                            active_source_text=active_source_text,
+                        )
                     else:
                         if text_agent_route_active:
                             baseline_text = text_agent.get_last_mobile_text() if text_agent is not None else text
@@ -570,7 +576,6 @@ def create_app(token: str, text_agent: Any = None) -> web.Application:
                             text_agent_route_active = False
                         if text_agent is not None:
                             text_agent.observe_mobile_text(text)
-                        settings = BridgeSettings.from_payload(payload.get("settings"))
                         session.sync_state(text, settings)
                 elif message_type == "sync_text":
                     text = payload.get("text")
@@ -579,7 +584,7 @@ def create_app(token: str, text_agent: Any = None) -> web.Application:
                     session.sync_processed_text(text)
                 elif message_type == "reset_session":
                     if text_agent is not None and text_agent.should_capture_text():
-                        text_agent.update_text("")
+                        text_agent.update_text("", "", active_source_text="")
                     else:
                         session.reset()
                 else:

@@ -27,7 +27,10 @@ class TextAgentSession:
     last_segment_raw_len: int = 0
     polish_count: int = 0
     capture_baseline_text: str = ""
+    capture_prefix_text: str = ""
     last_captured_source_text: str = ""
+    captured_source_text: str = ""
+    revision: int = 0
 
     def touch(self) -> None:
         self.updated_at = utc_now_iso()
@@ -51,4 +54,5 @@ class TextAgentSession:
             "lastPolishedRawLen": self.last_polished_raw_len,
             "lastSegmentRawLen": self.last_segment_raw_len,
             "polishCount": self.polish_count,
+            "revision": self.revision,
         }

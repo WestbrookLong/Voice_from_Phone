@@ -68,7 +68,7 @@ def build_global_prompt(raw_text: str, segment_summaries: list[dict], style: str
         f"{summaries}\n\n"
         "全量原始文本：\n"
         f"{raw_text.strip()}\n\n"
-        "请基于全量原文，并参考分段整理结果，输出最终可直接插入电脑光标处的文本。"
+        "请基于全量原文，并参考分段整理结果，输出可直接复制使用的最终文本。"
     )
     return [{"role": "system", "content": _system_prompt()}, {"role": "user", "content": user}]
 
