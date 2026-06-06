@@ -149,3 +149,60 @@ def test_text_agent_uses_phone_punctuation_filter_for_processed_snapshot():
     )
 
     assert manager.get_state()["activeSession"]["rawText"] == "你好世界这是测试"
+
+
+def test_partial_notes_are_copied_as_structured_markdown():
+    copied = []
+    manager = TextAgentManager(
+        provider=PreviewTextPolishProvider(),
+        copy_callback=copied.append,
+    )
+    manager.start("meeting_notes")
+    session = manager.sessions[manager.active_session_id]
+    session.segment_summaries = [
+        {
+            "title": "产品方向",
+            "summary": "确认先完成桌面端会议纪要能力。",
+            "keyPoints": ["保留十五字活动尾部", "手机端逻辑保持不变"],
+            "actionItems": [
+                {
+                    "text": "完成浮标透明化",
+                    "owner": "Westbrook",
+                    "deadline": "本周五",
+                }
+            ],
+        },
+        {
+            "title": "下一步",
+            "summary": "完成测试后进入体验优化。",
+            "keyPoints": [],
+            "actionItems": [],
+        },
+    ]
+
+    markdown = manager.copy_partial_notes()
+
+    assert markdown.startswith("# 实时会议纪要")
+    assert "## 1. 产品方向" in markdown
+    assert "- 保留十五字活动尾部" in markdown
+    assert "- [ ] 完成浮标透明化（负责人：Westbrook；截止时间：本周五）" in markdown
+    assert "## 2. 下一步" in markdown
+    assert copied == [markdown]
+
+
+def test_copy_partial_notes_rejects_empty_segments_without_touching_clipboard():
+    copied = []
+    manager = TextAgentManager(
+        provider=PreviewTextPolishProvider(),
+        copy_callback=copied.append,
+    )
+    manager.start("meeting_notes")
+
+    try:
+        manager.copy_partial_notes()
+    except RuntimeError as exc:
+        assert "No partial meeting notes" in str(exc)
+    else:
+        raise AssertionError("Expected empty partial notes to be rejected.")
+
+    assert copied == []

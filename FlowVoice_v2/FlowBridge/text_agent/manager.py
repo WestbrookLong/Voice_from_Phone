@@ -222,6 +222,57 @@ class TextAgentManager:
             session.touch()
             return session
 
+    def copy_partial_notes(self) -> str:
+        with self.lock:
+            session = self._get_or_active()
+            markdown = self.segments_to_markdown(session.segment_summaries)
+        if not markdown:
+            raise RuntimeError("No partial meeting notes are available yet.")
+        if self.copy_callback is None:
+            raise RuntimeError("Copy callback is not configured.")
+        self.copy_callback(markdown)
+        return markdown
+
+    @staticmethod
+    def segments_to_markdown(segments: list[dict]) -> str:
+        if not segments:
+            return ""
+        lines = ["# 实时会议纪要"]
+        for index, segment in enumerate(segments, start=1):
+            title = str(segment.get("title", "")).strip() or f"会议片段 {index}"
+            summary = str(segment.get("summary", "")).strip()
+            key_points = segment.get("keyPoints")
+            action_items = segment.get("actionItems")
+
+            lines.extend(["", f"## {index}. {title}"])
+            if summary:
+                lines.extend(["", summary])
+            if isinstance(key_points, list) and key_points:
+                points = [str(item).strip() for item in key_points if str(item).strip()]
+                if points:
+                    lines.extend(["", "### 要点"])
+                    lines.extend(f"- {point}" for point in points)
+            if isinstance(action_items, list) and action_items:
+                actions = []
+                for item in action_items:
+                    if isinstance(item, dict):
+                        text = str(item.get("text", "")).strip()
+                        if not text:
+                            continue
+                        metadata = []
+                        if item.get("owner"):
+                            metadata.append(f"负责人：{item['owner']}")
+                        if item.get("deadline"):
+                            metadata.append(f"截止时间：{item['deadline']}")
+                        suffix = f"（{'；'.join(metadata)}）" if metadata else ""
+                        actions.append(f"- [ ] {text}{suffix}")
+                    elif str(item).strip():
+                        actions.append(f"- [ ] {str(item).strip()}")
+                if actions:
+                    lines.extend(["", "### 待办事项"])
+                    lines.extend(actions)
+        return "\n".join(lines).strip()
+
     def insert_result(self) -> TextAgentSession:
         with self.lock:
             session = self._get_or_active()

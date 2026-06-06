@@ -1,5 +1,6 @@
 import asyncio
 import ctypes
+from ctypes import wintypes
 import os
 import queue
 import secrets
@@ -978,6 +979,13 @@ class DesktopApi:
         except Exception as exc:
             return self._result(f"Copy failed: {exc}")
 
+    def copy_partial_text_agent_notes(self) -> dict:
+        try:
+            markdown = self.text_agent.copy_partial_notes()
+            return self._result(f"Copied {len(markdown)} characters of partial meeting notes.")
+        except Exception as exc:
+            return self._result(f"Copy partial notes failed: {exc}")
+
     def insert_text_agent_result(self) -> dict:
         try:
             self.text_agent.insert_result()
@@ -1085,6 +1093,18 @@ class DesktopApi:
         return state
 
     def shutdown(self) -> None:
+        if self.agent_window is not None:
+            try:
+                agent_window = self.agent_window
+                if getattr(agent_window, "InvokeRequired", False):
+                    from System import Action
+
+                    agent_window.BeginInvoke(Action(agent_window.Close))
+                else:
+                    agent_window.Close()
+            except Exception:
+                pass
+            self.agent_window = None
         if self.text_agent_hotkey_thread is not None:
             self.text_agent_hotkey_thread.stop()
             self.text_agent_hotkey_thread.join(timeout=2)
@@ -1134,6 +1154,196 @@ def apply_window_chrome(window: webview.Window) -> None:
         return
 
 
+def create_native_agent_float(api: DesktopApi) -> object:
+    import clr
+
+    clr.AddReference("System.Drawing")
+    clr.AddReference("System.Windows.Forms")
+    from System import Array
+    from System.Drawing import Color, ContentAlignment, Font, FontStyle, Point, PointF, Region, Size
+    from System.Drawing.Drawing2D import GraphicsPath
+    from System.Windows.Forms import (
+        BorderStyle,
+        Button,
+        FlatStyle,
+        Form,
+        FormBorderStyle,
+        FormStartPosition,
+        Label,
+        MouseButtons,
+        Panel,
+        RichTextBox,
+        RichTextBoxScrollBars,
+        Timer,
+        ToolTip,
+    )
+
+    def rounded_region(width: int, height: int, radius: int):
+        path = GraphicsPath()
+        diameter = radius * 2
+        path.AddArc(0, 0, diameter, diameter, 180, 90)
+        path.AddArc(width - diameter, 0, diameter, diameter, 270, 90)
+        path.AddArc(width - diameter, height - diameter, diameter, diameter, 0, 90)
+        path.AddArc(0, height - diameter, diameter, diameter, 90, 90)
+        path.CloseFigure()
+        region = Region(path)
+        path.Dispose()
+        return region
+
+    form = Form()
+    form.Text = "FlowVoice Agent"
+    form.ClientSize = Size(320, 178)
+    form.FormBorderStyle = getattr(FormBorderStyle, "None")
+    form.BackColor = Color.Magenta
+    form.TransparencyKey = Color.Magenta
+    form.TopMost = True
+    form.ShowInTaskbar = False
+    form.StartPosition = FormStartPosition.CenterScreen
+
+    bubble = Panel()
+    bubble.Location = Point(8, 4)
+    bubble.Size = Size(304, 108)
+    bubble.BackColor = Color.FromArgb(250, 255, 249)
+    bubble.Region = rounded_region(304, 108, 24)
+    form.Controls.Add(bubble)
+
+    status_label = Label()
+    status_label.Location = Point(16, 10)
+    status_label.Size = Size(130, 18)
+    status_label.ForeColor = Color.FromArgb(42, 111, 69)
+    status_label.Font = Font("Microsoft YaHei UI", 8, FontStyle.Regular)
+    bubble.Controls.Add(status_label)
+
+    hotkey_label = Label()
+    hotkey_label.Location = Point(166, 10)
+    hotkey_label.Size = Size(122, 18)
+    hotkey_label.TextAlign = ContentAlignment.MiddleRight
+    hotkey_label.Text = "Ctrl+Alt+Space"
+    hotkey_label.ForeColor = Color.FromArgb(120, 148, 132)
+    hotkey_label.Font = Font("Consolas", 7, FontStyle.Regular)
+    bubble.Controls.Add(hotkey_label)
+
+    preview = RichTextBox()
+    preview.Location = Point(14, 31)
+    preview.Size = Size(276, 65)
+    preview.BorderStyle = getattr(BorderStyle, "None")
+    preview.BackColor = bubble.BackColor
+    preview.ForeColor = Color.FromArgb(6, 16, 11)
+    preview.Font = Font("Microsoft YaHei UI", 10, FontStyle.Bold)
+    preview.ReadOnly = True
+    preview.ScrollBars = RichTextBoxScrollBars.Vertical
+    preview.TabStop = False
+    bubble.Controls.Add(preview)
+
+    tail = Panel()
+    tail.Location = Point(150, 105)
+    tail.Size = Size(20, 14)
+    tail.BackColor = bubble.BackColor
+    tail_path = GraphicsPath()
+    tail_path.AddPolygon(Array[PointF]([PointF(0, 0), PointF(20, 0), PointF(10, 14)]))
+    tail.Region = Region(tail_path)
+    tail_path.Dispose()
+    form.Controls.Add(tail)
+
+    controls = Panel()
+    controls.Location = Point(104, 124)
+    controls.Size = Size(112, 48)
+    controls.BackColor = Color.FromArgb(6, 16, 11)
+    controls.Region = rounded_region(112, 48, 20)
+    form.Controls.Add(controls)
+
+    primary = Button()
+    primary.Location = Point(10, 4)
+    primary.Size = Size(40, 40)
+    primary.FlatStyle = FlatStyle.Flat
+    primary.FlatAppearance.BorderSize = 0
+    primary.ForeColor = Color.White
+    primary.Font = Font("Segoe UI Symbol", 11, FontStyle.Bold)
+    primary.Region = rounded_region(40, 40, 20)
+    controls.Controls.Add(primary)
+
+    secondary = Button()
+    secondary.Location = Point(62, 4)
+    secondary.Size = Size(40, 40)
+    secondary.FlatStyle = FlatStyle.Flat
+    secondary.FlatAppearance.BorderSize = 0
+    secondary.ForeColor = Color.FromArgb(30, 91, 56)
+    secondary.BackColor = Color.White
+    secondary.Font = Font("Segoe UI Symbol", 12, FontStyle.Bold)
+    secondary.Region = rounded_region(40, 40, 20)
+    controls.Controls.Add(secondary)
+
+    tooltip = ToolTip()
+    state = {"recording": False, "paused": False, "last_preview": None}
+
+    def run_async(callback) -> None:
+        threading.Thread(target=callback, daemon=True).start()
+
+    def primary_click(_sender, _event) -> None:
+        callback = api.stop_text_agent_recording if state["recording"] or state["paused"] else api.toggle_text_agent_recording
+        run_async(callback)
+
+    def secondary_click(_sender, _event) -> None:
+        if not state["recording"] and not state["paused"]:
+            return
+        callback = api.resume_text_agent_recording if state["paused"] else api.pause_text_agent_recording
+        run_async(callback)
+
+    primary.Click += primary_click
+    secondary.Click += secondary_click
+    bubble.Click += lambda _sender, _event: run_async(api.show_main_window)
+    preview.Click += lambda _sender, _event: run_async(api.show_main_window)
+
+    def begin_drag(_sender, event) -> None:
+        if event.Button != MouseButtons.Left:
+            return
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.ReleaseCapture()
+        user32.SendMessageW(form.Handle.ToInt64(), 0x00A1, 2, 0)
+
+    bubble.MouseDown += begin_drag
+    status_label.MouseDown += begin_drag
+    hotkey_label.MouseDown += begin_drag
+
+    def refresh(_sender=None, _event=None) -> None:
+        snapshot = api.text_agent.get_float_state()
+        recording = bool(snapshot["recording"])
+        paused = bool(snapshot["paused"])
+        polishing = bool(snapshot["polishing"])
+        completed = bool(snapshot["completed"])
+        state["recording"] = recording
+        state["paused"] = paused
+        status_label.Text = "整理中" if polishing else "记录中" if recording else "已暂停" if paused else "已完成" if completed else "待机"
+
+        text = snapshot["rawText"] or ("本次会议纪要已保存至剪贴板" if completed else "等待手机端输入原始文本")
+        if text != state["last_preview"]:
+            preview.Text = text
+            preview.SelectionStart = len(text)
+            preview.ScrollToCaret()
+            state["last_preview"] = text
+
+        if recording or paused:
+            primary.Text = "■"
+            primary.BackColor = Color.FromArgb(224, 71, 71)
+            tooltip.SetToolTip(primary, "停止并整理")
+        else:
+            primary.Text = "●"
+            primary.BackColor = Color.FromArgb(32, 201, 117)
+            tooltip.SetToolTip(primary, "开始记录")
+        secondary.Text = "▶" if paused else "Ⅱ"
+        secondary.Enabled = recording or paused
+        tooltip.SetToolTip(secondary, "继续记录" if paused else "暂停记录")
+
+    timer = Timer()
+    timer.Interval = 500
+    timer.Tick += refresh
+    timer.Start()
+    form.FormClosed += lambda _sender, _event: timer.Stop()
+    refresh()
+    form.Show()
+    return form
+
+
 def main() -> None:
     if sys.platform != "win32":
         raise SystemExit("This program injects text with Windows SendInput and must run on Windows.")
@@ -1160,24 +1370,20 @@ def main() -> None:
             return
         try:
             log("[desktop] creating agent window")
-            agent_window = webview.create_window(
-                "FlowVoice Agent",
-                f"{page_url}#agent-float",
-                js_api=api,
-                width=320,
-                height=178,
-                frameless=True,
-                easy_drag=False,
-                draggable=True,
-                resizable=False,
-                on_top=True,
-                shadow=True,
-                background_color="#050807",
-            )
-            api.agent_window = agent_window
-            if agent_window is not None:
-                agent_window.events.loaded += lambda: apply_window_chrome(agent_window)
-            log("[desktop] agent window created")
+            from System import Action
+
+            def create_on_ui_thread() -> None:
+                try:
+                    api.agent_window = create_native_agent_float(api)
+                    log("[desktop] native agent window shown")
+                except Exception as exc:
+                    log(f"[desktop] native agent window failed: {exc}")
+
+            if window.native.InvokeRequired:
+                window.native.BeginInvoke(Action(create_on_ui_thread))
+            else:
+                create_on_ui_thread()
+            log("[desktop] agent window creation scheduled")
         except Exception as exc:
             log(f"[desktop] agent window creation failed: {exc}")
 

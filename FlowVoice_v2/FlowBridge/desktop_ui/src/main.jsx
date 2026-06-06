@@ -3,6 +3,11 @@ import { createRoot } from "react-dom/client";
 import { QRCodeSVG } from "qrcode.react";
 import "./styles.css";
 
+const agentFloatMode = window.location.hash === "#agent-float";
+if (agentFloatMode) {
+  document.documentElement.classList.add("agent-float-page");
+}
+
 const fallbackState = {
   running: false,
   token: "loading",
@@ -52,7 +57,7 @@ function desktopApi() {
 }
 
 function FlowVoiceDesktopConsole() {
-  const isAgentFloat = window.location.hash === "#agent-float";
+  const isAgentFloat = agentFloatMode;
   const [state, setState] = React.useState(fallbackState);
   const [message, setMessage] = React.useState("");
   const [desktopVoiceSettingsOpen, setDesktopVoiceSettingsOpen] = React.useState(false);
@@ -316,6 +321,7 @@ function FlowVoiceDesktopConsole() {
               onPause={() => callApi("pause_text_agent_recording")}
               onResume={() => callApi("resume_text_agent_recording")}
               onCopy={() => callApi("copy_text_agent_result")}
+              onCopyPartial={() => callApi("copy_partial_text_agent_notes")}
             />
 
             <div className="mt-4 rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
@@ -469,7 +475,7 @@ function AgentFloat({ textAgent, session, hotkey, onOpen, onToggle, onStop, onPa
   );
 }
 
-function TextAgentPanel({ textAgent, session, style, hotkey, onModeChange, onStyleChange, onStart, onStop, onPause, onResume, onCopy }) {
+function TextAgentPanel({ textAgent, session, style, hotkey, onModeChange, onStyleChange, onStart, onStop, onPause, onResume, onCopy, onCopyPartial }) {
   const recording = Boolean(textAgent.recording);
   const paused = Boolean(textAgent.paused);
   const finalText = session.finalText || "";
@@ -531,11 +537,18 @@ function TextAgentPanel({ textAgent, session, style, hotkey, onModeChange, onSty
       />
       {session.error && <TextAgentBlock title="Error" text={session.error} danger />}
 
-      {finalText && (
-        <div className="mt-3 flex justify-end">
-          <button onClick={onCopy} className="rounded-xl border border-[#2E7447] bg-[#10291B] px-5 py-2 text-xs font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
-            Copy Final Notes
-          </button>
+      {(segments.length > 0 || finalText) && (
+        <div className="mt-3 flex justify-end gap-2">
+          {segments.length > 0 && (
+            <button onClick={onCopyPartial} className="rounded-xl border border-[#31503C] bg-[#0A1710] px-5 py-2 text-xs font-semibold text-[#9BCBAB] transition hover:bg-[#10251A]">
+              Copy Partial Notes
+            </button>
+          )}
+          {finalText && (
+            <button onClick={onCopy} className="rounded-xl border border-[#2E7447] bg-[#10291B] px-5 py-2 text-xs font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+              Copy Final Notes
+            </button>
+          )}
         </div>
       )}
     </div>
