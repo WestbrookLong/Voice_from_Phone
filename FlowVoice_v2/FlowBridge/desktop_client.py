@@ -7,6 +7,7 @@ import secrets
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from pathlib import Path
 
@@ -768,6 +769,7 @@ class DesktopApi:
         self.desktop_voice_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
         self.window: webview.Window | None = None
         self.agent_window: webview.Window | None = None
+        self._agent_render = None
         self.maximized = False
 
     def _url(self) -> str:
@@ -999,6 +1001,26 @@ class DesktopApi:
             self.window.restore()
         return self._result()
 
+    def show_agent_float(self) -> None:
+        agent_window = self.agent_window
+        if agent_window is None:
+            return
+        try:
+            from System import Action
+
+            def show() -> None:
+                agent_window.Show()
+                agent_window.Activate()
+                if self._agent_render is not None:
+                    self._agent_render()
+
+            if agent_window.InvokeRequired:
+                agent_window.BeginInvoke(Action(show))
+            else:
+                show()
+        except Exception as exc:
+            log(f"[desktop] show agent float failed: {exc}")
+
     def start_desktop_voice(self) -> dict:
         with self.lock:
             if self._desktop_voice_running():
@@ -1117,6 +1139,7 @@ class DesktopApi:
             return
 
         def callback() -> None:
+            self.show_agent_float()
             self.toggle_text_agent_recording()
 
         thread = TextAgentHotkeyThread(callback)
@@ -1160,152 +1183,175 @@ def create_native_agent_float(api: DesktopApi) -> object:
     clr.AddReference("System.Drawing")
     clr.AddReference("System.Windows.Forms")
     from System import Array
-    from System.Drawing import Color, ContentAlignment, Font, FontStyle, Point, PointF, Region, Size
-    from System.Drawing.Drawing2D import GraphicsPath
+    from System.Drawing import Bitmap, Brushes, Color, Font, FontStyle, Graphics, Pen, PointF, Rectangle, Size, SolidBrush
+    from System.Drawing.Drawing2D import GraphicsPath, SmoothingMode
+    from System.Drawing.Imaging import ImageLockMode, PixelFormat
+    from System.Drawing.Text import TextRenderingHint
     from System.Windows.Forms import (
-        BorderStyle,
-        Button,
-        FlatStyle,
         Form,
         FormBorderStyle,
         FormStartPosition,
-        Label,
         MouseButtons,
-        Panel,
-        RichTextBox,
-        RichTextBoxScrollBars,
         Timer,
-        ToolTip,
     )
 
-    def rounded_region(width: int, height: int, radius: int):
+    class BlendFunction(ctypes.Structure):
+        _fields_ = [
+            ("BlendOp", ctypes.c_ubyte),
+            ("BlendFlags", ctypes.c_ubyte),
+            ("SourceConstantAlpha", ctypes.c_ubyte),
+            ("AlphaFormat", ctypes.c_ubyte),
+        ]
+
+    class BitmapInfoHeader(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    class BitmapInfo(ctypes.Structure):
+        _fields_ = [("bmiHeader", BitmapInfoHeader), ("bmiColors", wintypes.DWORD * 3)]
+
+    def rounded_path(x: float, y: float, width: float, height: float, radius: float):
         path = GraphicsPath()
         diameter = radius * 2
-        path.AddArc(0, 0, diameter, diameter, 180, 90)
-        path.AddArc(width - diameter, 0, diameter, diameter, 270, 90)
-        path.AddArc(width - diameter, height - diameter, diameter, diameter, 0, 90)
-        path.AddArc(0, height - diameter, diameter, diameter, 90, 90)
+        path.AddArc(x, y, diameter, diameter, 180, 90)
+        path.AddArc(x + width - diameter, y, diameter, diameter, 270, 90)
+        path.AddArc(x + width - diameter, y + height - diameter, diameter, diameter, 0, 90)
+        path.AddArc(x, y + height - diameter, diameter, diameter, 90, 90)
         path.CloseFigure()
-        region = Region(path)
-        path.Dispose()
-        return region
+        return path
 
     form = Form()
     form.Text = "FlowVoice Agent"
     form.ClientSize = Size(320, 178)
     form.FormBorderStyle = getattr(FormBorderStyle, "None")
-    form.BackColor = Color.Magenta
-    form.TransparencyKey = Color.Magenta
     form.TopMost = True
     form.ShowInTaskbar = False
     form.StartPosition = FormStartPosition.CenterScreen
-
-    bubble = Panel()
-    bubble.Location = Point(8, 4)
-    bubble.Size = Size(304, 108)
-    bubble.BackColor = Color.FromArgb(250, 255, 249)
-    bubble.Region = rounded_region(304, 108, 24)
-    form.Controls.Add(bubble)
-
-    status_label = Label()
-    status_label.Location = Point(16, 10)
-    status_label.Size = Size(130, 18)
-    status_label.ForeColor = Color.FromArgb(42, 111, 69)
-    status_label.Font = Font("Microsoft YaHei UI", 8, FontStyle.Regular)
-    bubble.Controls.Add(status_label)
-
-    hotkey_label = Label()
-    hotkey_label.Location = Point(166, 10)
-    hotkey_label.Size = Size(122, 18)
-    hotkey_label.TextAlign = ContentAlignment.MiddleRight
-    hotkey_label.Text = "Ctrl+Alt+Space"
-    hotkey_label.ForeColor = Color.FromArgb(120, 148, 132)
-    hotkey_label.Font = Font("Consolas", 7, FontStyle.Regular)
-    bubble.Controls.Add(hotkey_label)
-
-    preview = RichTextBox()
-    preview.Location = Point(14, 31)
-    preview.Size = Size(276, 65)
-    preview.BorderStyle = getattr(BorderStyle, "None")
-    preview.BackColor = bubble.BackColor
-    preview.ForeColor = Color.FromArgb(6, 16, 11)
-    preview.Font = Font("Microsoft YaHei UI", 10, FontStyle.Bold)
-    preview.ReadOnly = True
-    preview.ScrollBars = RichTextBoxScrollBars.Vertical
-    preview.TabStop = False
-    bubble.Controls.Add(preview)
-
-    tail = Panel()
-    tail.Location = Point(150, 105)
-    tail.Size = Size(20, 14)
-    tail.BackColor = bubble.BackColor
-    tail_path = GraphicsPath()
-    tail_path.AddPolygon(Array[PointF]([PointF(0, 0), PointF(20, 0), PointF(10, 14)]))
-    tail.Region = Region(tail_path)
-    tail_path.Dispose()
-    form.Controls.Add(tail)
-
-    controls = Panel()
-    controls.Location = Point(104, 124)
-    controls.Size = Size(112, 48)
-    controls.BackColor = Color.FromArgb(6, 16, 11)
-    controls.Region = rounded_region(112, 48, 20)
-    form.Controls.Add(controls)
-
-    primary = Button()
-    primary.Location = Point(10, 4)
-    primary.Size = Size(40, 40)
-    primary.FlatStyle = FlatStyle.Flat
-    primary.FlatAppearance.BorderSize = 0
-    primary.ForeColor = Color.White
-    primary.Font = Font("Segoe UI Symbol", 11, FontStyle.Bold)
-    primary.Region = rounded_region(40, 40, 20)
-    controls.Controls.Add(primary)
-
-    secondary = Button()
-    secondary.Location = Point(62, 4)
-    secondary.Size = Size(40, 40)
-    secondary.FlatStyle = FlatStyle.Flat
-    secondary.FlatAppearance.BorderSize = 0
-    secondary.ForeColor = Color.FromArgb(30, 91, 56)
-    secondary.BackColor = Color.White
-    secondary.Font = Font("Segoe UI Symbol", 12, FontStyle.Bold)
-    secondary.Region = rounded_region(40, 40, 20)
-    controls.Controls.Add(secondary)
-
-    tooltip = ToolTip()
     state = {"recording": False, "paused": False, "last_preview": None}
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    user32.GetWindowLongPtrW.restype = ctypes.c_void_p
+    user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+    user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    user32.GetDC.restype = ctypes.c_void_p
+    user32.GetDC.argtypes = [ctypes.c_void_p]
+    user32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    user32.UpdateLayeredWindow.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.POINT),
+        ctypes.POINTER(wintypes.SIZE),
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.POINT),
+        wintypes.COLORREF,
+        ctypes.POINTER(BlendFunction),
+        wintypes.DWORD,
+    ]
+    gdi32.CreateCompatibleDC.restype = ctypes.c_void_p
+    gdi32.CreateDIBSection.restype = ctypes.c_void_p
+    gdi32.CreateDIBSection.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(BitmapInfo),
+        wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    gdi32.SelectObject.restype = ctypes.c_void_p
+    gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+    gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
 
-    def run_async(callback) -> None:
-        threading.Thread(target=callback, daemon=True).start()
+    status_font = Font("Microsoft YaHei UI", 8, FontStyle.Regular)
+    preview_font = Font("Microsoft YaHei UI", 10, FontStyle.Bold)
+    icon_font = Font("Segoe UI Symbol", 11, FontStyle.Bold)
 
-    def primary_click(_sender, _event) -> None:
-        callback = api.stop_text_agent_recording if state["recording"] or state["paused"] else api.toggle_text_agent_recording
-        run_async(callback)
+    def wrap_latest_lines(graphics, text: str, max_width: float, max_lines: int = 3) -> list[str]:
+        lines = []
+        current = ""
+        for char in text:
+            candidate = f"{current}{char}"
+            if current and graphics.MeasureString(candidate, preview_font).Width > max_width:
+                lines.append(current)
+                current = char
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        return lines[-max_lines:] or [""]
 
-    def secondary_click(_sender, _event) -> None:
-        if not state["recording"] and not state["paused"]:
-            return
-        callback = api.resume_text_agent_recording if state["paused"] else api.pause_text_agent_recording
-        run_async(callback)
+    def update_layered(bitmap: Bitmap) -> None:
+        hwnd = form.Handle.ToInt64()
+        screen_dc = user32.GetDC(0)
+        memory_dc = gdi32.CreateCompatibleDC(screen_dc)
+        bitmap_info = BitmapInfo()
+        bitmap_info.bmiHeader = BitmapInfoHeader(
+            ctypes.sizeof(BitmapInfoHeader),
+            320,
+            -178,
+            1,
+            32,
+            0,
+            320 * 178 * 4,
+            0,
+            0,
+            0,
+            0,
+        )
+        pixels = ctypes.c_void_p()
+        hbitmap = gdi32.CreateDIBSection(
+            screen_dc,
+            ctypes.byref(bitmap_info),
+            0,
+            ctypes.byref(pixels),
+            None,
+            0,
+        )
+        bitmap_data = bitmap.LockBits(
+            Rectangle(0, 0, 320, 178),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppPArgb,
+        )
+        try:
+            ctypes.memmove(pixels, bitmap_data.Scan0.ToInt64(), 320 * 178 * 4)
+        finally:
+            bitmap.UnlockBits(bitmap_data)
+        old_bitmap = gdi32.SelectObject(memory_dc, hbitmap)
+        try:
+            destination = wintypes.POINT(form.Left, form.Top)
+            source = wintypes.POINT(0, 0)
+            size = wintypes.SIZE(320, 178)
+            blend = BlendFunction(0, 0, 255, 1)
+            user32.UpdateLayeredWindow(
+                hwnd,
+                screen_dc,
+                ctypes.byref(destination),
+                ctypes.byref(size),
+                memory_dc,
+                ctypes.byref(source),
+                0,
+                ctypes.byref(blend),
+                2,
+            )
+        finally:
+            gdi32.SelectObject(memory_dc, old_bitmap)
+            gdi32.DeleteObject(hbitmap)
+            gdi32.DeleteDC(memory_dc)
+            user32.ReleaseDC(0, screen_dc)
 
-    primary.Click += primary_click
-    secondary.Click += secondary_click
-    bubble.Click += lambda _sender, _event: run_async(api.show_main_window)
-    preview.Click += lambda _sender, _event: run_async(api.show_main_window)
-
-    def begin_drag(_sender, event) -> None:
-        if event.Button != MouseButtons.Left:
-            return
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.ReleaseCapture()
-        user32.SendMessageW(form.Handle.ToInt64(), 0x00A1, 2, 0)
-
-    bubble.MouseDown += begin_drag
-    status_label.MouseDown += begin_drag
-    hotkey_label.MouseDown += begin_drag
-
-    def refresh(_sender=None, _event=None) -> None:
+    def render() -> None:
         snapshot = api.text_agent.get_float_state()
         recording = bool(snapshot["recording"])
         paused = bool(snapshot["paused"])
@@ -1313,34 +1359,102 @@ def create_native_agent_float(api: DesktopApi) -> object:
         completed = bool(snapshot["completed"])
         state["recording"] = recording
         state["paused"] = paused
-        status_label.Text = "整理中" if polishing else "记录中" if recording else "已暂停" if paused else "已完成" if completed else "待机"
 
+        status = "整理中" if polishing else "记录中" if recording else "已暂停" if paused else "已完成" if completed else "待机"
         text = snapshot["rawText"] or ("本次会议纪要已保存至剪贴板" if completed else "等待手机端输入原始文本")
-        if text != state["last_preview"]:
-            preview.Text = text
-            preview.SelectionStart = len(text)
-            preview.ScrollToCaret()
-            state["last_preview"] = text
 
-        if recording or paused:
-            primary.Text = "■"
-            primary.BackColor = Color.FromArgb(224, 71, 71)
-            tooltip.SetToolTip(primary, "停止并整理")
-        else:
-            primary.Text = "●"
-            primary.BackColor = Color.FromArgb(32, 201, 117)
-            tooltip.SetToolTip(primary, "开始记录")
-        secondary.Text = "▶" if paused else "Ⅱ"
-        secondary.Enabled = recording or paused
-        tooltip.SetToolTip(secondary, "继续记录" if paused else "暂停记录")
+        bitmap = Bitmap(320, 178, PixelFormat.Format32bppPArgb)
+        graphics = Graphics.FromImage(bitmap)
+        graphics.SmoothingMode = SmoothingMode.AntiAlias
+        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit
+        graphics.Clear(Color.Transparent)
+        try:
+            bubble_path = rounded_path(8, 4, 304, 108, 24)
+            bubble_brush = SolidBrush(Color.FromArgb(250, 255, 249))
+            bubble_pen = Pen(Color.FromArgb(207, 224, 212), 1)
+            graphics.FillPath(bubble_brush, bubble_path)
+            graphics.DrawPath(bubble_pen, bubble_path)
+            bubble_pen.Dispose()
+            bubble_path.Dispose()
+
+            tail_path = GraphicsPath()
+            tail_path.AddPolygon(Array[PointF]([PointF(148, 105), PointF(172, 105), PointF(160, 120)]))
+            graphics.FillPath(bubble_brush, tail_path)
+            tail_path.Dispose()
+            bubble_brush.Dispose()
+
+            controls_path = rounded_path(104, 124, 112, 48, 20)
+            graphics.FillPath(Brushes.Black, controls_path)
+            controls_path.Dispose()
+
+            primary_color = Color.FromArgb(224, 71, 71) if recording or paused else Color.FromArgb(32, 201, 117)
+            primary_brush = SolidBrush(primary_color)
+            graphics.FillEllipse(primary_brush, 114, 128, 40, 40)
+            primary_brush.Dispose()
+            graphics.FillEllipse(Brushes.White, 166, 128, 40, 40)
+
+            status_brush = SolidBrush(Color.FromArgb(42, 111, 69))
+            graphics.DrawString(status, status_font, status_brush, 22, 13)
+            status_brush.Dispose()
+            hide_pen = Pen(Color.FromArgb(80, 110, 92), 2)
+            graphics.DrawLine(hide_pen, 282, 20, 296, 20)
+            hide_pen.Dispose()
+
+            lines = wrap_latest_lines(graphics, text, 270)
+            text_brush = SolidBrush(Color.FromArgb(6, 16, 11))
+            graphics.DrawString("\n".join(lines), preview_font, text_brush, 22, 37)
+            text_brush.Dispose()
+            primary_icon = "■" if recording or paused else "●"
+            secondary_icon = "▶" if paused else "Ⅱ"
+            graphics.DrawString(primary_icon, icon_font, Brushes.White, 125, 137)
+            secondary_brush = SolidBrush(Color.FromArgb(30, 91, 56))
+            graphics.DrawString(secondary_icon, icon_font, secondary_brush, 176, 137)
+            secondary_brush.Dispose()
+        finally:
+            graphics.Dispose()
+        update_layered(bitmap)
+        bitmap.Dispose()
+
+    def run_async(callback) -> None:
+        threading.Thread(target=callback, daemon=True).start()
+
+    def begin_drag(_sender, event) -> None:
+        if event.Button != MouseButtons.Left:
+            return
+        x, y = event.X, event.Y
+        if 274 <= x <= 306 and 8 <= y <= 34:
+            form.Hide()
+            return
+        if 114 <= x <= 154 and 128 <= y <= 168:
+            callback = api.stop_text_agent_recording if state["recording"] or state["paused"] else api.toggle_text_agent_recording
+            run_async(callback)
+            return
+        if 166 <= x <= 206 and 128 <= y <= 168:
+            if state["recording"] or state["paused"]:
+                callback = api.resume_text_agent_recording if state["paused"] else api.pause_text_agent_recording
+                run_async(callback)
+            return
+        if event.Y <= 112:
+            run_async(api.show_main_window)
+        user32.ReleaseCapture()
+        user32.SendMessageW(form.Handle.ToInt64(), 0x00A1, 2, 0)
+
+    form.MouseDown += begin_drag
+
+    def refresh(_sender=None, _event=None) -> None:
+        if form.Visible:
+            render()
 
     timer = Timer()
     timer.Interval = 500
     timer.Tick += refresh
     timer.Start()
     form.FormClosed += lambda _sender, _event: timer.Stop()
-    refresh()
     form.Show()
+    ex_style = user32.GetWindowLongPtrW(form.Handle.ToInt64(), -20)
+    user32.SetWindowLongPtrW(form.Handle.ToInt64(), -20, ex_style | 0x00080000)
+    render()
+    api._agent_render = render
     return form
 
 
@@ -1377,7 +1491,7 @@ def main() -> None:
                     api.agent_window = create_native_agent_float(api)
                     log("[desktop] native agent window shown")
                 except Exception as exc:
-                    log(f"[desktop] native agent window failed: {exc}")
+                    log(f"[desktop] native agent window failed: {exc}\n{traceback.format_exc()}")
 
             if window.native.InvokeRequired:
                 window.native.BeginInvoke(Action(create_on_ui_thread))
