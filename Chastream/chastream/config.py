@@ -44,8 +44,6 @@ class AppSettings:
     voiceprint_margin: float = 0.06
     minimum_speech_ms: int = 1200
     enable_scl: bool = True
-    scl_window_ms: int = 7000
-    scl_stride_ms: int = 3500
 
     @classmethod
     def load(cls) -> "AppSettings":

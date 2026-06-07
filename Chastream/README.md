@@ -7,12 +7,12 @@ Desktop conversation transcription, speaker identification, and structured analy
 1. Record one 16 kHz mono PCM WAV.
 2. Upload it to DashScope temporary OSS storage.
 3. Run Paraformer whole-file transcription with sentence and word timestamps; cloud diarization is disabled.
-4. Locate two-speaker change points on the original audio with local SCL.
-5. Match every acoustic interval against locally registered CAM++ voiceprints.
-6. Assign timestamped ASR words back to identified speaker intervals.
+4. Split the timestamped words into punctuation units, including comma-separated clauses.
+5. Match every sentence unit against locally registered CAM++ voiceprints.
+6. Use local SCL only to refine a possible speaker change inside one sentence unit.
 7. Produce an identified dialogue and a Qwen conversation analysis.
 
-Multiple acoustic intervals may map to the same registered person. Low-confidence audio remains `未识别发言人`.
+Every output row remains a separate timestamped sentence, even when adjacent rows belong to the same person. Low-confidence audio remains `未识别发言人`.
 
 ## Configuration
 

@@ -107,7 +107,7 @@ function renderDialogue(items) {
   const element = $("dialogue");
   if (!items.length) {
     element.className = "dialogue empty";
-    element.textContent = "完成整场转写和声纹匹配后，对话会出现在这里。";
+    element.textContent = "完成逐句切片和声纹匹配后，对话会按时间逐行出现在这里。";
     return;
   }
   element.className = "dialogue";
@@ -218,7 +218,13 @@ function formatDuration(seconds) {
   const value = Math.max(0, Math.floor(seconds));
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
-function formatMs(ms) { return formatDuration((ms || 0) / 1000); }
+function formatMs(ms) {
+  const value = Math.max(0, Math.floor(ms || 0));
+  const seconds = Math.floor(value / 1000);
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:` +
+    `${String(seconds % 60).padStart(2, "0")}.` +
+    `${String(value % 1000).padStart(3, "0")}`;
+}
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"

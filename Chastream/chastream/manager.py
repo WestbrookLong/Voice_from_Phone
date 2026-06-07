@@ -289,14 +289,12 @@ class ChastreamManager:
             self.sessions.write_json(session.id, "transcript.words.json", session.timed_words)
             self.sessions.save(session)
 
-            self._stage(session, "matching", "正在定位说话人切换并匹配声纹")
+            self._stage(session, "matching", "正在按句切片、匹配声纹并进行句内精切")
             resolver = DialogueResolver(
                 self.voiceprints,
                 threshold=float(self.settings.voiceprint_threshold),
                 margin=float(self.settings.voiceprint_margin),
                 minimum_speech_ms=int(self.settings.minimum_speech_ms),
-                scl_window_ms=int(self.settings.scl_window_ms),
-                scl_stride_ms=int(self.settings.scl_stride_ms),
             )
             change_points, segments, resolved, diagnostics = resolver.resolve(
                 Path(session.audio_path),
@@ -309,7 +307,7 @@ class ChastreamManager:
             session.segments = [asdict(item) for item in segments]
             session.resolved_utterances = [asdict(item) for item in resolved]
             self.sessions.write_json(session.id, "change-points.json", session.change_points)
-            self.sessions.write_json(session.id, "speaker-intervals.json", session.segments)
+            self.sessions.write_json(session.id, "sentence-speaker-units.json", session.segments)
             self.sessions.write_json(session.id, "voiceprint.diagnostics.json", diagnostics)
             self.sessions.write_json(session.id, "dialogue.json", session.resolved_utterances)
             self.sessions.write_text(session.id, "dialogue.md", dialogue_to_markdown(resolved))
