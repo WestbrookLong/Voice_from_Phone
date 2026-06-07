@@ -304,6 +304,7 @@ class ChastreamManager:
                 threshold=float(self.settings.voiceprint_threshold),
                 margin=float(self.settings.voiceprint_margin),
                 minimum_speech_ms=int(self.settings.minimum_speech_ms),
+                scl_trigger_threshold=float(self.settings.scl_trigger_threshold),
             )
             change_points, segments, resolved, diagnostics = resolver.resolve(
                 Path(session.audio_path),

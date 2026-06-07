@@ -109,16 +109,18 @@ class VoiceprintService:
             return SpeakerMatch(None, "未识别发言人", 0.0, 0.0, 0.0, False, "unknown")
         best_score, best_profile = scores[0]
         second_score = scores[1][0] if len(scores) > 1 else -1.0
+        second_name = scores[1][1].name if len(scores) > 1 else ""
         margin = best_score - second_score
         accepted = best_score >= threshold and margin >= required_margin
         confidence = "high" if accepted and best_score >= threshold + 0.12 else "medium" if accepted else "low"
         return SpeakerMatch(
-            best_profile.id if accepted else None,
-            best_profile.name if accepted else "未识别发言人",
-            best_score,
-            second_score,
-            margin,
-            accepted,
-            confidence,
+            profile_id=best_profile.id if accepted else None,
+            display_name=best_profile.name if accepted else "未识别发言人",
+            score=best_score,
+            second_score=second_score,
+            margin=margin,
+            accepted=accepted,
+            confidence=confidence,
+            best_candidate_name=best_profile.name,
+            second_candidate_name=second_name,
         )
-

@@ -44,6 +44,7 @@ class AppSettings:
     voiceprint_margin: float = 0.06
     minimum_speech_ms: int = 1200
     enable_scl: bool = True
+    scl_trigger_threshold: float = 0.24
 
     @classmethod
     def load(cls) -> "AppSettings":

@@ -34,6 +34,7 @@ class DialogueResolver:
         threshold: float,
         margin: float,
         minimum_speech_ms: int,
+        scl_trigger_threshold: float = 0.24,
     ) -> None:
         self.voiceprints = voiceprints
         self.threshold = threshold
@@ -42,6 +43,7 @@ class DialogueResolver:
         self.refiner = SentenceChangeRefiner(
             voiceprints.provider,
             minimum_side_ms=max(800, minimum_speech_ms // 2),
+            change_probe_threshold=scl_trigger_threshold,
         )
         self.vad = FsmnVadProcessor()
 
@@ -234,14 +236,17 @@ class DialogueResolver:
             left = records[index - 1]["match"]
             right = records[index + 1]["match"]
             if left.accepted and right.accepted and left.profile_id == right.profile_id:
+                direct: SpeakerMatch = current["match"]
                 current["match"] = SpeakerMatch(
                     profile_id=left.profile_id,
                     display_name=left.display_name,
-                    score=min(left.score, right.score),
-                    second_score=max(left.second_score, right.second_score),
-                    margin=min(left.margin, right.margin),
+                    score=direct.score,
+                    second_score=direct.second_score,
+                    margin=direct.margin,
                     accepted=True,
                     confidence="inferred",
+                    best_candidate_name=direct.best_candidate_name,
+                    second_candidate_name=direct.second_candidate_name,
                 )
                 current["smoothed"] = True
 
@@ -260,6 +265,8 @@ class DialogueResolver:
             second_score=match.second_score,
             margin=match.margin,
             confidence=match.confidence,
+            best_candidate_name=match.best_candidate_name,
+            second_candidate_name=match.second_candidate_name,
         )
 
     @staticmethod

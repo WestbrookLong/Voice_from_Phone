@@ -76,3 +76,42 @@ def test_resolved_row_keeps_runner_up_and_margin():
     assert resolved.score == 0.79
     assert resolved.second_score == 0.31
     assert resolved.margin == 0.48
+
+
+def test_inferred_identity_keeps_direct_candidate_evidence():
+    records = [
+        {
+            "match": SpeakerMatch(
+                "person-b", "龙建瑜", 0.75, 0.25, 0.50, True, "high"
+            )
+        },
+        {
+            "match": SpeakerMatch(
+                None,
+                "未识别发言人",
+                0.6505,
+                0.6284,
+                0.0221,
+                False,
+                "low",
+                "test",
+                "龙建瑜",
+            )
+        },
+        {
+            "match": SpeakerMatch(
+                "person-b", "龙建瑜", 0.83, 0.35, 0.48, True, "high"
+            )
+        },
+    ]
+
+    DialogueResolver._smooth_unknown_matches(records)
+    inferred = records[1]["match"]
+
+    assert inferred.display_name == "龙建瑜"
+    assert inferred.confidence == "inferred"
+    assert inferred.best_candidate_name == "test"
+    assert inferred.second_candidate_name == "龙建瑜"
+    assert inferred.score == 0.6505
+    assert inferred.second_score == 0.6284
+    assert inferred.margin == 0.0221

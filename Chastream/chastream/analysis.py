@@ -19,11 +19,7 @@ class QwenConversationAnalyst:
     def analyze(self, utterances: list[ResolvedUtterance]) -> dict:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured.")
-        transcript = "\n".join(
-            f"[{self._time(item.start_ms)}-{self._time(item.end_ms)}] "
-            f"{item.display_name}: {item.text}"
-            for item in utterances
-        )
+        transcript = "\n".join(self._transcript_line(item) for item in utterances)
         messages = [
             {
                 "role": "system",
@@ -122,3 +118,16 @@ class QwenConversationAnalyst:
         seconds = max(0, milliseconds // 1000)
         return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
+    def _transcript_line(self, item: ResolvedUtterance) -> str:
+        evidence = ""
+        if item.confidence == "inferred":
+            evidence = (
+                f" [身份为上下文推断；声纹候选："
+                f"{item.best_candidate_name or '第一候选'} {item.score:.4f}，"
+                f"{item.second_candidate_name or '第二候选'} {item.second_score:.4f}，"
+                f"差值 {item.margin:.4f}]"
+            )
+        return (
+            f"[{self._time(item.start_ms)}-{self._time(item.end_ms)}] "
+            f"{item.display_name}{evidence}: {item.text}"
+        )

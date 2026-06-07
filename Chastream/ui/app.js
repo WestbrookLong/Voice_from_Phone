@@ -83,6 +83,7 @@ function hydrateSettings(value) {
   $("qwenModel").value = value.qwen_model || "qwen-plus";
   $("voiceThreshold").value = value.voiceprint_threshold ?? 0.33;
   $("voiceMargin").value = value.voiceprint_margin ?? 0.06;
+  $("sclThreshold").value = value.scl_trigger_threshold ?? 0.24;
   $("enableScl").checked = value.enable_scl !== false;
   $("speakerMode").value = value.speaker_mode || "two";
 }
@@ -116,9 +117,7 @@ function renderDialogue(items) {
       <div class="turn-head">
         <span class="speaker">${escapeHtml(item.display_name)}</span>
         <span class="time">${formatMs(item.start_ms)} - ${formatMs(item.end_ms)}</span>
-        <span class="confidence">
-          ${escapeHtml(item.confidence)} · 匹配 ${formatScore(item.score)} · 领先 ${formatScore(item.margin)}
-        </span>
+        <span class="confidence">${renderMatchEvidence(item)}</span>
       </div>
       <p>${escapeHtml(item.text)}</p>
     </div>`).join("");
@@ -204,6 +203,7 @@ $("saveSettings").onclick = () => call("save_settings", {
   qwen_model: $("qwenModel").value.trim() || "qwen-plus",
   voiceprint_threshold: Number($("voiceThreshold").value),
   voiceprint_margin: Number($("voiceMargin").value),
+  scl_trigger_threshold: Number($("sclThreshold").value),
   enable_scl: $("enableScl").checked
 });
 $("copyDialogue").onclick = () => call("copy_result", "dialogue");
@@ -242,6 +242,16 @@ function formatMs(ms) {
 }
 function formatScore(value) {
   return Number.isFinite(Number(value)) ? Number(value).toFixed(2) : "--";
+}
+function renderMatchEvidence(item) {
+  if (item.confidence === "inferred") {
+    const first = escapeHtml(item.best_candidate_name || "第一候选");
+    const second = escapeHtml(item.second_candidate_name || "第二候选");
+    return `inferred · ${first} ${formatScore(item.score)} / ` +
+      `${second} ${formatScore(item.second_score)} · 差 ${formatScore(item.margin)}`;
+  }
+  return `${escapeHtml(item.confidence)} · 匹配 ${formatScore(item.score)} · ` +
+    `领先 ${formatScore(item.margin)}`;
 }
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({

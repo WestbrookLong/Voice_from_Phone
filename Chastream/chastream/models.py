@@ -47,6 +47,8 @@ class SpeakerMatch:
     margin: float
     accepted: bool
     confidence: str
+    best_candidate_name: str = ""
+    second_candidate_name: str = ""
 
 
 @dataclass
@@ -61,6 +63,8 @@ class ResolvedUtterance:
     second_score: float = 0.0
     margin: float = 0.0
     confidence: str = "unknown"
+    best_candidate_name: str = ""
+    second_candidate_name: str = ""
 
 
 @dataclass

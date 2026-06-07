@@ -39,3 +39,5 @@ def test_ambiguous_match_remains_unknown():
 
     assert result.accepted is False
     assert result.profile_id is None
+    assert result.best_candidate_name == "甲"
+    assert result.second_candidate_name == "乙"
