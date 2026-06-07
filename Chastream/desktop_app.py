@@ -172,6 +172,14 @@ class DesktopApi:
         except Exception as exc:
             return self._result(error=str(exc))
 
+    def load_session(self, session_id: str) -> dict:
+        try:
+            state = self.manager.load_session(session_id)
+            title = state["activeSession"]["title"]
+            return self._result(f"已打开历史对话：{title}", state)
+        except Exception as exc:
+            return self._result(error=str(exc))
+
     def copy_result(self, kind: str) -> dict:
         try:
             copy_to_clipboard(self.manager.copy_markdown(kind))

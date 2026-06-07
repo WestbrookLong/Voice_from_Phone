@@ -146,11 +146,13 @@ function renderAnalysis(value) {
 }
 
 function renderHistory(items) {
+  const activeId = state?.activeSession?.id;
   $("history").innerHTML = items.length ? items.map(item => `
-    <div class="history-item">
+    <button class="history-item ${item.id === activeId ? "selected" : ""}"
+      type="button" data-session-id="${escapeHtml(item.id)}">
       <div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.created_at)}</small></div>
       <span>${escapeHtml(item.status)}</span>
-    </div>`).join("") : '<div class="empty">暂无历史会话</div>';
+    </button>`).join("") : '<div class="empty">暂无历史会话</div>';
 }
 
 function currentPayload() {
@@ -205,14 +207,25 @@ $("saveSettings").onclick = () => call("save_settings", {
 $("copyDialogue").onclick = () => call("copy_result", "dialogue");
 $("copyAnalysis").onclick = () => call("copy_result", "analysis");
 $("openData").onclick = () => call("open_data_folder");
+$("history").onclick = async (event) => {
+  const item = event.target.closest("[data-session-id]");
+  if (!item) return;
+  const result = await call("load_session", item.dataset.sessionId);
+  if (result?.ok) activateTab("dialogue");
+};
 
 document.querySelectorAll(".tab").forEach(button => {
-  button.onclick = () => {
-    document.querySelectorAll(".tab").forEach(item => item.classList.toggle("active", item === button));
-    document.querySelectorAll(".panel").forEach(item => item.classList.remove("active"));
-    $(`${button.dataset.tab}Panel`).classList.add("active");
-  };
+  button.onclick = () => activateTab(button.dataset.tab);
 });
+
+function activateTab(name) {
+  document.querySelectorAll(".tab").forEach(item =>
+    item.classList.toggle("active", item.dataset.tab === name)
+  );
+  document.querySelectorAll(".panel").forEach(item => item.classList.remove("active"));
+  $(`${name}Panel`).classList.add("active");
+  $(`${name}Panel`).scrollTop = 0;
+}
 
 function formatDuration(seconds) {
   const value = Math.max(0, Math.floor(seconds));

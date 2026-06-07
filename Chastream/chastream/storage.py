@@ -41,6 +41,25 @@ class SessionRepository:
             encoding="utf-8",
         )
 
+    def load(self, session_id: str) -> SessionState:
+        directory = self.directory(session_id)
+        path = directory / "session.json"
+        if not path.exists():
+            raise FileNotFoundError(f"历史会话不存在：{session_id}")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"历史会话数据损坏：{session_id}") from exc
+        allowed = SessionState.__dataclass_fields__.keys()
+        session = SessionState(**{key: value for key, value in data.items() if key in allowed})
+        if session.id != session_id:
+            raise RuntimeError("历史会话 ID 与目录不一致。")
+        if not session.resolved_utterances:
+            session.resolved_utterances = self._read_json(directory / "dialogue.json", [])
+        if not session.analysis:
+            session.analysis = self._read_json(directory / "analysis.json", {})
+        return session
+
     def write_json(self, session_id: str, name: str, value) -> Path:
         path = self.directory(session_id) / name
         path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -61,6 +80,15 @@ class SessionRepository:
             if len(results) >= limit:
                 break
         return results
+
+    @staticmethod
+    def _read_json(path: Path, fallback):
+        if not path.exists():
+            return fallback
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return fallback
 
 
 class ProfileRepository:
@@ -85,4 +113,3 @@ class ProfileRepository:
         path = PROFILES_ROOT / f"{_safe_name(profile_id)}.json"
         if path.exists():
             path.unlink()
-

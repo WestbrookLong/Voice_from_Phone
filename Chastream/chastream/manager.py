@@ -244,6 +244,15 @@ class ChastreamManager:
         self.profiles.delete(profile_id)
         return self.state()
 
+    def load_session(self, session_id: str) -> dict:
+        with self.lock:
+            if self.recorder and self.recorder.is_alive():
+                raise RuntimeError("录音期间不能切换历史会话。")
+            if self.worker and self.worker.is_alive():
+                raise RuntimeError("当前会话仍在处理中，请完成后再查看历史会话。")
+            self.active = self.sessions.load(session_id)
+        return self.state()
+
     def copy_markdown(self, kind: str) -> str:
         with self.lock:
             if not self.active:
