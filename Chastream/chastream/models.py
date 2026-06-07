@@ -58,6 +58,8 @@ class ResolvedUtterance:
     end_ms: int
     text: str
     score: float = 0.0
+    second_score: float = 0.0
+    margin: float = 0.0
     confidence: str = "unknown"
 
 

@@ -1,9 +1,10 @@
 from chastream.dialogue import (
+    DialogueResolver,
     build_punctuation_units,
     join_timed_words,
     nearest_word_boundary,
 )
-from chastream.models import TimedWord
+from chastream.models import AudioSegment, SpeakerMatch, TimedWord
 
 
 def word(index, start, end, text, punctuation="", sentence_id="1"):
@@ -62,3 +63,16 @@ def test_joined_words_keep_punctuation():
     ]
 
     assert join_timed_words(words) == "甲说。乙说！"
+
+
+def test_resolved_row_keeps_runner_up_and_margin():
+    record = {
+        "segment": AudioSegment("unit-1", 100, 900, "unit.wav", text="测试。"),
+        "match": SpeakerMatch("person-a", "甲", 0.79, 0.31, 0.48, True, "high"),
+    }
+
+    resolved = DialogueResolver._to_resolved(record)
+
+    assert resolved.score == 0.79
+    assert resolved.second_score == 0.31
+    assert resolved.margin == 0.48

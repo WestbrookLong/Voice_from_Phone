@@ -29,9 +29,27 @@ def test_load_history_uses_result_artifacts_for_older_session(monkeypatch, tmp_p
         json.dumps({"overview": "历史整理"}, ensure_ascii=False),
         encoding="utf-8",
     )
+    (directory / "voiceprint.diagnostics.json").write_text(
+        json.dumps(
+            [
+                {
+                    "segmentId": "unit-1",
+                    "match": {"second_score": 0.31, "margin": 0.48},
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (directory / "dialogue.json").write_text(
+        json.dumps([{"id": "unit-1", "text": "历史对话"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     session = SessionRepository().load(session_id)
 
     assert session.title == "历史测试"
-    assert session.resolved_utterances == [{"text": "历史对话"}]
+    assert session.resolved_utterances == [
+        {"id": "unit-1", "text": "历史对话", "second_score": 0.31, "margin": 0.48}
+    ]
     assert session.analysis == {"overview": "历史整理"}

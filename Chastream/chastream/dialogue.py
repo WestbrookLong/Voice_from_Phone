@@ -257,6 +257,8 @@ class DialogueResolver:
             end_ms=segment.end_ms,
             text=segment.text,
             score=match.score,
+            second_score=match.second_score,
+            margin=match.margin,
             confidence=match.confidence,
         )
 

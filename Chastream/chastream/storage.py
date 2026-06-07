@@ -56,6 +56,10 @@ class SessionRepository:
             raise RuntimeError("历史会话 ID 与目录不一致。")
         if not session.resolved_utterances:
             session.resolved_utterances = self._read_json(directory / "dialogue.json", [])
+        self._restore_match_details(
+            session.resolved_utterances,
+            self._read_json(directory / "voiceprint.diagnostics.json", []),
+        )
         if not session.analysis:
             session.analysis = self._read_json(directory / "analysis.json", {})
         return session
@@ -89,6 +93,20 @@ class SessionRepository:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return fallback
+
+    @staticmethod
+    def _restore_match_details(utterances: list[dict], diagnostics: list[dict]) -> None:
+        matches = {
+            item.get("segmentId"): item.get("match")
+            for item in diagnostics
+            if isinstance(item, dict) and item.get("segmentId") and isinstance(item.get("match"), dict)
+        }
+        for utterance in utterances:
+            match = matches.get(utterance.get("id"))
+            if not match:
+                continue
+            utterance.setdefault("second_score", float(match.get("second_score", 0.0)))
+            utterance.setdefault("margin", float(match.get("margin", 0.0)))
 
 
 class ProfileRepository:

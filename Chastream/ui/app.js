@@ -116,7 +116,9 @@ function renderDialogue(items) {
       <div class="turn-head">
         <span class="speaker">${escapeHtml(item.display_name)}</span>
         <span class="time">${formatMs(item.start_ms)} - ${formatMs(item.end_ms)}</span>
-        <span class="confidence">${escapeHtml(item.confidence)} · ${Number(item.score || 0).toFixed(2)}</span>
+        <span class="confidence">
+          ${escapeHtml(item.confidence)} · 匹配 ${formatScore(item.score)} · 领先 ${formatScore(item.margin)}
+        </span>
       </div>
       <p>${escapeHtml(item.text)}</p>
     </div>`).join("");
@@ -237,6 +239,9 @@ function formatMs(ms) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:` +
     `${String(seconds % 60).padStart(2, "0")}.` +
     `${String(value % 1000).padStart(3, "0")}`;
+}
+function formatScore(value) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(2) : "--";
 }
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
