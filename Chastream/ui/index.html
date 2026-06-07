@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chastream</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Chastream</h1>
+        <p id="statusText">等待开始</p>
+      </div>
+      <div class="stage" id="stageBadge">待机</div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <section>
+          <h2>录制</h2>
+          <label>会话标题<input id="sessionTitle" placeholder="例如：产品方案讨论" /></label>
+          <label>麦克风<select id="inputDevice"></select></label>
+          <label>说话人数
+            <select id="speakerMode">
+              <option value="two">2 人（启用 SCL）</option>
+              <option value="one">1 人（不切分）</option>
+            </select>
+          </label>
+          <div class="record-actions">
+            <button id="startButton" class="icon-button start" title="开始录音" aria-label="开始录音">●</button>
+            <button id="pauseButton" class="icon-button" title="暂停录音" aria-label="暂停录音">Ⅱ</button>
+            <button id="resumeButton" class="icon-button" title="继续录音" aria-label="继续录音">▶</button>
+            <button id="stopButton" class="icon-button stop" title="停止录音" aria-label="停止录音">■</button>
+          </div>
+          <button id="importButton" class="secondary">导入 WAV 并处理</button>
+          <div class="duration" id="duration">00:00</div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>声纹档案</h2>
+            <span id="modelStatus"></span>
+          </div>
+          <div class="inline-form">
+            <input id="profileName" placeholder="姓名" />
+            <button id="enrollButton">导入</button>
+          </div>
+          <div class="voiceprint-recorder">
+            <button id="recordSampleButton" class="secondary">录制样本</button>
+            <button id="finishEnrollmentButton" class="secondary">完成注册</button>
+            <button id="clearSamplesButton" class="text-button">清空样本</button>
+          </div>
+          <div id="voiceprintDraft" class="voiceprint-draft">尚未录制样本</div>
+          <div id="profiles" class="profile-list"></div>
+        </section>
+
+        <section>
+          <h2>阿里云与模型</h2>
+          <label>转写模型<input id="asrModel" value="paraformer-v2" /></label>
+          <label>热词表 ID<input id="asrVocabularyId" placeholder="可留空" /></label>
+          <label>语言提示<input id="asrLanguageHints" value="zh,en" /></label>
+          <label>整理模型<input id="qwenModel" value="qwen-plus" /></label>
+          <div class="threshold-grid">
+            <label>匹配阈值<input id="voiceThreshold" type="number" min="-1" max="1" step="0.01" /></label>
+            <label>领先差值<input id="voiceMargin" type="number" min="0" max="1" step="0.01" /></label>
+          </div>
+          <label class="check"><input id="enableScl" type="checkbox" /> 双人模式启用 SCL 精切</label>
+          <button id="saveSettings" class="secondary">保存设置</button>
+          <button id="openData" class="text-button">打开数据目录</button>
+        </section>
+      </aside>
+
+      <section class="content">
+        <nav class="tabs">
+          <button class="tab active" data-tab="dialogue">实名对话</button>
+          <button class="tab" data-tab="analysis">完整整理</button>
+          <button class="tab" data-tab="history">历史会话</button>
+        </nav>
+
+        <div id="dialoguePanel" class="panel active">
+          <div class="panel-toolbar">
+            <h2>按时间整理的对话</h2>
+            <button id="copyDialogue" class="secondary">复制 Markdown</button>
+          </div>
+          <div id="dialogue" class="dialogue empty">完成整场转写和声纹匹配后，对话会出现在这里。</div>
+        </div>
+
+        <div id="analysisPanel" class="panel">
+          <div class="panel-toolbar">
+            <h2>对话分析</h2>
+            <button id="copyAnalysis" class="secondary">复制 Markdown</button>
+          </div>
+          <article id="analysis" class="analysis empty">整理 Agent 尚未生成结果。</article>
+        </div>
+
+        <div id="historyPanel" class="panel">
+          <div class="panel-toolbar"><h2>最近会话</h2></div>
+          <div id="history" class="history-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
