@@ -115,6 +115,7 @@ input:focus, select:focus { border-color: #5f9b74; }
   line-height: 1.5;
 }
 .voiceprint-draft.recording { color: #67d28b; }
+.voiceprint-draft.success { color: #8bd8a4; }
 .voiceprint-draft.error { color: #e98a8a; }
 .profile-list { display: grid; gap: 7px; margin-top: 12px; }
 .profile {

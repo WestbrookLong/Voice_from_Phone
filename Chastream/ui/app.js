@@ -29,19 +29,25 @@ function render(next) {
   $("statusText").textContent = active?.stage_message || "等待开始";
   $("stageBadge").textContent = active?.status || "待机";
   $("duration").textContent = formatDuration(next.recordedSeconds || 0);
-  $("startButton").disabled = next.recording || next.paused || next.processing;
+  const enrollmentRunning = Boolean(next.voiceprintEnrollment?.running);
+  $("startButton").disabled = next.recording || next.paused || next.processing ||
+    enrollmentRunning;
   $("pauseButton").disabled = !next.recording;
   $("resumeButton").disabled = !next.paused;
   $("stopButton").disabled = !(next.recording || next.paused);
-  $("importButton").disabled = next.recording || next.paused || next.processing;
+  $("importButton").disabled = next.recording || next.paused || next.processing ||
+    enrollmentRunning;
   const voiceprintRecording = Boolean(next.voiceprintRecording);
   $("recordSampleButton").textContent = voiceprintRecording ? "停止样本" : "录制样本";
-  $("recordSampleButton").disabled = next.recording || next.paused || next.processing;
-  $("finishEnrollmentButton").disabled = voiceprintRecording ||
+  $("recordSampleButton").disabled = next.recording || next.paused || next.processing ||
+    enrollmentRunning;
+  $("finishEnrollmentButton").textContent = enrollmentRunning ? "正在注册…" : "完成注册";
+  $("finishEnrollmentButton").disabled = enrollmentRunning || voiceprintRecording ||
     (next.voiceprintDraft?.sampleCount || 0) < 3;
-  $("clearSamplesButton").disabled = voiceprintRecording ||
+  $("clearSamplesButton").disabled = enrollmentRunning || voiceprintRecording ||
     (next.voiceprintDraft?.sampleCount || 0) === 0;
-  $("enrollButton").disabled = voiceprintRecording || next.recording || next.paused || next.processing;
+  $("enrollButton").disabled = enrollmentRunning || voiceprintRecording ||
+    next.recording || next.paused || next.processing;
   renderVoiceprintDraft(next);
   renderDevices(next.inputDevices || []);
   renderProfiles(next.profiles || []);
@@ -60,6 +66,25 @@ function render(next) {
 function renderVoiceprintDraft(next) {
   const element = $("voiceprintDraft");
   const draft = next.voiceprintDraft || {};
+  const enrollment = next.voiceprintEnrollment || {};
+  if (enrollment.running) {
+    element.className = "voiceprint-draft recording";
+    const progress = enrollment.total
+      ? ` ${enrollment.current}/${enrollment.total}`
+      : "";
+    element.textContent = `${enrollment.stage || "正在注册声纹"}${progress}`;
+    return;
+  }
+  if (enrollment.error) {
+    element.className = "voiceprint-draft error";
+    element.textContent = `注册失败：${enrollment.error}`;
+    return;
+  }
+  if (enrollment.completedName && !draft.sampleCount) {
+    element.className = "voiceprint-draft success";
+    element.textContent = `已完成声纹注册：${enrollment.completedName}`;
+    return;
+  }
   if (next.voiceprintRecording) {
     element.className = "voiceprint-draft recording";
     element.textContent = `正在录制 ${draft.name || ""} · ${formatDuration(next.voiceprintRecordedSeconds || 0)}`;

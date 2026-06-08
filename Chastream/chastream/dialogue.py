@@ -35,6 +35,7 @@ class DialogueResolver:
         margin: float,
         minimum_speech_ms: int,
         scl_trigger_threshold: float = 0.24,
+        vad: FsmnVadProcessor | None = None,
     ) -> None:
         self.voiceprints = voiceprints
         self.threshold = threshold
@@ -45,7 +46,7 @@ class DialogueResolver:
             minimum_side_ms=max(800, minimum_speech_ms // 2),
             change_probe_threshold=scl_trigger_threshold,
         )
-        self.vad = FsmnVadProcessor()
+        self.vad = vad or FsmnVadProcessor()
 
     def resolve(
         self,

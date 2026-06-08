@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import threading
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -58,7 +59,8 @@ class CampPlusEmbeddingProvider:
             return self._pipeline
 
     def extract(self, audio_path: Path) -> np.ndarray:
-        result = self._get_pipeline()([str(audio_path), str(audio_path)], output_emb=True)
+        with self._lock:
+            result = self._get_pipeline()([str(audio_path), str(audio_path)], output_emb=True)
         embeddings = result.get("embs")
         if embeddings is None or len(embeddings) < 1:
             raise RuntimeError("CAM++ did not return an embedding.")
@@ -74,12 +76,21 @@ class VoiceprintService:
         self.provider = provider or CampPlusEmbeddingProvider()
         self.repository = repository or ProfileRepository()
 
-    def enroll(self, name: str, sample_paths: list[Path]) -> VoiceProfile:
+    def enroll(
+        self,
+        name: str,
+        sample_paths: list[Path],
+        progress: Callable[[int, int], None] | None = None,
+    ) -> VoiceProfile:
         if not name.strip():
             raise ValueError("Speaker name is required.")
         if not sample_paths:
             raise ValueError("At least one voice sample is required.")
-        embeddings = [self.provider.extract(path) for path in sample_paths]
+        embeddings = []
+        for index, path in enumerate(sample_paths, start=1):
+            embeddings.append(self.provider.extract(path))
+            if progress:
+                progress(index, len(sample_paths))
         centroid = normalize_embedding(np.mean(np.stack(embeddings), axis=0))
         profile = VoiceProfile(
             id=f"person-{secrets.token_hex(5)}",

@@ -6,9 +6,10 @@ import shutil
 import threading
 from dataclasses import asdict
 from pathlib import Path
+from typing import Callable
 
 from .analysis import QwenConversationAnalyst
-from .audio import FsmnVadProcessor, WaveRecorder
+from .audio import FsmnVadProcessor, WaveRecorder, normalize_uploaded_wav
 from .config import AppSettings, DATA_ROOT, PROFILES_ROOT
 from .dialogue import DialogueResolver, dialogue_to_markdown
 from .models import SessionState
@@ -24,6 +25,7 @@ class ChastreamManager:
         self.sessions = SessionRepository()
         self.profiles = ProfileRepository()
         self.voiceprints = VoiceprintService(repository=self.profiles)
+        self.vad = FsmnVadProcessor()
         self.active: SessionState | None = None
         self.recorder: WaveRecorder | None = None
         self.worker: threading.Thread | None = None
@@ -31,11 +33,19 @@ class ChastreamManager:
         self.voiceprint_draft_name = ""
         self.voiceprint_draft_paths: list[Path] = []
         self.voiceprint_error: str | None = None
+        self.voiceprint_enrollment_worker: threading.Thread | None = None
+        self.voiceprint_enrollment_stage = ""
+        self.voiceprint_enrollment_current = 0
+        self.voiceprint_enrollment_total = 0
+        self.voiceprint_enrollment_error: str | None = None
+        self.voiceprint_enrollment_completed_name = ""
 
     def start_recording(self, title: str, speaker_mode: str, device: int | None = None) -> dict:
         with self.lock:
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("请先停止声纹样本录制。")
+            if self._voiceprint_enrollment_running():
+                raise RuntimeError("声纹注册仍在处理中。")
             if self.recorder and self.recorder.is_alive():
                 raise RuntimeError("A recording is already in progress.")
             session = self.sessions.create(title, speaker_mode)
@@ -95,14 +105,32 @@ class ChastreamManager:
         return self.state()
 
     def process_existing(self, audio_path: Path, title: str, speaker_mode: str) -> dict:
+        if self._voiceprint_enrollment_running():
+            raise RuntimeError("声纹注册仍在处理中。")
+        audio_path = Path(audio_path)
+        if not audio_path.is_file():
+            raise FileNotFoundError(f"导入的音频文件不存在：{audio_path}")
         session = self.sessions.create(title, speaker_mode)
-        target = Path(session.audio_path)
-        target.write_bytes(audio_path.read_bytes())
         with self.lock:
             self.active = session
-            self.worker = threading.Thread(target=self._process, args=(session,), daemon=True)
+            session.status = "normalizing"
+            session.stage_message = "正在检查并规范化导入音频"
+            self.sessions.save(session)
+            self.worker = threading.Thread(
+                target=self._prepare_existing_and_process,
+                args=(session, audio_path),
+                daemon=True,
+            )
             self.worker.start()
         return self.state()
+
+    def _prepare_existing_and_process(self, session: SessionState, source: Path) -> None:
+        try:
+            normalize_uploaded_wav(source, Path(session.audio_path))
+        except Exception as exc:
+            self._fail(str(exc), session=session)
+            return
+        self._process(session)
 
     def update_settings(self, payload: dict) -> dict:
         with self.lock:
@@ -133,6 +161,14 @@ class ChastreamManager:
                     "samplePaths": [str(path) for path in self.voiceprint_draft_paths],
                     "error": self.voiceprint_error,
                 },
+                "voiceprintEnrollment": {
+                    "running": self._voiceprint_enrollment_running(),
+                    "stage": self.voiceprint_enrollment_stage,
+                    "current": self.voiceprint_enrollment_current,
+                    "total": self.voiceprint_enrollment_total,
+                    "error": self.voiceprint_enrollment_error,
+                    "completedName": self.voiceprint_enrollment_completed_name,
+                },
                 "settings": asdict(self.settings),
                 "profiles": [asdict(item) for item in self.profiles.load_all()],
                 "recentSessions": self.sessions.list_recent(),
@@ -150,6 +186,8 @@ class ChastreamManager:
                 raise RuntimeError("请先停止会话录音。")
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("声纹样本正在录制。")
+            if self._voiceprint_enrollment_running():
+                raise RuntimeError("声纹注册仍在处理中。")
             if self.voiceprint_draft_name and self.voiceprint_draft_name != clean_name:
                 raise RuntimeError(f"当前正在为“{self.voiceprint_draft_name}”采集样本，请先完成或清空。")
             draft_dir = PROFILES_ROOT / "drafts"
@@ -158,6 +196,8 @@ class ChastreamManager:
             recorder = WaveRecorder(path, device=device)
             self.voiceprint_draft_name = clean_name
             self.voiceprint_error = None
+            self.voiceprint_enrollment_error = None
+            self.voiceprint_enrollment_completed_name = ""
             self.voiceprint_recorder = recorder
             recorder.start()
         recorder.ready.wait(timeout=8)
@@ -197,35 +237,57 @@ class ChastreamManager:
         with self.lock:
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("请先停止当前声纹样本。")
+            if self._voiceprint_enrollment_running():
+                raise RuntimeError("声纹注册已经在处理中。")
+            if self.worker and self.worker.is_alive():
+                raise RuntimeError("当前对话仍在处理中，请稍后注册声纹。")
             name = self.voiceprint_draft_name
             paths = list(self.voiceprint_draft_paths)
-        if not name or not paths:
-            raise RuntimeError("还没有可注册的声纹样本。")
-        if len(paths) < 3:
-            raise RuntimeError("请至少录制 3 段样本后再完成注册。")
-        profile = self.enroll_profile(name, paths)
-        self.clear_voiceprint_draft()
-        return profile
+            if not name or not paths:
+                raise RuntimeError("还没有可注册的声纹样本。")
+            if len(paths) < 3:
+                raise RuntimeError("请至少录制 3 段样本后再完成注册。")
+            self.voiceprint_enrollment_stage = "准备声纹注册"
+            self.voiceprint_enrollment_current = 0
+            self.voiceprint_enrollment_total = len(paths)
+            self.voiceprint_enrollment_error = None
+            self.voiceprint_enrollment_completed_name = ""
+            self.voiceprint_enrollment_worker = threading.Thread(
+                target=self._finish_voiceprint_enrollment_worker,
+                args=(name, paths),
+                daemon=True,
+            )
+            self.voiceprint_enrollment_worker.start()
+        return self.state()
 
     def clear_voiceprint_draft(self) -> dict:
         with self.lock:
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("请先停止当前声纹样本。")
+            if self._voiceprint_enrollment_running():
+                raise RuntimeError("声纹注册仍在处理中，暂时不能清空样本。")
             paths = list(self.voiceprint_draft_paths)
             self.voiceprint_draft_paths = []
             self.voiceprint_draft_name = ""
             self.voiceprint_error = None
+            self.voiceprint_enrollment_error = None
+            self.voiceprint_enrollment_completed_name = ""
+            self.voiceprint_enrollment_stage = ""
         for path in paths:
             path.unlink(missing_ok=True)
         return self.state()
 
-    def enroll_profile(self, name: str, sample_paths: list[Path]) -> dict:
+    def enroll_profile(
+        self,
+        name: str,
+        sample_paths: list[Path],
+        progress: Callable[[str, int, int], None] | None = None,
+    ) -> dict:
         if not sample_paths:
             raise ValueError("请选择至少一个 WAV 声纹样本。")
         profile_dir = PROFILES_ROOT / "samples"
         profile_dir.mkdir(parents=True, exist_ok=True)
         local_samples = []
-        vad = FsmnVadProcessor()
         for index, source in enumerate(sample_paths, start=1):
             if source.suffix.lower() != ".wav":
                 raise ValueError("声纹注册目前只支持 WAV 文件。")
@@ -233,12 +295,50 @@ class ChastreamManager:
             shutil.copy2(source, target)
             clean_target = target.with_name(f"{target.stem}.speech.wav")
             try:
-                cleaned, _ = vad.clean(target, clean_target)
+                cleaned, _ = self.vad.clean(target, clean_target)
             except Exception:
                 cleaned = target
             local_samples.append(cleaned)
-        profile = self.voiceprints.enroll(name, local_samples)
+            if progress:
+                progress("正在清理样本", index, len(sample_paths))
+        profile = self.voiceprints.enroll(
+            name,
+            local_samples,
+            progress=(
+                (lambda current, total: progress("正在提取声纹", current, total))
+                if progress
+                else None
+            ),
+        )
         return asdict(profile)
+
+    def _finish_voiceprint_enrollment_worker(self, name: str, paths: list[Path]) -> None:
+        try:
+            self.enroll_profile(name, paths, progress=self._voiceprint_enrollment_progress)
+            with self.lock:
+                self.voiceprint_draft_paths = []
+                self.voiceprint_draft_name = ""
+                self.voiceprint_error = None
+                self.voiceprint_enrollment_stage = "注册完成"
+                self.voiceprint_enrollment_completed_name = name
+            for path in paths:
+                path.unlink(missing_ok=True)
+        except Exception as exc:
+            with self.lock:
+                self.voiceprint_enrollment_stage = "注册失败"
+                self.voiceprint_enrollment_error = str(exc)
+
+    def _voiceprint_enrollment_progress(self, stage: str, current: int, total: int) -> None:
+        with self.lock:
+            self.voiceprint_enrollment_stage = stage
+            self.voiceprint_enrollment_current = current
+            self.voiceprint_enrollment_total = total
+
+    def _voiceprint_enrollment_running(self) -> bool:
+        return bool(
+            self.voiceprint_enrollment_worker
+            and self.voiceprint_enrollment_worker.is_alive()
+        )
 
     def delete_profile(self, profile_id: str) -> dict:
         self.profiles.delete(profile_id)
@@ -305,6 +405,7 @@ class ChastreamManager:
                 margin=float(self.settings.voiceprint_margin),
                 minimum_speech_ms=int(self.settings.minimum_speech_ms),
                 scl_trigger_threshold=float(self.settings.scl_trigger_threshold),
+                vad=self.vad,
             )
             change_points, segments, resolved, diagnostics = resolver.resolve(
                 Path(session.audio_path),

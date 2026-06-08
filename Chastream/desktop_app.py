@@ -155,8 +155,8 @@ class DesktopApi:
 
     def finish_voiceprint_enrollment(self) -> dict:
         try:
-            profile = self.manager.finish_voiceprint_enrollment()
-            return self._result(f"已完成声纹注册：{profile['name']}", self.manager.state())
+            state = self.manager.finish_voiceprint_enrollment()
+            return self._result("声纹注册已在后台开始", state)
         except Exception as exc:
             return self._result(error=str(exc), data=self.manager.state())
 
