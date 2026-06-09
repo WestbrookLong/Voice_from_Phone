@@ -5,6 +5,7 @@ from chastream.dialogue import (
     nearest_word_boundary,
 )
 from chastream.models import AudioSegment, SpeakerMatch, TimedWord
+from chastream.segmentation import SentenceChangeRefiner
 
 
 def word(index, start, end, text, punctuation="", sentence_id="1"):
@@ -100,3 +101,52 @@ def test_unknown_match_stays_unassigned():
     assert resolved.canonical_speaker_id is None
     assert resolved.display_name == "未识别发言人"
     assert resolved.confidence == "low"
+
+
+def test_high_score_with_insufficient_margin_triggers_ambiguity_refinement():
+    resolver = object.__new__(DialogueResolver)
+    resolver.threshold = 0.33
+    resolver.margin = 0.06
+
+    assert resolver._is_ambiguous_match(
+        SpeakerMatch(None, "未识别发言人", 0.71, 0.68, 0.03, False, "low")
+    )
+    assert not resolver._is_ambiguous_match(
+        SpeakerMatch(None, "未识别发言人", 0.30, 0.28, 0.02, False, "low")
+    )
+    assert not resolver._is_ambiguous_match(
+        SpeakerMatch("a", "甲", 0.71, 0.60, 0.11, True, "medium")
+    )
+
+
+def test_forced_ambiguity_probe_bypasses_same_speaker_edge_gate(monkeypatch, tmp_path):
+    class Provider:
+        def extract(self, path):
+            return [1.0, 0.0]
+
+    refiner = SentenceChangeRefiner(
+        Provider(),
+        minimum_side_ms=500,
+        edge_window_ms=700,
+        change_probe_threshold=0.24,
+    )
+    monkeypatch.setattr("chastream.segmentation.slice_wav", lambda *args, **kwargs: args[1])
+    monkeypatch.setattr(
+        "chastream.segmentation.speech_quality",
+        lambda path: {"usable": True},
+    )
+    monkeypatch.setattr("chastream.segmentation.cosine_similarity", lambda left, right: 0.95)
+    monkeypatch.setattr(refiner.locator, "locate", lambda *args, **kwargs: 1.5)
+
+    candidate, diagnostic = refiner.locate(
+        tmp_path / "audio.wav",
+        0,
+        3000,
+        tmp_path / "segments",
+        "unit",
+        force_probe=True,
+    )
+
+    assert candidate == 1500
+    assert diagnostic["forcedByAmbiguousMatch"] is True
+    assert diagnostic["accepted"] is True

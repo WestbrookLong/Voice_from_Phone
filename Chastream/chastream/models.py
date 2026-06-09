@@ -88,6 +88,7 @@ class SessionState:
     audio_path: str = ""
     speaker_mode: str = "two"
     selected_speaker_ids: list[str] = field(default_factory=list)
+    analysis_style: str = "chat"
     task_id: str = ""
     uploaded_url: str = ""
     transcription_url: str = ""

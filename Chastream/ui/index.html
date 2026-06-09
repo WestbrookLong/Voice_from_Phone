@@ -27,6 +27,16 @@
               <option value="one">1 人（不切分）</option>
             </select>
           </label>
+          <label>整理风格
+            <select id="analysisStyle">
+              <option value="chat">Chat（完整对话分析）</option>
+              <option value="meeting_notes">Meeting Note（会议纪要）</option>
+              <option value="formal_paragraph">Formal Paragraphs（正式段落）</option>
+              <option value="summary_bullets">Summary Bullets（摘要要点）</option>
+              <option value="todo_items">Todo Items（待办事项）</option>
+              <option value="faithful_cleanup">Faithful Cleanup（忠实清理）</option>
+            </select>
+          </label>
           <div class="participant-field">
             <div class="participant-heading">
               <span>参与者范围</span>
@@ -96,7 +106,7 @@
 
         <div id="analysisPanel" class="panel">
           <div class="panel-toolbar">
-            <h2>对话分析</h2>
+            <h2 id="analysisHeading">对话分析</h2>
             <button id="copyAnalysis" class="secondary">复制 Markdown</button>
           </div>
           <article id="analysis" class="analysis empty">整理 Agent 尚未生成结果。</article>

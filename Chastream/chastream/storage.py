@@ -25,6 +25,7 @@ class SessionRepository:
         title: str,
         speaker_mode: str,
         selected_speaker_ids: list[str] | None = None,
+        analysis_style: str = "chat",
     ) -> SessionState:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         session_id = f"{stamp}-{secrets.token_hex(3)}"
@@ -33,6 +34,7 @@ class SessionRepository:
             title=title or stamp,
             speaker_mode=speaker_mode,
             selected_speaker_ids=list(selected_speaker_ids or []),
+            analysis_style=analysis_style,
         )
         self.directory(session_id).mkdir(parents=True, exist_ok=True)
         session.audio_path = str(self.directory(session_id) / "audio.wav")

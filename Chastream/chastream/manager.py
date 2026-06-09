@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from .analysis import QwenConversationAnalyst
+from .analysis_prompts import normalize_analysis_style
 from .audio import FsmnVadProcessor, WaveRecorder, normalize_uploaded_wav
 from .config import AppSettings, DATA_ROOT, PROFILES_ROOT
 from .dialogue import DialogueResolver, dialogue_to_markdown
@@ -46,8 +47,10 @@ class ChastreamManager:
         speaker_mode: str,
         selected_speaker_ids: list[str],
         device: int | None = None,
+        analysis_style: str = "chat",
     ) -> dict:
         selected_speaker_ids = self._validate_selected_speakers(selected_speaker_ids)
+        analysis_style = normalize_analysis_style(analysis_style)
         with self.lock:
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("请先停止声纹样本录制。")
@@ -55,7 +58,12 @@ class ChastreamManager:
                 raise RuntimeError("声纹注册仍在处理中。")
             if self.recorder and self.recorder.is_alive():
                 raise RuntimeError("A recording is already in progress.")
-            session = self.sessions.create(title, speaker_mode, selected_speaker_ids)
+            session = self.sessions.create(
+                title,
+                speaker_mode,
+                selected_speaker_ids,
+                analysis_style,
+            )
             session.status = "recording"
             session.stage_message = "正在录音"
             recorder = WaveRecorder(Path(session.audio_path), device=device)
@@ -117,14 +125,21 @@ class ChastreamManager:
         title: str,
         speaker_mode: str,
         selected_speaker_ids: list[str],
+        analysis_style: str = "chat",
     ) -> dict:
         if self._voiceprint_enrollment_running():
             raise RuntimeError("声纹注册仍在处理中。")
         selected_speaker_ids = self._validate_selected_speakers(selected_speaker_ids)
+        analysis_style = normalize_analysis_style(analysis_style)
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise FileNotFoundError(f"导入的音频文件不存在：{audio_path}")
-        session = self.sessions.create(title, speaker_mode, selected_speaker_ids)
+        session = self.sessions.create(
+            title,
+            speaker_mode,
+            selected_speaker_ids,
+            analysis_style,
+        )
         with self.lock:
             self.active = session
             session.status = "normalizing"
@@ -443,9 +458,13 @@ class ChastreamManager:
 
             self._stage(session, "analyzing", "正在整理完整对话")
             analyst = QwenConversationAnalyst(self.settings.qwen_model)
-            session.analysis = analyst.analyze(resolved)
+            session.analysis = analyst.analyze(resolved, session.analysis_style)
             self.sessions.write_json(session.id, "analysis.json", session.analysis)
-            self.sessions.write_text(session.id, "analysis.md", analyst.to_markdown(session.analysis))
+            self.sessions.write_text(
+                session.id,
+                "analysis.md",
+                analyst.to_markdown(session.analysis, session.analysis_style),
+            )
             session.status = "done"
             session.stage_message = "已完成"
             self.sessions.save(session)

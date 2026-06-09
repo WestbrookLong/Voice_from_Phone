@@ -69,6 +69,8 @@ class SentenceChangeRefiner:
         end_ms: int,
         output_dir: Path,
         token: str,
+        *,
+        force_probe: bool = False,
     ) -> tuple[int | None, dict]:
         duration_ms = end_ms - start_ms
         record = {
@@ -76,6 +78,7 @@ class SentenceChangeRefiner:
             "endMs": end_ms,
             "durationMs": duration_ms,
             "accepted": False,
+            "forcedByAmbiguousMatch": force_probe,
         }
         if duration_ms < self.minimum_side_ms * 2:
             record["reason"] = "unit_too_short"
@@ -112,7 +115,7 @@ class SentenceChangeRefiner:
         right_embedding = self.embedding_provider.extract(right_path)
         edge_similarity = cosine_similarity(left_embedding, right_embedding)
         record["edgeSimilarity"] = edge_similarity
-        if edge_similarity >= self.change_probe_threshold:
+        if edge_similarity >= self.change_probe_threshold and not force_probe:
             record["reason"] = "same_speaker_edges"
             return None, record
 

@@ -53,3 +53,20 @@ def test_load_history_uses_result_artifacts_for_older_session(monkeypatch, tmp_p
         {"id": "unit-1", "text": "历史对话", "second_score": 0.31, "margin": 0.48}
     ]
     assert session.analysis == {"overview": "历史整理"}
+    assert session.analysis_style == "chat"
+
+
+def test_session_creation_persists_analysis_style(monkeypatch, tmp_path):
+    monkeypatch.setattr(storage_module, "SESSIONS_ROOT", tmp_path)
+    repository = SessionRepository()
+
+    session = repository.create(
+        "正式整理",
+        "two",
+        ["person-a", "person-b"],
+        "formal_paragraph",
+    )
+    restored = repository.load(session.id)
+
+    assert restored.analysis_style == "formal_paragraph"
+    assert restored.selected_speaker_ids == ["person-a", "person-b"]

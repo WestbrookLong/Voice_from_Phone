@@ -214,6 +214,11 @@ input:focus, select:focus { border-color: #5f9b74; }
 .analysis p { color: #d8e1db; }
 .analysis ul { margin: 8px 0; padding-left: 20px; }
 .analysis li { margin: 5px 0; }
+.clean-turn { padding: 12px 0; border-bottom: 1px solid #28312d; }
+.clean-turn div { display: flex; gap: 10px; align-items: baseline; }
+.clean-turn strong { color: #83d19c; }
+.clean-turn span { color: #718078; font-size: 11px; }
+.clean-turn p { margin-top: 6px; }
 
 .history-list { display: grid; gap: 1px; background: #29312e; }
 .history-item {

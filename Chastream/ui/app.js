@@ -34,6 +34,7 @@ function render(next) {
   $("duration").textContent = formatDuration(next.recordedSeconds || 0);
   const enrollmentRunning = Boolean(next.voiceprintEnrollment?.running);
   const sessionLocked = next.recording || next.paused || next.processing;
+  $("analysisStyle").disabled = sessionLocked;
   renderParticipants(next.profiles || [], sessionLocked || enrollmentRunning);
   const hasParticipants = selectedSpeakerIds.size > 0;
   $("startButton").disabled = next.recording || next.paused || next.processing ||
@@ -58,7 +59,7 @@ function render(next) {
   renderDevices(next.inputDevices || []);
   renderProfiles(next.profiles || []);
   renderDialogue(active?.resolved_utterances || []);
-  renderAnalysis(active?.analysis || {});
+  renderAnalysis(active?.analysis || {}, active?.analysis_style || "chat");
   renderHistory(next.recentSessions || []);
   const model = next.modelAvailability || {};
   const modelText = model.campPlus ? "CAM++ 可用" : "依赖未完成";
@@ -183,8 +184,17 @@ function renderDialogue(items) {
     </div>`).join("");
 }
 
-function renderAnalysis(value) {
+function renderAnalysis(value, style) {
   const element = $("analysis");
+  const labels = {
+    chat: "对话分析",
+    meeting_notes: "会议纪要",
+    formal_paragraph: "正式段落",
+    summary_bullets: "摘要要点",
+    todo_items: "待办事项",
+    faithful_cleanup: "忠实清理"
+  };
+  $("analysisHeading").textContent = labels[style] || "对话整理";
   if (!Object.keys(value).length) {
     element.className = "analysis empty";
     element.textContent = "整理 Agent 尚未生成结果。";
@@ -193,17 +203,42 @@ function renderAnalysis(value) {
   element.className = "analysis";
   const list = (title, values) => values?.length
     ? `<h3>${title}</h3><ul>${values.map(item => `<li>${escapeHtml(String(item))}</li>`).join("")}</ul>` : "";
+  const actions = value.actionItems?.length
+    ? `<h3>后续行动</h3><ul>${value.actionItems.map(item =>
+      `<li>${escapeHtml(item.task || "")}（${escapeHtml(item.owner || "未指定")} · ${escapeHtml(item.deadline || "未指定")}）</li>`
+    ).join("")}</ul>` : "";
+  const title = `<h2>${escapeHtml(value.title || labels[style] || "对话整理")}</h2>`;
+  if (style === "formal_paragraph") {
+    element.innerHTML = title + (value.paragraphs || [])
+      .map(item => `<p>${escapeHtml(item)}</p>`).join("");
+    return;
+  }
+  if (style === "summary_bullets") {
+    element.innerHTML = title + list("摘要要点", value.bullets);
+    return;
+  }
+  if (style === "todo_items") {
+    element.innerHTML = title + actions;
+    return;
+  }
+  if (style === "faithful_cleanup") {
+    element.innerHTML = title + (value.turns || []).map(item => `
+      <div class="clean-turn">
+        <div><strong>${escapeHtml(item.speaker || "未识别发言人")}</strong>
+          <span>${escapeHtml(item.time || "")}</span></div>
+        <p>${escapeHtml(item.text || "")}</p>
+      </div>`).join("");
+    return;
+  }
   element.innerHTML = `
-    <h2>${escapeHtml(value.title || "对话纪要")}</h2>
-    <h3>概览</h3><p>${escapeHtml(value.overview || "")}</p>
+    ${title}
+    ${value.overview ? `<h3>概览</h3><p>${escapeHtml(value.overview)}</p>` : ""}
     ${list("核心观点", value.keyPoints)}
-    ${list("共识", value.agreements)}
-    ${list("分歧", value.disagreements)}
+    ${style === "chat" ? list("共识", value.agreements) : ""}
+    ${style === "chat" ? list("分歧", value.disagreements) : ""}
     ${list("决定事项", value.decisions)}
     ${list("未解决问题", value.openQuestions)}
-    ${value.actionItems?.length ? `<h3>后续行动</h3><ul>${value.actionItems.map(item =>
-      `<li>${escapeHtml(item.task || "")}（${escapeHtml(item.owner || "未指定")} · ${escapeHtml(item.deadline || "未指定")}）</li>`
-    ).join("")}</ul>` : ""}`;
+    ${actions}`;
 }
 
 function renderHistory(items) {
@@ -220,6 +255,7 @@ function currentPayload() {
   return {
     title: $("sessionTitle").value,
     speakerMode: $("speakerMode").value,
+    analysisStyle: $("analysisStyle").value,
     selectedSpeakerIds: [...selectedSpeakerIds],
     device: $("inputDevice").value
   };

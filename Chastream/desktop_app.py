@@ -73,7 +73,8 @@ class DesktopApi:
                 str(value.get("title", "")).strip(),
                 str(value.get("speakerMode", "two")),
                 list(value.get("selectedSpeakerIds") or []),
-                device,
+                device=device,
+                analysis_style=str(value.get("analysisStyle", "chat")),
             )
             return self._result("录音已开始", state)
         except Exception as exc:
@@ -115,6 +116,7 @@ class DesktopApi:
                 str(value.get("title", "")).strip() or selected.stem,
                 str(value.get("speakerMode", "two")),
                 list(value.get("selectedSpeakerIds") or []),
+                analysis_style=str(value.get("analysisStyle", "chat")),
             )
             return self._result("已导入录音并开始处理", state)
         except Exception as exc:

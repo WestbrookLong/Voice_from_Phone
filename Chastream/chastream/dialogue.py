@@ -64,11 +64,14 @@ class DialogueResolver:
         units: list[PunctuationUnit] = []
         change_points: list[int] = []
         scl_diagnostics: list[dict] = []
+        probe_records: dict[str, dict] = {}
         for unit in base_units:
             refined, points, diagnostics = self._refine_unit(
                 audio_path,
                 unit,
+                profiles,
                 segments_dir / "scl-refinement",
+                probe_records,
                 enable_scl=enable_scl,
                 depth=0,
             )
@@ -77,7 +80,8 @@ class DialogueResolver:
             scl_diagnostics.extend(diagnostics)
 
         records = [
-            self._match_unit(audio_path, unit, profiles, segments_dir / "sentence-units")
+            probe_records.get(unit.id)
+            or self._match_unit(audio_path, unit, profiles, segments_dir / "sentence-units")
             for unit in units
         ]
         segments = [record["segment"] for record in records]
@@ -110,21 +114,37 @@ class DialogueResolver:
         self,
         audio_path: Path,
         unit: PunctuationUnit,
+        profiles: list[VoiceProfile],
         output_dir: Path,
+        probe_records: dict[str, dict],
         *,
         enable_scl: bool,
         depth: int,
     ) -> tuple[list[PunctuationUnit], list[int], list[dict]]:
         if not enable_scl or depth >= 2 or len(unit.words) < 2:
             return [unit], [], []
+        ambiguity_probe = None
+        force_probe = False
+        if len(profiles) >= 2:
+            ambiguity_probe = self._match_unit(
+                audio_path,
+                unit,
+                profiles,
+                output_dir.parent / "sentence-units",
+            )
+            probe_records[unit.id] = ambiguity_probe
+            force_probe = self._is_ambiguous_match(ambiguity_probe["match"])
         candidate, diagnostic = self.refiner.locate(
             audio_path,
             unit.start_ms,
             unit.end_ms,
             output_dir,
             f"{unit.id}-depth-{depth}",
+            force_probe=force_probe,
         )
         diagnostic["unitId"] = unit.id
+        if ambiguity_probe is not None:
+            diagnostic["ambiguityMatch"] = asdict(ambiguity_probe["match"])
         if candidate is None:
             return [unit], [], [diagnostic]
 
@@ -163,14 +183,18 @@ class DialogueResolver:
         left_units, left_points, left_diagnostics = self._refine_unit(
             audio_path,
             left,
+            profiles,
             output_dir,
+            probe_records,
             enable_scl=enable_scl,
             depth=depth + 1,
         )
         right_units, right_points, right_diagnostics = self._refine_unit(
             audio_path,
             right,
+            profiles,
             output_dir,
+            probe_records,
             enable_scl=enable_scl,
             depth=depth + 1,
         )
@@ -225,6 +249,9 @@ class DialogueResolver:
             "speechRanges": speech_ranges,
             "embeddingAudioPath": str(embedding_path),
         }
+
+    def _is_ambiguous_match(self, match: SpeakerMatch) -> bool:
+        return match.score >= self.threshold and match.margin < self.margin
 
     @staticmethod
     def _to_resolved(record: dict) -> ResolvedUtterance:
