@@ -80,7 +80,6 @@ class DialogueResolver:
             self._match_unit(audio_path, unit, profiles, segments_dir / "sentence-units")
             for unit in units
         ]
-        self._smooth_unknown_matches(records)
         segments = [record["segment"] for record in records]
         resolved = [self._to_resolved(record) for record in records]
         diagnostics = [
@@ -101,7 +100,6 @@ class DialogueResolver:
                     "speechRanges": record["speechRanges"],
                     "embeddingAudioPath": record["embeddingAudioPath"],
                     "match": asdict(record["match"]),
-                    "smoothed": record.get("smoothed", False),
                 }
                 for record in records
             ],
@@ -227,29 +225,6 @@ class DialogueResolver:
             "speechRanges": speech_ranges,
             "embeddingAudioPath": str(embedding_path),
         }
-
-    @staticmethod
-    def _smooth_unknown_matches(records: list[dict]) -> None:
-        for index in range(1, len(records) - 1):
-            current = records[index]
-            if current["match"].accepted:
-                continue
-            left = records[index - 1]["match"]
-            right = records[index + 1]["match"]
-            if left.accepted and right.accepted and left.profile_id == right.profile_id:
-                direct: SpeakerMatch = current["match"]
-                current["match"] = SpeakerMatch(
-                    profile_id=left.profile_id,
-                    display_name=left.display_name,
-                    score=direct.score,
-                    second_score=direct.second_score,
-                    margin=direct.margin,
-                    accepted=True,
-                    confidence="inferred",
-                    best_candidate_name=direct.best_candidate_name,
-                    second_candidate_name=direct.second_candidate_name,
-                )
-                current["smoothed"] = True
 
     @staticmethod
     def _to_resolved(record: dict) -> ResolvedUtterance:

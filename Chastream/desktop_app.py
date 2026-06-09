@@ -72,6 +72,7 @@ class DesktopApi:
             state = self.manager.start_recording(
                 str(value.get("title", "")).strip(),
                 str(value.get("speakerMode", "two")),
+                list(value.get("selectedSpeakerIds") or []),
                 device,
             )
             return self._result("录音已开始", state)
@@ -113,6 +114,7 @@ class DesktopApi:
                 selected,
                 str(value.get("title", "")).strip() or selected.stem,
                 str(value.get("speakerMode", "two")),
+                list(value.get("selectedSpeakerIds") or []),
             )
             return self._result("已导入录音并开始处理", state)
         except Exception as exc:

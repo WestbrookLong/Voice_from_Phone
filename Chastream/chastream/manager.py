@@ -40,7 +40,14 @@ class ChastreamManager:
         self.voiceprint_enrollment_error: str | None = None
         self.voiceprint_enrollment_completed_name = ""
 
-    def start_recording(self, title: str, speaker_mode: str, device: int | None = None) -> dict:
+    def start_recording(
+        self,
+        title: str,
+        speaker_mode: str,
+        selected_speaker_ids: list[str],
+        device: int | None = None,
+    ) -> dict:
+        selected_speaker_ids = self._validate_selected_speakers(selected_speaker_ids)
         with self.lock:
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("请先停止声纹样本录制。")
@@ -48,7 +55,7 @@ class ChastreamManager:
                 raise RuntimeError("声纹注册仍在处理中。")
             if self.recorder and self.recorder.is_alive():
                 raise RuntimeError("A recording is already in progress.")
-            session = self.sessions.create(title, speaker_mode)
+            session = self.sessions.create(title, speaker_mode, selected_speaker_ids)
             session.status = "recording"
             session.stage_message = "正在录音"
             recorder = WaveRecorder(Path(session.audio_path), device=device)
@@ -104,13 +111,20 @@ class ChastreamManager:
             self.worker.start()
         return self.state()
 
-    def process_existing(self, audio_path: Path, title: str, speaker_mode: str) -> dict:
+    def process_existing(
+        self,
+        audio_path: Path,
+        title: str,
+        speaker_mode: str,
+        selected_speaker_ids: list[str],
+    ) -> dict:
         if self._voiceprint_enrollment_running():
             raise RuntimeError("声纹注册仍在处理中。")
+        selected_speaker_ids = self._validate_selected_speakers(selected_speaker_ids)
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise FileNotFoundError(f"导入的音频文件不存在：{audio_path}")
-        session = self.sessions.create(title, speaker_mode)
+        session = self.sessions.create(title, speaker_mode, selected_speaker_ids)
         with self.lock:
             self.active = session
             session.status = "normalizing"
@@ -341,6 +355,11 @@ class ChastreamManager:
         )
 
     def delete_profile(self, profile_id: str) -> dict:
+        with self.lock:
+            if self.recorder and self.recorder.is_alive():
+                raise RuntimeError("录音期间不能删除参与者声纹。")
+            if self.worker and self.worker.is_alive():
+                raise RuntimeError("当前会话仍在处理中，不能删除参与者声纹。")
         self.profiles.delete(profile_id)
         return self.state()
 
@@ -365,9 +384,7 @@ class ChastreamManager:
 
     def _process(self, session: SessionState) -> None:
         try:
-            profiles = self.profiles.load_all()
-            if not profiles:
-                raise RuntimeError("请先注册至少一个声纹档案，再处理对话。")
+            profiles = self._profiles_for_session(session)
 
             self._stage(session, "uploading", "正在上传录音")
             uploader = DashScopeTemporaryUploader(model=self.settings.asr_model)
@@ -434,6 +451,30 @@ class ChastreamManager:
             self.sessions.save(session)
         except Exception as exc:
             self._fail(str(exc), session=session)
+
+    def _validate_selected_speakers(self, profile_ids: list[str] | None) -> list[str]:
+        if not isinstance(profile_ids, (list, tuple)):
+            raise ValueError("参与者范围格式无效，请重新选择。")
+        selected = list(dict.fromkeys(str(item).strip() for item in (profile_ids or []) if str(item).strip()))
+        if not selected:
+            raise ValueError("请至少选择一名已注册参与者。")
+        registered = {profile.id for profile in self.profiles.load_all()}
+        missing = [profile_id for profile_id in selected if profile_id not in registered]
+        if missing:
+            raise ValueError("选定参与者中包含未注册或已删除的声纹，请重新选择。")
+        return selected
+
+    def _profiles_for_session(self, session: SessionState):
+        profiles = self.profiles.load_all()
+        if not profiles:
+            raise RuntimeError("请先注册至少一个声纹档案，再处理对话。")
+        if not session.selected_speaker_ids:
+            return profiles
+        selected = set(session.selected_speaker_ids)
+        scoped = [profile for profile in profiles if profile.id in selected]
+        if len(scoped) != len(selected):
+            raise RuntimeError("本次会话选定的参与者声纹已被删除，无法继续匹配。")
+        return scoped
 
     def _stage(self, session: SessionState, status: str, message: str) -> None:
         with self.lock:

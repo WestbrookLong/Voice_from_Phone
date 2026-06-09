@@ -20,10 +20,20 @@ class SessionRepository:
     def __init__(self) -> None:
         configure_local_caches()
 
-    def create(self, title: str, speaker_mode: str) -> SessionState:
+    def create(
+        self,
+        title: str,
+        speaker_mode: str,
+        selected_speaker_ids: list[str] | None = None,
+    ) -> SessionState:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         session_id = f"{stamp}-{secrets.token_hex(3)}"
-        session = SessionState(id=session_id, title=title or stamp, speaker_mode=speaker_mode)
+        session = SessionState(
+            id=session_id,
+            title=title or stamp,
+            speaker_mode=speaker_mode,
+            selected_speaker_ids=list(selected_speaker_ids or []),
+        )
         self.directory(session_id).mkdir(parents=True, exist_ok=True)
         session.audio_path = str(self.directory(session_id) / "audio.wav")
         self.save(session)

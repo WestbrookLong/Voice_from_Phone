@@ -1,6 +1,9 @@
 const $ = (id) => document.getElementById(id);
 let state = null;
 let settingsHydrated = false;
+let participantSelectionInitialized = false;
+let knownProfileIds = new Set();
+let selectedSpeakerIds = new Set();
 
 async function call(name, ...args) {
   const api = window.pywebview?.api;
@@ -30,13 +33,16 @@ function render(next) {
   $("stageBadge").textContent = active?.status || "待机";
   $("duration").textContent = formatDuration(next.recordedSeconds || 0);
   const enrollmentRunning = Boolean(next.voiceprintEnrollment?.running);
+  const sessionLocked = next.recording || next.paused || next.processing;
+  renderParticipants(next.profiles || [], sessionLocked || enrollmentRunning);
+  const hasParticipants = selectedSpeakerIds.size > 0;
   $("startButton").disabled = next.recording || next.paused || next.processing ||
-    enrollmentRunning;
+    enrollmentRunning || !hasParticipants;
   $("pauseButton").disabled = !next.recording;
   $("resumeButton").disabled = !next.paused;
   $("stopButton").disabled = !(next.recording || next.paused);
   $("importButton").disabled = next.recording || next.paused || next.processing ||
-    enrollmentRunning;
+    enrollmentRunning || !hasParticipants;
   const voiceprintRecording = Boolean(next.voiceprintRecording);
   $("recordSampleButton").textContent = voiceprintRecording ? "停止样本" : "录制样本";
   $("recordSampleButton").disabled = next.recording || next.paused || next.processing ||
@@ -129,6 +135,35 @@ function renderProfiles(profiles) {
     </div>`).join("") : '<div class="empty">尚未注册声纹</div>';
 }
 
+function renderParticipants(profiles, locked) {
+  const availableIds = new Set(profiles.map(profile => profile.id));
+  if (!participantSelectionInitialized) {
+    selectedSpeakerIds = new Set(availableIds);
+    participantSelectionInitialized = true;
+  } else {
+    for (const id of availableIds) {
+      if (!knownProfileIds.has(id)) selectedSpeakerIds.add(id);
+    }
+    for (const id of selectedSpeakerIds) {
+      if (!availableIds.has(id)) selectedSpeakerIds.delete(id);
+    }
+  }
+  knownProfileIds = availableIds;
+
+  const element = $("participantOptions");
+  element.innerHTML = profiles.length ? profiles.map(profile => `
+    <label class="participant-option">
+      <input type="checkbox" value="${escapeHtml(profile.id)}"
+        ${selectedSpeakerIds.has(profile.id) ? "checked" : ""}
+        ${locked ? "disabled" : ""} />
+      <span>${escapeHtml(profile.name)}</span>
+    </label>`).join("") : '<div class="participant-empty">请先注册声纹档案</div>';
+  const allSelected = availableIds.size > 0 &&
+    [...availableIds].every(id => selectedSpeakerIds.has(id));
+  $("selectAllParticipants").textContent = allSelected ? "清空" : "全选";
+  $("selectAllParticipants").disabled = locked || !profiles.length;
+}
+
 function renderDialogue(items) {
   const element = $("dialogue");
   if (!items.length) {
@@ -185,6 +220,7 @@ function currentPayload() {
   return {
     title: $("sessionTitle").value,
     speakerMode: $("speakerMode").value,
+    selectedSpeakerIds: [...selectedSpeakerIds],
     device: $("inputDevice").value
   };
 }
@@ -201,6 +237,19 @@ $("pauseButton").onclick = () => call("pause_recording");
 $("resumeButton").onclick = () => call("resume_recording");
 $("stopButton").onclick = () => call("stop_recording");
 $("importButton").onclick = () => call("import_audio", currentPayload());
+$("participantOptions").onchange = event => {
+  const input = event.target.closest('input[type="checkbox"]');
+  if (!input) return;
+  if (input.checked) selectedSpeakerIds.add(input.value);
+  else selectedSpeakerIds.delete(input.value);
+  render(state);
+};
+$("selectAllParticipants").onclick = () => {
+  const allSelected = knownProfileIds.size > 0 &&
+    [...knownProfileIds].every(id => selectedSpeakerIds.has(id));
+  selectedSpeakerIds = allSelected ? new Set() : new Set(knownProfileIds);
+  render(state);
+};
 $("enrollButton").onclick = () => {
   const name = $("profileName").value.trim();
   if (!name) return toast("请先填写姓名", true);
@@ -269,11 +318,8 @@ function formatScore(value) {
   return Number.isFinite(Number(value)) ? Number(value).toFixed(2) : "--";
 }
 function renderMatchEvidence(item) {
-  if (item.confidence === "inferred") {
-    const first = escapeHtml(item.best_candidate_name || "第一候选");
-    const second = escapeHtml(item.second_candidate_name || "第二候选");
-    return `inferred · ${first} ${formatScore(item.score)} / ` +
-      `${second} ${formatScore(item.second_score)} · 差 ${formatScore(item.margin)}`;
+  if (!item.canonical_speaker_id || item.confidence === "unknown" || item.confidence === "low") {
+    return "未识别";
   }
   return `${escapeHtml(item.confidence)} · 匹配 ${formatScore(item.score)} · ` +
     `领先 ${formatScore(item.margin)}`;

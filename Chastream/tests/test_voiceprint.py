@@ -41,3 +41,20 @@ def test_ambiguous_match_remains_unknown():
     assert result.profile_id is None
     assert result.best_candidate_name == "甲"
     assert result.second_candidate_name == "乙"
+
+
+def test_selected_candidate_below_match_threshold_remains_unknown():
+    service = VoiceprintService(provider=FakeProvider(), repository=FakeRepository())
+    profiles = [profile("person-a", "甲", [1.0, 0.0])]
+
+    result = service.match(
+        np.array([0.2, 0.98]),
+        profiles,
+        threshold=0.33,
+        required_margin=0.06,
+    )
+
+    assert result.score < 0.33
+    assert result.accepted is False
+    assert result.profile_id is None
+    assert result.display_name == "未识别发言人"

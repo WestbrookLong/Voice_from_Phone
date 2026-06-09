@@ -62,6 +62,44 @@ input, select {
 }
 input:focus, select:focus { border-color: #5f9b74; }
 
+.participant-field { margin: 11px 0; }
+.participant-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: #91a097;
+  font-size: 12px;
+}
+.inline-text-button {
+  padding: 0;
+  border: 0;
+  color: #83c798;
+  font-size: 11px;
+  background: transparent;
+}
+.inline-text-button:disabled { cursor: default; opacity: .4; }
+.participant-options {
+  max-height: 132px;
+  overflow-y: auto;
+  border: 1px solid #35413b;
+  border-radius: 4px;
+  background: #0d110f;
+}
+.participant-option {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 7px 10px;
+  color: #d7e1da;
+  font-size: 12px;
+}
+.participant-option + .participant-option { border-top: 1px solid #252e29; }
+.participant-option input { width: 15px; height: 15px; margin: 0; }
+.participant-empty { padding: 10px; color: #6e7b74; font-size: 11px; }
+
 .record-actions {
   display: grid;
   grid-template-columns: repeat(4, 42px);
