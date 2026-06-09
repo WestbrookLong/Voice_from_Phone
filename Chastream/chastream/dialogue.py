@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .audio import FsmnVadProcessor, slice_wav, speech_quality
-from .models import AudioSegment, ResolvedUtterance, SpeakerMatch, TimedWord, VoiceProfile
+from .models import AudioSegment, ResolvedUtterance, SpeakerCollection, SpeakerMatch, TimedWord
 from .segmentation import SentenceChangeRefiner
 from .voiceprint import VoiceprintService
 
@@ -52,7 +52,7 @@ class DialogueResolver:
         self,
         audio_path: Path,
         words: list[TimedWord],
-        profiles: list[VoiceProfile],
+        profiles: list[SpeakerCollection],
         segments_dir: Path,
         *,
         enable_scl: bool,
@@ -114,7 +114,7 @@ class DialogueResolver:
         self,
         audio_path: Path,
         unit: PunctuationUnit,
-        profiles: list[VoiceProfile],
+        profiles: list[SpeakerCollection],
         output_dir: Path,
         probe_records: dict[str, dict],
         *,
@@ -208,7 +208,7 @@ class DialogueResolver:
         self,
         audio_path: Path,
         unit: PunctuationUnit,
-        profiles: list[VoiceProfile],
+        profiles: list[SpeakerCollection],
         output_dir: Path,
     ) -> dict:
         output_dir.mkdir(parents=True, exist_ok=True)

@@ -8,7 +8,7 @@ from typing import Callable
 import numpy as np
 
 from .config import configure_local_caches
-from .models import SpeakerMatch, VoiceProfile
+from .models import SpeakerCollection, SpeakerMatch, VoiceElement
 from .storage import ProfileRepository
 
 
@@ -76,12 +76,12 @@ class VoiceprintService:
         self.provider = provider or CampPlusEmbeddingProvider()
         self.repository = repository or ProfileRepository()
 
-    def enroll(
+    def build_element(
         self,
         name: str,
         sample_paths: list[Path],
         progress: Callable[[int, int], None] | None = None,
-    ) -> VoiceProfile:
+    ) -> VoiceElement:
         if not name.strip():
             raise ValueError("Speaker name is required.")
         if not sample_paths:
@@ -92,46 +92,89 @@ class VoiceprintService:
             if progress:
                 progress(index, len(sample_paths))
         centroid = normalize_embedding(np.mean(np.stack(embeddings), axis=0))
-        profile = VoiceProfile(
-            id=f"person-{secrets.token_hex(5)}",
+        return VoiceElement(
+            id=f"element-{secrets.token_hex(5)}",
             name=name.strip(),
             model_id=self.provider.model_id,
             sample_paths=[str(path) for path in sample_paths],
             embeddings=[item.tolist() for item in embeddings],
             centroid=centroid.tolist(),
         )
-        self.repository.save(profile)
-        return profile
 
     def match(
         self,
         embedding,
-        profiles: list[VoiceProfile],
+        collections: list[SpeakerCollection],
         *,
         threshold: float,
         required_margin: float,
     ) -> SpeakerMatch:
-        scores = sorted(
-            ((cosine_similarity(embedding, profile.centroid), profile) for profile in profiles if profile.centroid),
-            key=lambda item: item[0],
-            reverse=True,
-        )
-        if not scores:
+        collection_scores = []
+        for collection in collections:
+            element_scores = sorted(
+                (
+                    (cosine_similarity(embedding, element.centroid), element)
+                    for element in collection.elements
+                    if not element.hidden and element.centroid
+                ),
+                key=lambda item: item[0],
+                reverse=True,
+            )
+            if not element_scores:
+                continue
+            best_element_score, best_element = element_scores[0]
+            collection_scores.append(
+                {
+                    "collection": collection,
+                    "score": best_element_score,
+                    "best_element": best_element,
+                    "elements": [
+                        {
+                            "elementId": element.id,
+                            "elementName": element.name,
+                            "score": score,
+                        }
+                        for score, element in element_scores
+                    ],
+                }
+            )
+        collection_scores.sort(key=lambda item: item["score"], reverse=True)
+        if not collection_scores:
             return SpeakerMatch(None, "未识别发言人", 0.0, 0.0, 0.0, False, "unknown")
-        best_score, best_profile = scores[0]
-        second_score = scores[1][0] if len(scores) > 1 else -1.0
-        second_name = scores[1][1].name if len(scores) > 1 else ""
+        best = collection_scores[0]
+        second = collection_scores[1] if len(collection_scores) > 1 else None
+        best_score = float(best["score"])
+        best_collection = best["collection"]
+        best_element = best["best_element"]
+        second_score = float(second["score"]) if second else -1.0
+        second_collection = second["collection"] if second else None
+        second_element = second["best_element"] if second else None
         margin = best_score - second_score
         accepted = best_score >= threshold and margin >= required_margin
         confidence = "high" if accepted and best_score >= threshold + 0.12 else "medium" if accepted else "low"
         return SpeakerMatch(
-            profile_id=best_profile.id if accepted else None,
-            display_name=best_profile.name if accepted else "未识别发言人",
+            profile_id=best_collection.id if accepted else None,
+            display_name=best_collection.name if accepted else "未识别发言人",
             score=best_score,
             second_score=second_score,
             margin=margin,
             accepted=accepted,
             confidence=confidence,
-            best_candidate_name=best_profile.name,
-            second_candidate_name=second_name,
+            best_candidate_name=best_collection.name,
+            second_candidate_name=second_collection.name if second_collection else "",
+            best_element_id=best_element.id,
+            best_element_name=best_element.name,
+            second_element_id=second_element.id if second_element else "",
+            second_element_name=second_element.name if second_element else "",
+            collection_scores=[
+                {
+                    "collectionId": item["collection"].id,
+                    "collectionName": item["collection"].name,
+                    "score": item["score"],
+                    "bestElementId": item["best_element"].id,
+                    "bestElementName": item["best_element"].name,
+                    "elements": item["elements"],
+                }
+                for item in collection_scores
+            ],
         )

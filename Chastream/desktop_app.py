@@ -122,7 +122,83 @@ class DesktopApi:
         except Exception as exc:
             return self._result(error=str(exc))
 
-    def enroll_profile(self, name: str) -> dict:
+    def create_voiceprint_collection(self, name: str) -> dict:
+        try:
+            return self._result(
+                "声纹集合已创建",
+                self.manager.create_voiceprint_collection(name),
+            )
+        except Exception as exc:
+            return self._result(error=str(exc))
+
+    def rename_voiceprint_collection(self, collection_id: str, name: str) -> dict:
+        try:
+            return self._result(
+                "声纹集合已重命名",
+                self.manager.rename_voiceprint_collection(collection_id, name),
+            )
+        except Exception as exc:
+            return self._result(error=str(exc))
+
+    def delete_voiceprint_collection(self, collection_id: str) -> dict:
+        try:
+            return self._result(
+                "声纹集合已删除",
+                self.manager.delete_voiceprint_collection(collection_id),
+            )
+        except Exception as exc:
+            return self._result(error=str(exc))
+
+    def rename_voiceprint_element(
+        self,
+        collection_id: str,
+        element_id: str,
+        name: str,
+    ) -> dict:
+        try:
+            return self._result(
+                "声纹元素已重命名",
+                self.manager.rename_voiceprint_element(
+                    collection_id,
+                    element_id,
+                    name,
+                ),
+            )
+        except Exception as exc:
+            return self._result(error=str(exc))
+
+    def set_voiceprint_element_hidden(
+        self,
+        collection_id: str,
+        element_id: str,
+        hidden: bool,
+    ) -> dict:
+        try:
+            return self._result(
+                "声纹元素已隐藏" if hidden else "声纹元素已启用",
+                self.manager.set_voiceprint_element_hidden(
+                    collection_id,
+                    element_id,
+                    hidden,
+                ),
+            )
+        except Exception as exc:
+            return self._result(error=str(exc))
+
+    def delete_voiceprint_element(
+        self,
+        collection_id: str,
+        element_id: str,
+    ) -> dict:
+        try:
+            return self._result(
+                "声纹元素已删除",
+                self.manager.delete_voiceprint_element(collection_id, element_id),
+            )
+        except Exception as exc:
+            return self._result(error=str(exc))
+
+    def import_voiceprint_element(self, payload: dict | None = None) -> dict:
         if not self.window:
             return self._result(error="Window is not ready.")
         files = self.window.create_file_dialog(
@@ -133,9 +209,14 @@ class DesktopApi:
         if not files:
             return self._result("已取消")
         selected = [Path(files)] if isinstance(files, str) else [Path(item) for item in files]
+        value = payload or {}
         try:
-            profile = self.manager.enroll_profile(name, selected)
-            return self._result(f"已注册声纹：{profile['name']}", self.manager.state())
+            state = self.manager.start_imported_voiceprint_element(
+                str(value.get("collectionId", "")),
+                str(value.get("elementName", "")),
+                selected,
+            )
+            return self._result("声纹元素已进入后台注册", state)
         except Exception as exc:
             return self._result(error=str(exc))
 
@@ -144,7 +225,11 @@ class DesktopApi:
         try:
             device = value.get("device")
             device = int(device) if device not in (None, "") else None
-            state = self.manager.start_voiceprint_sample(str(value.get("name", "")), device)
+            state = self.manager.start_voiceprint_sample(
+                str(value.get("collectionId", "")),
+                str(value.get("elementName", "")),
+                device,
+            )
             return self._result("声纹样本录制已开始，请自然说话 5～15 秒", state)
         except Exception as exc:
             return self._result(error=str(exc))
@@ -171,10 +256,7 @@ class DesktopApi:
             return self._result(error=str(exc))
 
     def delete_profile(self, profile_id: str) -> dict:
-        try:
-            return self._result("声纹档案已删除", self.manager.delete_profile(profile_id))
-        except Exception as exc:
-            return self._result(error=str(exc))
+        return self.delete_voiceprint_collection(profile_id)
 
     def load_session(self, session_id: str) -> dict:
         try:

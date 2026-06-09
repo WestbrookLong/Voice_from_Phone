@@ -56,20 +56,19 @@
 
         <section>
           <div class="section-heading">
-            <h2>声纹档案</h2>
+            <h2>声纹集合</h2>
             <span id="modelStatus"></span>
           </div>
-          <div class="inline-form">
-            <input id="profileName" placeholder="姓名" />
-            <button id="enrollButton">导入</button>
-          </div>
-          <div class="voiceprint-recorder">
+          <button id="newCollectionButton" class="secondary wide-button">新建集合</button>
+          <div id="collections" class="collection-list"></div>
+          <div id="voiceprintDraftPanel" class="voiceprint-draft-panel hidden">
+            <div id="voiceprintDraft" class="voiceprint-draft">尚未录制样本</div>
+            <div class="voiceprint-recorder">
             <button id="recordSampleButton" class="secondary">录制样本</button>
             <button id="finishEnrollmentButton" class="secondary">完成注册</button>
             <button id="clearSamplesButton" class="text-button">清空样本</button>
+            </div>
           </div>
-          <div id="voiceprintDraft" class="voiceprint-draft">尚未录制样本</div>
-          <div id="profiles" class="profile-list"></div>
         </section>
 
         <section>
@@ -119,6 +118,18 @@
       </section>
     </main>
 
+    <div id="elementModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal">
+        <h2>新建声纹元素</h2>
+        <p id="elementModalCollection"></p>
+        <label>元素名称<input id="elementName" placeholder="例如：日常声音、感冒声音" /></label>
+        <div class="modal-actions">
+          <button id="recordElementButton">录制样本</button>
+          <button id="importElementButton" class="secondary">导入 WAV</button>
+          <button id="cancelElementButton" class="text-button">取消</button>
+        </div>
+      </div>
+    </div>
     <div id="toast" role="status"></div>
     <script src="./app.js"></script>
   </body>

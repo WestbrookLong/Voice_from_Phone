@@ -5,6 +5,7 @@ import pytest
 
 import chastream.manager as manager_module
 from chastream.manager import ChastreamManager
+from chastream.models import SpeakerCollection
 
 
 class FakeReady:
@@ -38,15 +39,38 @@ class FakeRecorder:
         return None
 
 
+class FakeProfiles:
+    def __init__(self):
+        self.collection = SpeakerCollection(id="person-test", name="测试者")
+
+    def load_all(self):
+        return [self.collection]
+
+    def get(self, collection_id):
+        if collection_id != self.collection.id:
+            raise KeyError(collection_id)
+        return self.collection
+
+    def save(self, collection):
+        self.collection = collection
+
+
+def manager_with_collection():
+    manager = ChastreamManager()
+    manager.profiles = FakeProfiles()
+    return manager
+
+
 def test_records_voiceprint_sample_to_draft(monkeypatch, tmp_path):
     monkeypatch.setattr(manager_module, "PROFILES_ROOT", tmp_path)
     monkeypatch.setattr(manager_module, "WaveRecorder", FakeRecorder)
-    manager = ChastreamManager()
+    manager = manager_with_collection()
 
-    manager.start_voiceprint_sample("测试者", device=3)
+    manager.start_voiceprint_sample("person-test", "日常声音", device=3)
     state = manager.stop_voiceprint_sample()
 
-    assert state["voiceprintDraft"]["name"] == "测试者"
+    assert state["voiceprintDraft"]["collectionName"] == "测试者"
+    assert state["voiceprintDraft"]["elementName"] == "日常声音"
     assert state["voiceprintDraft"]["sampleCount"] == 1
     assert Path(state["voiceprintDraft"]["samplePaths"][0]).exists()
 
@@ -57,9 +81,9 @@ def test_rejects_too_short_voiceprint_sample(monkeypatch, tmp_path):
 
     monkeypatch.setattr(manager_module, "PROFILES_ROOT", tmp_path)
     monkeypatch.setattr(manager_module, "WaveRecorder", ShortRecorder)
-    manager = ChastreamManager()
+    manager = manager_with_collection()
 
-    manager.start_voiceprint_sample("测试者")
+    manager.start_voiceprint_sample("person-test", "日常声音")
     with pytest.raises(ValueError, match="不足 3 秒"):
         manager.stop_voiceprint_sample()
 
@@ -69,8 +93,8 @@ def test_rejects_too_short_voiceprint_sample(monkeypatch, tmp_path):
 def test_requires_three_samples_before_finishing(monkeypatch, tmp_path):
     monkeypatch.setattr(manager_module, "PROFILES_ROOT", tmp_path)
     monkeypatch.setattr(manager_module, "WaveRecorder", FakeRecorder)
-    manager = ChastreamManager()
-    manager.start_voiceprint_sample("测试者")
+    manager = manager_with_collection()
+    manager.start_voiceprint_sample("person-test", "日常声音")
     manager.stop_voiceprint_sample()
 
     with pytest.raises(RuntimeError, match="至少录制 3 段"):
@@ -79,7 +103,7 @@ def test_requires_three_samples_before_finishing(monkeypatch, tmp_path):
 
 def test_finishing_enrollment_runs_in_background(monkeypatch, tmp_path):
     monkeypatch.setattr(manager_module, "PROFILES_ROOT", tmp_path)
-    manager = ChastreamManager()
+    manager = manager_with_collection()
     started = threading.Event()
     release = threading.Event()
     paths = []
@@ -87,17 +111,18 @@ def test_finishing_enrollment_runs_in_background(monkeypatch, tmp_path):
         path = tmp_path / f"draft-{index}.wav"
         path.write_bytes(b"sample")
         paths.append(path)
-    manager.voiceprint_draft_name = "测试者"
+    manager.voiceprint_draft_collection_id = "person-test"
+    manager.voiceprint_draft_element_name = "日常声音"
     manager.voiceprint_draft_paths = paths
 
-    def fake_enroll(name, sample_paths, progress=None):
+    def fake_enroll(collection_id, element_name, sample_paths, progress=None):
         started.set()
         if progress:
             progress("正在提取声纹", 1, len(sample_paths))
         release.wait(timeout=5)
-        return {"name": name}
+        return {"name": element_name}
 
-    monkeypatch.setattr(manager, "enroll_profile", fake_enroll)
+    monkeypatch.setattr(manager, "enroll_element", fake_enroll)
 
     state = manager.finish_voiceprint_enrollment()
 
@@ -109,6 +134,6 @@ def test_finishing_enrollment_runs_in_background(monkeypatch, tmp_path):
     manager.voiceprint_enrollment_worker.join(timeout=2)
     completed = manager.state()
     assert completed["voiceprintEnrollment"]["running"] is False
-    assert completed["voiceprintEnrollment"]["completedName"] == "测试者"
+    assert completed["voiceprintEnrollment"]["completedName"] == "测试者 / 日常声音"
     assert completed["voiceprintDraft"]["sampleCount"] == 0
     assert all(not path.exists() for path in paths)

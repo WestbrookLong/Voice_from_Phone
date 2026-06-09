@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import PROFILES_ROOT, SESSIONS_ROOT, configure_local_caches
-from .models import SessionState, VoiceProfile
+from .models import SessionState, SpeakerCollection, VoiceElement
 
 
 def _safe_name(value: str) -> str:
@@ -26,6 +26,7 @@ class SessionRepository:
         speaker_mode: str,
         selected_speaker_ids: list[str] | None = None,
         analysis_style: str = "chat",
+        selected_voiceprint_elements: dict[str, list[str]] | None = None,
     ) -> SessionState:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         session_id = f"{stamp}-{secrets.token_hex(3)}"
@@ -34,6 +35,10 @@ class SessionRepository:
             title=title or stamp,
             speaker_mode=speaker_mode,
             selected_speaker_ids=list(selected_speaker_ids or []),
+            selected_voiceprint_elements={
+                str(collection_id): list(element_ids)
+                for collection_id, element_ids in (selected_voiceprint_elements or {}).items()
+            },
             analysis_style=analysis_style,
         )
         self.directory(session_id).mkdir(parents=True, exist_ok=True)
@@ -125,21 +130,63 @@ class ProfileRepository:
     def __init__(self) -> None:
         configure_local_caches()
 
-    def save(self, profile: VoiceProfile) -> None:
-        profile.updated_at = datetime.now().astimezone().isoformat()
-        path = PROFILES_ROOT / f"{_safe_name(profile.id)}.json"
-        path.write_text(json.dumps(asdict(profile), ensure_ascii=False, indent=2), encoding="utf-8")
+    def save(self, collection: SpeakerCollection) -> None:
+        collection.schema_version = 2
+        collection.updated_at = datetime.now().astimezone().isoformat()
+        path = PROFILES_ROOT / f"{_safe_name(collection.id)}.json"
+        path.write_text(json.dumps(asdict(collection), ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def load_all(self) -> list[VoiceProfile]:
-        profiles = []
+    def load_all(self) -> list[SpeakerCollection]:
+        collections = []
         for path in PROFILES_ROOT.glob("*.json"):
             try:
-                profiles.append(VoiceProfile(**json.loads(path.read_text(encoding="utf-8"))))
+                data = json.loads(path.read_text(encoding="utf-8"))
+                collection, migrated = self._decode_collection(data)
+                collections.append(collection)
+                if migrated:
+                    self.save(collection)
             except (OSError, json.JSONDecodeError, TypeError):
                 continue
-        return profiles
+        return collections
 
-    def delete(self, profile_id: str) -> None:
-        path = PROFILES_ROOT / f"{_safe_name(profile_id)}.json"
+    def get(self, collection_id: str) -> SpeakerCollection:
+        for collection in self.load_all():
+            if collection.id == collection_id:
+                return collection
+        raise KeyError(f"声纹集合不存在：{collection_id}")
+
+    def delete(self, collection_id: str) -> None:
+        path = PROFILES_ROOT / f"{_safe_name(collection_id)}.json"
         if path.exists():
             path.unlink()
+
+    @staticmethod
+    def _decode_collection(data: dict) -> tuple[SpeakerCollection, bool]:
+        if int(data.get("schema_version", 0) or 0) >= 2 or "elements" in data:
+            elements = [
+                VoiceElement(**item)
+                for item in data.get("elements", [])
+                if isinstance(item, dict)
+            ]
+            allowed = SpeakerCollection.__dataclass_fields__.keys()
+            values = {key: value for key, value in data.items() if key in allowed and key != "elements"}
+            return SpeakerCollection(**values, elements=elements), False
+
+        element = VoiceElement(
+            id=f"element-{data['id']}",
+            name="默认声音",
+            model_id=str(data.get("model_id", "")),
+            sample_paths=list(data.get("sample_paths") or []),
+            embeddings=list(data.get("embeddings") or []),
+            centroid=list(data.get("centroid") or []),
+            created_at=str(data.get("created_at") or datetime.now().astimezone().isoformat()),
+            updated_at=str(data.get("updated_at") or datetime.now().astimezone().isoformat()),
+        )
+        collection = SpeakerCollection(
+            id=str(data["id"]),
+            name=str(data.get("name") or "未命名发言人"),
+            elements=[element],
+            created_at=str(data.get("created_at") or datetime.now().astimezone().isoformat()),
+            updated_at=str(data.get("updated_at") or datetime.now().astimezone().isoformat()),
+        )
+        return collection, True

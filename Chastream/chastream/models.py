@@ -49,6 +49,11 @@ class SpeakerMatch:
     confidence: str
     best_candidate_name: str = ""
     second_candidate_name: str = ""
+    best_element_id: str = ""
+    best_element_name: str = ""
+    second_element_id: str = ""
+    second_element_name: str = ""
+    collection_scores: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -68,15 +73,30 @@ class ResolvedUtterance:
 
 
 @dataclass
-class VoiceProfile:
+class VoiceElement:
     id: str
     name: str
     model_id: str
+    hidden: bool = False
     sample_paths: list[str] = field(default_factory=list)
     embeddings: list[list[float]] = field(default_factory=list)
     centroid: list[float] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
+
+
+@dataclass
+class SpeakerCollection:
+    id: str
+    name: str
+    elements: list[VoiceElement] = field(default_factory=list)
+    schema_version: int = 2
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+
+# Compatibility name for older imports and small integrations.
+VoiceProfile = VoiceElement
 
 
 @dataclass
@@ -88,6 +108,7 @@ class SessionState:
     audio_path: str = ""
     speaker_mode: str = "two"
     selected_speaker_ids: list[str] = field(default_factory=list)
+    selected_voiceprint_elements: dict[str, list[str]] = field(default_factory=dict)
     analysis_style: str = "chat"
     task_id: str = ""
     uploaded_url: str = ""

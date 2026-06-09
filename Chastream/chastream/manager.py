@@ -4,7 +4,8 @@ import os
 import secrets
 import shutil
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -13,7 +14,7 @@ from .analysis_prompts import normalize_analysis_style
 from .audio import FsmnVadProcessor, WaveRecorder, normalize_uploaded_wav
 from .config import AppSettings, DATA_ROOT, PROFILES_ROOT
 from .dialogue import DialogueResolver, dialogue_to_markdown
-from .models import SessionState
+from .models import SessionState, SpeakerCollection, VoiceElement
 from .storage import ProfileRepository, SessionRepository
 from .transcription import DashScopeTemporaryUploader, ParaformerTimestampProvider
 from .voiceprint import VoiceprintService
@@ -31,7 +32,8 @@ class ChastreamManager:
         self.recorder: WaveRecorder | None = None
         self.worker: threading.Thread | None = None
         self.voiceprint_recorder: WaveRecorder | None = None
-        self.voiceprint_draft_name = ""
+        self.voiceprint_draft_collection_id = ""
+        self.voiceprint_draft_element_name = ""
         self.voiceprint_draft_paths: list[Path] = []
         self.voiceprint_error: str | None = None
         self.voiceprint_enrollment_worker: threading.Thread | None = None
@@ -49,7 +51,7 @@ class ChastreamManager:
         device: int | None = None,
         analysis_style: str = "chat",
     ) -> dict:
-        selected_speaker_ids = self._validate_selected_speakers(selected_speaker_ids)
+        selected_speaker_ids, selected_elements = self._validate_selected_speakers(selected_speaker_ids)
         analysis_style = normalize_analysis_style(analysis_style)
         with self.lock:
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
@@ -63,6 +65,7 @@ class ChastreamManager:
                 speaker_mode,
                 selected_speaker_ids,
                 analysis_style,
+                selected_elements,
             )
             session.status = "recording"
             session.stage_message = "正在录音"
@@ -129,7 +132,7 @@ class ChastreamManager:
     ) -> dict:
         if self._voiceprint_enrollment_running():
             raise RuntimeError("声纹注册仍在处理中。")
-        selected_speaker_ids = self._validate_selected_speakers(selected_speaker_ids)
+        selected_speaker_ids, selected_elements = self._validate_selected_speakers(selected_speaker_ids)
         analysis_style = normalize_analysis_style(analysis_style)
         audio_path = Path(audio_path)
         if not audio_path.is_file():
@@ -139,6 +142,7 @@ class ChastreamManager:
             speaker_mode,
             selected_speaker_ids,
             analysis_style,
+            selected_elements,
         )
         with self.lock:
             self.active = session
@@ -174,6 +178,15 @@ class ChastreamManager:
             active = self.active.snapshot() if self.active else None
             recorder = self.recorder
             voiceprint_recorder = self.voiceprint_recorder
+            collections = self.profiles.load_all()
+            draft_collection = next(
+                (
+                    item
+                    for item in collections
+                    if item.id == self.voiceprint_draft_collection_id
+                ),
+                None,
+            )
             return {
                 "activeSession": active,
                 "recording": bool(recorder and recorder.is_alive() and not recorder.pause_event.is_set()),
@@ -185,7 +198,9 @@ class ChastreamManager:
                     round(voiceprint_recorder.frames_written / 16000, 1) if voiceprint_recorder else 0
                 ),
                 "voiceprintDraft": {
-                    "name": self.voiceprint_draft_name,
+                    "collectionId": self.voiceprint_draft_collection_id,
+                    "collectionName": draft_collection.name if draft_collection else "",
+                    "elementName": self.voiceprint_draft_element_name,
                     "sampleCount": len(self.voiceprint_draft_paths),
                     "samplePaths": [str(path) for path in self.voiceprint_draft_paths],
                     "error": self.voiceprint_error,
@@ -199,31 +214,146 @@ class ChastreamManager:
                     "completedName": self.voiceprint_enrollment_completed_name,
                 },
                 "settings": asdict(self.settings),
-                "profiles": [asdict(item) for item in self.profiles.load_all()],
+                "collections": [asdict(item) for item in collections],
+                "profiles": [asdict(item) for item in collections],
                 "recentSessions": self.sessions.list_recent(),
                 "dataRoot": str(DATA_ROOT),
                 "apiConfigured": bool(os.environ.get("DASHSCOPE_API_KEY", "").strip()),
                 "modelAvailability": self._model_availability(),
             }
 
-    def start_voiceprint_sample(self, name: str, device: int | None = None) -> dict:
+    def create_voiceprint_collection(self, name: str) -> dict:
         clean_name = name.strip()
         if not clean_name:
-            raise ValueError("请先填写声纹姓名。")
+            raise ValueError("声纹集合名称不能为空。")
         with self.lock:
+            self._ensure_voiceprint_management_available()
+            if any(
+                item.name.casefold() == clean_name.casefold()
+                for item in self.profiles.load_all()
+            ):
+                raise ValueError("已经存在同名声纹集合。")
+            self.profiles.save(
+                SpeakerCollection(
+                    id=f"person-{secrets.token_hex(5)}",
+                    name=clean_name,
+                )
+            )
+        return self.state()
+
+    def rename_voiceprint_collection(self, collection_id: str, name: str) -> dict:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("声纹集合名称不能为空。")
+        with self.lock:
+            self._ensure_voiceprint_management_available()
+            if any(
+                item.id != collection_id
+                and item.name.casefold() == clean_name.casefold()
+                for item in self.profiles.load_all()
+            ):
+                raise ValueError("已经存在同名声纹集合。")
+            collection = self.profiles.get(collection_id)
+            collection.name = clean_name
+            self.profiles.save(collection)
+        return self.state()
+
+    def delete_voiceprint_collection(self, collection_id: str) -> dict:
+        with self.lock:
+            self._ensure_voiceprint_management_available()
+            collection = self.profiles.get(collection_id)
+            if self.voiceprint_draft_collection_id == collection_id:
+                raise RuntimeError("该集合仍有未完成的录制草稿，请先清空草稿。")
+            paths = [
+                Path(path)
+                for element in collection.elements
+                for path in element.sample_paths
+            ]
+            self.profiles.delete(collection_id)
+        self._delete_sample_files(paths)
+        return self.state()
+
+    def rename_voiceprint_element(
+        self,
+        collection_id: str,
+        element_id: str,
+        name: str,
+    ) -> dict:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("声纹元素名称不能为空。")
+        with self.lock:
+            self._ensure_voiceprint_management_available()
+            collection = self.profiles.get(collection_id)
+            element = self._find_element(collection, element_id)
+            if any(
+                item.id != element_id
+                and item.name.casefold() == clean_name.casefold()
+                for item in collection.elements
+            ):
+                raise ValueError("该集合内已经存在同名元素。")
+            element.name = clean_name
+            element.updated_at = datetime.now(timezone.utc).isoformat()
+            self.profiles.save(collection)
+        return self.state()
+
+    def set_voiceprint_element_hidden(
+        self,
+        collection_id: str,
+        element_id: str,
+        hidden: bool,
+    ) -> dict:
+        with self.lock:
+            self._ensure_voiceprint_management_available()
+            collection = self.profiles.get(collection_id)
+            element = self._find_element(collection, element_id)
+            element.hidden = bool(hidden)
+            element.updated_at = datetime.now(timezone.utc).isoformat()
+            self.profiles.save(collection)
+        return self.state()
+
+    def delete_voiceprint_element(self, collection_id: str, element_id: str) -> dict:
+        with self.lock:
+            self._ensure_voiceprint_management_available()
+            collection = self.profiles.get(collection_id)
+            element = self._find_element(collection, element_id)
+            paths = [Path(path) for path in element.sample_paths]
+            collection.elements = [
+                item for item in collection.elements if item.id != element_id
+            ]
+            self.profiles.save(collection)
+        self._delete_sample_files(paths)
+        return self.state()
+
+    def start_voiceprint_sample(
+        self,
+        collection_id: str,
+        element_name: str,
+        device: int | None = None,
+    ) -> dict:
+        clean_name = element_name.strip()
+        if not clean_name:
+            raise ValueError("请先填写声纹元素名称。")
+        with self.lock:
+            collection = self.profiles.get(collection_id)
+            self._ensure_unique_element_name(collection, clean_name)
             if self.recorder and self.recorder.is_alive():
                 raise RuntimeError("请先停止会话录音。")
             if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
                 raise RuntimeError("声纹样本正在录制。")
             if self._voiceprint_enrollment_running():
                 raise RuntimeError("声纹注册仍在处理中。")
-            if self.voiceprint_draft_name and self.voiceprint_draft_name != clean_name:
-                raise RuntimeError(f"当前正在为“{self.voiceprint_draft_name}”采集样本，请先完成或清空。")
+            if self.voiceprint_draft_collection_id and (
+                self.voiceprint_draft_collection_id != collection_id
+                or self.voiceprint_draft_element_name != clean_name
+            ):
+                raise RuntimeError("当前正在采集另一个声纹元素，请先完成或清空草稿。")
             draft_dir = PROFILES_ROOT / "drafts"
             draft_dir.mkdir(parents=True, exist_ok=True)
             path = draft_dir / f"{secrets.token_hex(8)}.wav"
             recorder = WaveRecorder(path, device=device)
-            self.voiceprint_draft_name = clean_name
+            self.voiceprint_draft_collection_id = collection_id
+            self.voiceprint_draft_element_name = clean_name
             self.voiceprint_error = None
             self.voiceprint_enrollment_error = None
             self.voiceprint_enrollment_completed_name = ""
@@ -270,9 +400,10 @@ class ChastreamManager:
                 raise RuntimeError("声纹注册已经在处理中。")
             if self.worker and self.worker.is_alive():
                 raise RuntimeError("当前对话仍在处理中，请稍后注册声纹。")
-            name = self.voiceprint_draft_name
+            collection_id = self.voiceprint_draft_collection_id
+            element_name = self.voiceprint_draft_element_name
             paths = list(self.voiceprint_draft_paths)
-            if not name or not paths:
+            if not collection_id or not element_name or not paths:
                 raise RuntimeError("还没有可注册的声纹样本。")
             if len(paths) < 3:
                 raise RuntimeError("请至少录制 3 段样本后再完成注册。")
@@ -283,7 +414,7 @@ class ChastreamManager:
             self.voiceprint_enrollment_completed_name = ""
             self.voiceprint_enrollment_worker = threading.Thread(
                 target=self._finish_voiceprint_enrollment_worker,
-                args=(name, paths),
+                args=(collection_id, element_name, paths, True),
                 daemon=True,
             )
             self.voiceprint_enrollment_worker.start()
@@ -297,18 +428,47 @@ class ChastreamManager:
                 raise RuntimeError("声纹注册仍在处理中，暂时不能清空样本。")
             paths = list(self.voiceprint_draft_paths)
             self.voiceprint_draft_paths = []
-            self.voiceprint_draft_name = ""
+            self.voiceprint_draft_collection_id = ""
+            self.voiceprint_draft_element_name = ""
             self.voiceprint_error = None
             self.voiceprint_enrollment_error = None
             self.voiceprint_enrollment_completed_name = ""
             self.voiceprint_enrollment_stage = ""
-        for path in paths:
-            path.unlink(missing_ok=True)
+        self._delete_sample_files(paths)
         return self.state()
 
-    def enroll_profile(
+    def start_imported_voiceprint_element(
         self,
-        name: str,
+        collection_id: str,
+        element_name: str,
+        sample_paths: list[Path],
+    ) -> dict:
+        clean_name = element_name.strip()
+        if not clean_name:
+            raise ValueError("声纹元素名称不能为空。")
+        if not sample_paths:
+            raise ValueError("请选择至少一个 WAV 声纹样本。")
+        with self.lock:
+            self._ensure_voiceprint_management_available()
+            collection = self.profiles.get(collection_id)
+            self._ensure_unique_element_name(collection, clean_name)
+            self.voiceprint_enrollment_stage = "准备声纹注册"
+            self.voiceprint_enrollment_current = 0
+            self.voiceprint_enrollment_total = len(sample_paths)
+            self.voiceprint_enrollment_error = None
+            self.voiceprint_enrollment_completed_name = ""
+            self.voiceprint_enrollment_worker = threading.Thread(
+                target=self._finish_voiceprint_enrollment_worker,
+                args=(collection_id, clean_name, list(sample_paths), False),
+                daemon=True,
+            )
+            self.voiceprint_enrollment_worker.start()
+        return self.state()
+
+    def enroll_element(
+        self,
+        collection_id: str,
+        element_name: str,
         sample_paths: list[Path],
         progress: Callable[[str, int, int], None] | None = None,
     ) -> dict:
@@ -317,41 +477,72 @@ class ChastreamManager:
         profile_dir = PROFILES_ROOT / "samples"
         profile_dir.mkdir(parents=True, exist_ok=True)
         local_samples = []
-        for index, source in enumerate(sample_paths, start=1):
-            if source.suffix.lower() != ".wav":
-                raise ValueError("声纹注册目前只支持 WAV 文件。")
-            target = profile_dir / f"{secrets.token_hex(4)}-{index}-{source.name}"
-            shutil.copy2(source, target)
-            clean_target = target.with_name(f"{target.stem}.speech.wav")
-            try:
-                cleaned, _ = self.vad.clean(target, clean_target)
-            except Exception:
-                cleaned = target
-            local_samples.append(cleaned)
-            if progress:
-                progress("正在清理样本", index, len(sample_paths))
-        profile = self.voiceprints.enroll(
-            name,
-            local_samples,
-            progress=(
-                (lambda current, total: progress("正在提取声纹", current, total))
-                if progress
-                else None
-            ),
-        )
-        return asdict(profile)
-
-    def _finish_voiceprint_enrollment_worker(self, name: str, paths: list[Path]) -> None:
+        created_paths: list[Path] = []
         try:
-            self.enroll_profile(name, paths, progress=self._voiceprint_enrollment_progress)
+            for index, source in enumerate(sample_paths, start=1):
+                if source.suffix.lower() != ".wav":
+                    raise ValueError("声纹注册目前只支持 WAV 文件。")
+                target = profile_dir / f"{secrets.token_hex(4)}-{index}-{source.name}"
+                shutil.copy2(source, target)
+                created_paths.append(target)
+                clean_target = target.with_name(f"{target.stem}.speech.wav")
+                try:
+                    cleaned, _ = self.vad.clean(target, clean_target)
+                except Exception:
+                    cleaned = target
+                if cleaned != target:
+                    created_paths.append(cleaned)
+                    target.unlink(missing_ok=True)
+                    created_paths.remove(target)
+                local_samples.append(cleaned)
+                if progress:
+                    progress("正在清理样本", index, len(sample_paths))
+            element = self.voiceprints.build_element(
+                element_name,
+                local_samples,
+                progress=(
+                    (lambda current, total: progress("正在提取声纹", current, total))
+                    if progress
+                    else None
+                ),
+            )
             with self.lock:
-                self.voiceprint_draft_paths = []
-                self.voiceprint_draft_name = ""
+                collection = self.profiles.get(collection_id)
+                self._ensure_unique_element_name(collection, element_name)
+                collection.elements.append(element)
+                self.profiles.save(collection)
+        except Exception:
+            self._delete_sample_files(created_paths)
+            raise
+        return asdict(element)
+
+    def _finish_voiceprint_enrollment_worker(
+        self,
+        collection_id: str,
+        element_name: str,
+        paths: list[Path],
+        clear_draft: bool,
+    ) -> None:
+        try:
+            collection = self.profiles.get(collection_id)
+            self.enroll_element(
+                collection_id,
+                element_name,
+                paths,
+                progress=self._voiceprint_enrollment_progress,
+            )
+            with self.lock:
+                if clear_draft:
+                    self.voiceprint_draft_paths = []
+                    self.voiceprint_draft_collection_id = ""
+                    self.voiceprint_draft_element_name = ""
                 self.voiceprint_error = None
                 self.voiceprint_enrollment_stage = "注册完成"
-                self.voiceprint_enrollment_completed_name = name
-            for path in paths:
-                path.unlink(missing_ok=True)
+                self.voiceprint_enrollment_completed_name = (
+                    f"{collection.name} / {element_name}"
+                )
+            if clear_draft:
+                self._delete_sample_files(paths)
         except Exception as exc:
             with self.lock:
                 self.voiceprint_enrollment_stage = "注册失败"
@@ -369,14 +560,41 @@ class ChastreamManager:
             and self.voiceprint_enrollment_worker.is_alive()
         )
 
+    def _ensure_voiceprint_management_available(self) -> None:
+        if self.recorder and self.recorder.is_alive():
+            raise RuntimeError("录音期间不能修改声纹集合。")
+        if self.worker and self.worker.is_alive():
+            raise RuntimeError("当前会话仍在处理中，不能修改声纹集合。")
+        if self.voiceprint_recorder and self.voiceprint_recorder.is_alive():
+            raise RuntimeError("请先停止当前声纹样本录制。")
+        if self._voiceprint_enrollment_running():
+            raise RuntimeError("声纹注册仍在处理中。")
+
+    @staticmethod
+    def _find_element(collection: SpeakerCollection, element_id: str) -> VoiceElement:
+        for element in collection.elements:
+            if element.id == element_id:
+                return element
+        raise KeyError(f"声纹元素不存在：{element_id}")
+
+    @staticmethod
+    def _ensure_unique_element_name(
+        collection: SpeakerCollection,
+        element_name: str,
+    ) -> None:
+        if any(
+            item.name.casefold() == element_name.casefold()
+            for item in collection.elements
+        ):
+            raise ValueError("该集合内已经存在同名元素。")
+
+    @staticmethod
+    def _delete_sample_files(paths: list[Path]) -> None:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
     def delete_profile(self, profile_id: str) -> dict:
-        with self.lock:
-            if self.recorder and self.recorder.is_alive():
-                raise RuntimeError("录音期间不能删除参与者声纹。")
-            if self.worker and self.worker.is_alive():
-                raise RuntimeError("当前会话仍在处理中，不能删除参与者声纹。")
-        self.profiles.delete(profile_id)
-        return self.state()
+        return self.delete_voiceprint_collection(profile_id)
 
     def load_session(self, session_id: str) -> dict:
         with self.lock:
@@ -399,7 +617,7 @@ class ChastreamManager:
 
     def _process(self, session: SessionState) -> None:
         try:
-            profiles = self._profiles_for_session(session)
+            collections = self._collections_for_session(session)
 
             self._stage(session, "uploading", "正在上传录音")
             uploader = DashScopeTemporaryUploader(model=self.settings.asr_model)
@@ -442,7 +660,7 @@ class ChastreamManager:
             change_points, segments, resolved, diagnostics = resolver.resolve(
                 Path(session.audio_path),
                 words,
-                profiles,
+                collections,
                 self.sessions.directory(session.id) / "segments",
                 enable_scl=bool(self.settings.enable_scl and session.speaker_mode == "two"),
             )
@@ -471,29 +689,109 @@ class ChastreamManager:
         except Exception as exc:
             self._fail(str(exc), session=session)
 
-    def _validate_selected_speakers(self, profile_ids: list[str] | None) -> list[str]:
-        if not isinstance(profile_ids, (list, tuple)):
+    def _validate_selected_speakers(
+        self,
+        collection_ids: list[str] | None,
+    ) -> tuple[list[str], dict[str, list[str]]]:
+        if not isinstance(collection_ids, (list, tuple)):
             raise ValueError("参与者范围格式无效，请重新选择。")
-        selected = list(dict.fromkeys(str(item).strip() for item in (profile_ids or []) if str(item).strip()))
+        selected = list(
+            dict.fromkeys(
+                str(item).strip()
+                for item in (collection_ids or [])
+                if str(item).strip()
+            )
+        )
         if not selected:
             raise ValueError("请至少选择一名已注册参与者。")
-        registered = {profile.id for profile in self.profiles.load_all()}
-        missing = [profile_id for profile_id in selected if profile_id not in registered]
+        registered = {
+            collection.id: collection
+            for collection in self.profiles.load_all()
+        }
+        missing = [
+            collection_id
+            for collection_id in selected
+            if collection_id not in registered
+        ]
         if missing:
             raise ValueError("选定参与者中包含未注册或已删除的声纹，请重新选择。")
-        return selected
+        snapshot = {
+            collection_id: [
+                element.id
+                for element in registered[collection_id].elements
+                if not element.hidden and element.centroid
+            ]
+            for collection_id in selected
+        }
+        unavailable = [
+            registered[collection_id].name
+            for collection_id in selected
+            if not snapshot[collection_id]
+        ]
+        if unavailable:
+            raise ValueError(
+                f"以下参与者没有启用的可用声纹元素：{'、'.join(unavailable)}"
+            )
+        return selected, snapshot
 
-    def _profiles_for_session(self, session: SessionState):
-        profiles = self.profiles.load_all()
-        if not profiles:
-            raise RuntimeError("请先注册至少一个声纹档案，再处理对话。")
+    def _collections_for_session(self, session: SessionState) -> list[SpeakerCollection]:
+        collections = self.profiles.load_all()
+        if not collections:
+            raise RuntimeError("请先注册至少一个声纹集合，再处理对话。")
         if not session.selected_speaker_ids:
-            return profiles
+            return [
+                replace(
+                    collection,
+                    elements=[
+                        replace(element, hidden=False)
+                        for element in collection.elements
+                        if not element.hidden and element.centroid
+                    ],
+                )
+                for collection in collections
+                if any(
+                    not element.hidden and element.centroid
+                    for element in collection.elements
+                )
+            ]
         selected = set(session.selected_speaker_ids)
-        scoped = [profile for profile in profiles if profile.id in selected]
+        scoped = [
+            collection
+            for collection in collections
+            if collection.id in selected
+        ]
         if len(scoped) != len(selected):
             raise RuntimeError("本次会话选定的参与者声纹已被删除，无法继续匹配。")
-        return scoped
+        snapshots = session.selected_voiceprint_elements or {}
+        result = []
+        for collection in scoped:
+            element_ids = set(snapshots.get(collection.id) or [])
+            if element_ids:
+                elements = [
+                    replace(element, hidden=False)
+                    for element in collection.elements
+                    if element.id in element_ids and element.centroid
+                ]
+                if len(elements) != len(element_ids):
+                    raise RuntimeError(
+                        f"参与者“{collection.name}”在本次会话使用的声纹元素已被删除。"
+                    )
+            else:
+                elements = [
+                    replace(element, hidden=False)
+                    for element in collection.elements
+                    if not element.hidden and element.centroid
+                ]
+            if not elements:
+                raise RuntimeError(
+                    f"参与者“{collection.name}”没有可用于匹配的声纹元素。"
+                )
+            result.append(replace(collection, elements=elements))
+        return result
+
+    def _profiles_for_session(self, session: SessionState):
+        """Compatibility wrapper for integrations using the old method name."""
+        return self._collections_for_session(session)
 
     def _stage(self, session: SessionState, status: str, message: str) -> None:
         with self.lock:

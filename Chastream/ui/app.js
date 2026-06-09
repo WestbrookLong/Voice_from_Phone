@@ -4,6 +4,7 @@ let settingsHydrated = false;
 let participantSelectionInitialized = false;
 let knownProfileIds = new Set();
 let selectedSpeakerIds = new Set();
+let pendingElementCollectionId = "";
 
 async function call(name, ...args) {
   const api = window.pywebview?.api;
@@ -34,8 +35,9 @@ function render(next) {
   $("duration").textContent = formatDuration(next.recordedSeconds || 0);
   const enrollmentRunning = Boolean(next.voiceprintEnrollment?.running);
   const sessionLocked = next.recording || next.paused || next.processing;
+  const collections = next.collections || next.profiles || [];
   $("analysisStyle").disabled = sessionLocked;
-  renderParticipants(next.profiles || [], sessionLocked || enrollmentRunning);
+  renderParticipants(collections, sessionLocked || enrollmentRunning);
   const hasParticipants = selectedSpeakerIds.size > 0;
   $("startButton").disabled = next.recording || next.paused || next.processing ||
     enrollmentRunning || !hasParticipants;
@@ -53,11 +55,11 @@ function render(next) {
     (next.voiceprintDraft?.sampleCount || 0) < 3;
   $("clearSamplesButton").disabled = enrollmentRunning || voiceprintRecording ||
     (next.voiceprintDraft?.sampleCount || 0) === 0;
-  $("enrollButton").disabled = enrollmentRunning || voiceprintRecording ||
+  $("newCollectionButton").disabled = enrollmentRunning || voiceprintRecording ||
     next.recording || next.paused || next.processing;
   renderVoiceprintDraft(next);
   renderDevices(next.inputDevices || []);
-  renderProfiles(next.profiles || []);
+  renderCollections(collections, sessionLocked || enrollmentRunning || voiceprintRecording);
   renderDialogue(active?.resolved_utterances || []);
   renderAnalysis(active?.analysis || {}, active?.analysis_style || "chat");
   renderHistory(next.recentSessions || []);
@@ -72,8 +74,14 @@ function render(next) {
 
 function renderVoiceprintDraft(next) {
   const element = $("voiceprintDraft");
+  const panel = $("voiceprintDraftPanel");
   const draft = next.voiceprintDraft || {};
   const enrollment = next.voiceprintEnrollment || {};
+  const hasDraft = Boolean(
+    draft.collectionId || draft.sampleCount || next.voiceprintRecording ||
+    enrollment.running || enrollment.error || enrollment.completedName
+  );
+  panel.classList.toggle("hidden", !hasDraft);
   if (enrollment.running) {
     element.className = "voiceprint-draft recording";
     const progress = enrollment.total
@@ -94,7 +102,7 @@ function renderVoiceprintDraft(next) {
   }
   if (next.voiceprintRecording) {
     element.className = "voiceprint-draft recording";
-    element.textContent = `正在录制 ${draft.name || ""} · ${formatDuration(next.voiceprintRecordedSeconds || 0)}`;
+    element.textContent = `正在录制 ${draft.collectionName || ""} / ${draft.elementName || ""} · ${formatDuration(next.voiceprintRecordedSeconds || 0)}`;
     return;
   }
   if (draft.error) {
@@ -104,7 +112,7 @@ function renderVoiceprintDraft(next) {
   }
   element.className = "voiceprint-draft";
   element.textContent = draft.sampleCount
-    ? `${draft.name}：已录制 ${draft.sampleCount} 段，建议 3～5 段`
+    ? `${draft.collectionName} / ${draft.elementName}：已录制 ${draft.sampleCount} 段，建议 3～5 段`
     : "尚未录制样本";
 }
 
@@ -128,16 +136,60 @@ function renderDevices(devices) {
   select.dataset.loaded = "1";
 }
 
-function renderProfiles(profiles) {
-  $("profiles").innerHTML = profiles.length ? profiles.map(profile => `
-    <div class="profile">
-      <div><strong>${escapeHtml(profile.name)}</strong><small>${profile.sample_paths.length} 个样本</small></div>
-      <button title="删除声纹" aria-label="删除声纹" onclick="deleteProfile('${profile.id}')">×</button>
-    </div>`).join("") : '<div class="empty">尚未注册声纹</div>';
+function renderCollections(collections, locked) {
+  $("collections").innerHTML = collections.length ? collections.map(collection => {
+    const elements = collection.elements || [];
+    const activeCount = elements.filter(item => !item.hidden && item.centroid?.length).length;
+    const rows = elements.length ? elements.map(element => `
+      <div class="voice-element ${element.hidden ? "hidden-element" : ""}">
+        <div class="element-copy">
+          <strong>${escapeHtml(element.name)}</strong>
+          <small>${element.sample_paths?.length || 0} 段样本${element.hidden ? " · 已隐藏" : ""}</small>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="icon-action" title="${element.hidden ? "启用" : "隐藏"}"
+            data-action="toggle-element" data-collection-id="${collection.id}"
+            data-element-id="${element.id}" data-hidden="${element.hidden ? "0" : "1"}"
+            ${locked ? "disabled" : ""}>${element.hidden ? "◉" : "○"}</button>
+          <button type="button" class="icon-action" title="重命名"
+            data-action="rename-element" data-collection-id="${collection.id}"
+            data-element-id="${element.id}" data-name="${escapeHtml(element.name)}"
+            ${locked ? "disabled" : ""}>✎</button>
+          <button type="button" class="icon-action danger" title="删除"
+            data-action="delete-element" data-collection-id="${collection.id}"
+            data-element-id="${element.id}" data-name="${escapeHtml(element.name)}"
+            ${locked ? "disabled" : ""}>×</button>
+        </div>
+      </div>`).join("") : '<div class="collection-empty">尚无声纹元素</div>';
+    return `
+      <div class="voice-collection">
+        <div class="collection-head">
+          <div>
+            <strong>${escapeHtml(collection.name)}</strong>
+            <small>${activeCount}/${elements.length} 个元素参与匹配</small>
+          </div>
+          <div class="row-actions">
+            <button type="button" class="icon-action" title="重命名"
+              data-action="rename-collection" data-collection-id="${collection.id}"
+              data-name="${escapeHtml(collection.name)}" ${locked ? "disabled" : ""}>✎</button>
+            <button type="button" class="icon-action danger" title="删除集合"
+              data-action="delete-collection" data-collection-id="${collection.id}"
+              data-name="${escapeHtml(collection.name)}" ${locked ? "disabled" : ""}>×</button>
+          </div>
+        </div>
+        <div class="element-list">${rows}</div>
+        <button type="button" class="add-element-button" data-action="add-element"
+          data-collection-id="${collection.id}" data-name="${escapeHtml(collection.name)}"
+          ${locked ? "disabled" : ""}>＋ 新建元素</button>
+      </div>`;
+  }).join("") : '<div class="empty">尚未创建声纹集合</div>';
 }
 
 function renderParticipants(profiles, locked) {
-  const availableIds = new Set(profiles.map(profile => profile.id));
+  const usableProfiles = profiles.filter(profile =>
+    (profile.elements || []).some(element => !element.hidden && element.centroid?.length)
+  );
+  const availableIds = new Set(usableProfiles.map(profile => profile.id));
   if (!participantSelectionInitialized) {
     selectedSpeakerIds = new Set(availableIds);
     participantSelectionInitialized = true;
@@ -152,17 +204,22 @@ function renderParticipants(profiles, locked) {
   knownProfileIds = availableIds;
 
   const element = $("participantOptions");
-  element.innerHTML = profiles.length ? profiles.map(profile => `
+  element.innerHTML = profiles.length ? profiles.map(profile => {
+    const usable = (profile.elements || []).some(
+      item => !item.hidden && item.centroid?.length
+    );
+    return `
     <label class="participant-option">
       <input type="checkbox" value="${escapeHtml(profile.id)}"
         ${selectedSpeakerIds.has(profile.id) ? "checked" : ""}
-        ${locked ? "disabled" : ""} />
-      <span>${escapeHtml(profile.name)}</span>
-    </label>`).join("") : '<div class="participant-empty">请先注册声纹档案</div>';
+        ${locked || !usable ? "disabled" : ""} />
+      <span>${escapeHtml(profile.name)}${usable ? "" : "（无可用元素）"}</span>
+    </label>`;
+  }).join("") : '<div class="participant-empty">请先创建声纹集合</div>';
   const allSelected = availableIds.size > 0 &&
     [...availableIds].every(id => selectedSpeakerIds.has(id));
   $("selectAllParticipants").textContent = allSelected ? "清空" : "全选";
-  $("selectAllParticipants").disabled = locked || !profiles.length;
+  $("selectAllParticipants").disabled = locked || !usableProfiles.length;
 }
 
 function renderDialogue(items) {
@@ -261,12 +318,41 @@ function currentPayload() {
   };
 }
 
+function openElementModal(collectionId, collectionName) {
+  pendingElementCollectionId = collectionId;
+  $("elementModalCollection").textContent = `加入集合：${collectionName}`;
+  $("elementName").value = "";
+  $("elementModal").classList.remove("hidden");
+  $("elementName").focus();
+}
+
+function closeElementModal() {
+  pendingElementCollectionId = "";
+  $("elementModal").classList.add("hidden");
+}
+
+function beginElementEnrollment(mode) {
+  const elementName = $("elementName").value.trim();
+  if (!pendingElementCollectionId || !elementName) {
+    toast("请填写元素名称", true);
+    return;
+  }
+  const payload = {
+    collectionId: pendingElementCollectionId,
+    elementName,
+    device: $("inputDevice").value
+  };
+  closeElementModal();
+  call(
+    mode === "record" ? "start_voiceprint_sample" : "import_voiceprint_element",
+    payload
+  );
+}
+
 async function refresh() {
   const result = await call("get_state");
   if (result?.data) render(result.data);
 }
-
-window.deleteProfile = async (id) => call("delete_profile", id);
 
 $("startButton").onclick = () => call("start_recording", currentPayload());
 $("pauseButton").onclick = () => call("pause_recording");
@@ -286,25 +372,64 @@ $("selectAllParticipants").onclick = () => {
   selectedSpeakerIds = allSelected ? new Set() : new Set(knownProfileIds);
   render(state);
 };
-$("enrollButton").onclick = () => {
-  const name = $("profileName").value.trim();
-  if (!name) return toast("请先填写姓名", true);
-  call("enroll_profile", name);
-};
 $("recordSampleButton").onclick = () => {
   if (state?.voiceprintRecording) {
     call("stop_voiceprint_sample");
     return;
   }
-  const name = $("profileName").value.trim();
-  if (!name) return toast("请先填写姓名", true);
+  const draft = state?.voiceprintDraft || {};
+  if (!draft.collectionId || !draft.elementName) {
+    return toast("请先从集合中创建一个声纹元素", true);
+  }
   call("start_voiceprint_sample", {
-    name,
+    collectionId: draft.collectionId,
+    elementName: draft.elementName,
     device: $("inputDevice").value
   });
 };
 $("finishEnrollmentButton").onclick = () => call("finish_voiceprint_enrollment");
 $("clearSamplesButton").onclick = () => call("clear_voiceprint_draft");
+$("newCollectionButton").onclick = () => {
+  const name = window.prompt("集合名称（通常填写说话人姓名）");
+  if (name?.trim()) call("create_voiceprint_collection", name.trim());
+};
+$("collections").onclick = event => {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const action = button.dataset.action;
+  const collectionId = button.dataset.collectionId;
+  const elementId = button.dataset.elementId;
+  const currentName = button.dataset.name || "";
+  if (action === "add-element") {
+    openElementModal(collectionId, currentName);
+  } else if (action === "rename-collection") {
+    const name = window.prompt("新的集合名称", currentName);
+    if (name?.trim()) call("rename_voiceprint_collection", collectionId, name.trim());
+  } else if (action === "delete-collection") {
+    if (window.confirm(`删除集合“${currentName}”及其全部声纹元素？`)) {
+      call("delete_voiceprint_collection", collectionId);
+    }
+  } else if (action === "rename-element") {
+    const name = window.prompt("新的元素名称", currentName);
+    if (name?.trim()) {
+      call("rename_voiceprint_element", collectionId, elementId, name.trim());
+    }
+  } else if (action === "toggle-element") {
+    call(
+      "set_voiceprint_element_hidden",
+      collectionId,
+      elementId,
+      button.dataset.hidden === "1"
+    );
+  } else if (action === "delete-element") {
+    if (window.confirm(`删除声纹元素“${currentName}”？`)) {
+      call("delete_voiceprint_element", collectionId, elementId);
+    }
+  }
+};
+$("recordElementButton").onclick = () => beginElementEnrollment("record");
+$("importElementButton").onclick = () => beginElementEnrollment("import");
+$("cancelElementButton").onclick = closeElementModal;
 $("saveSettings").onclick = () => call("save_settings", {
   asr_model: $("asrModel").value.trim() || "paraformer-v2",
   asr_vocabulary_id: $("asrVocabularyId").value.trim(),
@@ -355,7 +480,11 @@ function formatScore(value) {
 }
 function renderMatchEvidence(item) {
   if (!item.canonical_speaker_id || item.confidence === "unknown" || item.confidence === "low") {
-    return "未识别";
+    const candidate = item.best_candidate_name
+      ? ` · 最高 ${escapeHtml(item.best_candidate_name)}`
+      : "";
+    return `未识别${candidate} · 匹配 ${formatScore(item.score)} · ` +
+      `领先 ${formatScore(item.margin)}`;
   }
   return `${escapeHtml(item.confidence)} · 匹配 ${formatScore(item.score)} · ` +
     `领先 ${formatScore(item.margin)}`;
