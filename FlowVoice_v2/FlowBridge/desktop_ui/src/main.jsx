@@ -200,114 +200,11 @@ function FlowVoiceDesktopConsole() {
 
         <section className="grid min-h-0 flex-1 grid-cols-12 gap-5">
           <div className="col-span-12 rounded-[26px] border border-[#1E3B2B] bg-[#08100D]/88 p-5 shadow-[0_26px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl lg:col-span-8">
-            <div className="mb-4 flex items-start justify-between gap-6">
-              <div>
-                <div className="mb-2 inline-flex rounded-full border border-[#28F58D]/20 bg-[#10271B] px-3 py-1 font-mono text-[11px] uppercase tracking-[0.22em] text-[#7BFFB5]">
-                  Mobile Input Endpoint
-                </div>
-                <h2 className="text-[28px] font-semibold leading-tight tracking-[-0.03em] text-[#F2FFF7]">
-                  Scan, open, and start dictating.
-                </h2>
-                <p className="mt-2 max-w-xl text-sm leading-5 text-[#8EA99A]">
-                  Use your phone as a voice input surface. The recognized text will be written to the active cursor on this desktop.
-                </p>
-              </div>
-              <div className="hidden rounded-2xl border border-[#1A3326] bg-[#06100B] px-4 py-3 text-right lg:block">
-                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Local</div>
-                <div className="mt-1 font-mono text-sm text-[#9CFCC4]">{ip}</div>
-                <div className="mt-0.5 font-mono text-xs text-[#688876]">port {port}</div>
-              </div>
-            </div>
-
-            <div className="rounded-[22px] border border-[#21462F] bg-gradient-to-br from-[#0D2116] via-[#09140F] to-[#07100B] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-medium text-[#DDFCE7]">Open this URL on your phone</div>
-                <div className="font-mono text-[11px] text-[#60836E]">Token included</div>
-              </div>
-
-              <div className="flex items-center gap-3 rounded-2xl border border-[#2C6241] bg-[#030805] p-2.5 shadow-[0_0_0_1px_rgba(62,255,145,0.03)]">
-                <code className="min-w-0 flex-1 truncate px-3 font-mono text-[13px] text-[#B9FFD4]">{url}</code>
-                <button onClick={() => callApi("copy_url")} className="rounded-xl border border-[#2E7447] bg-[#10291B] px-4 py-2 text-xs font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
-                  Copy URL
-                </button>
-                <button onClick={() => callApi("open_url")} className="rounded-xl bg-[#28F58D] px-4 py-2 text-xs font-bold text-[#041008] shadow-[0_0_28px_rgba(40,245,141,0.24)] transition hover:bg-[#67FFAD]">
-                  Open
-                </button>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 font-mono text-[11px] text-[#5F7767]">
-                <span>IP <strong className="font-medium text-[#9BE7B6]">{ip}</strong></span>
-                <span>
-                  PORT{" "}
-                  <input
-                    value={port}
-                    disabled={state.running}
-                    onChange={(event) => callApi("set_port", event.target.value)}
-                    className="w-16 rounded-md border border-[#21462F] bg-[#06100B] px-2 py-1 font-medium text-[#9BE7B6] outline-none disabled:opacity-60"
-                  />
-                </span>
-                <span>
-                  TOKEN{" "}
-                  <input
-                    value={token}
-                    disabled={state.running}
-                    onChange={(event) => callApi("set_token", event.target.value)}
-                    className="w-44 rounded-md border border-[#21462F] bg-[#06100B] px-2 py-1 font-medium text-[#9BE7B6] outline-none disabled:opacity-60"
-                  />
-                </span>
-                <button disabled={state.running} onClick={() => callApi("regenerate_token")} className="rounded-md border border-[#2E7447] bg-[#10291B] px-2 py-1 text-[#B9FFD4] disabled:cursor-not-allowed disabled:opacity-45">
-                  New Token
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-4">
-              <ThinInfo title="Status" value={state.running ? "Listening for mobile input" : "Service is stopped"} />
-              <ThinInfo title="Network" value="Same Wi-Fi or LAN required" />
-              <ThinInfo title="Desktop Voice" value={desktopVoice.running ? (desktopVoice.paused ? "Listening is paused" : "Local microphone is listening") : desktopVoice.status || "Stopped"} />
-            </div>
-
             {message && (
-              <div className="mt-4 rounded-2xl border border-[#21462F] bg-[#06100B]/80 px-4 py-3 text-xs leading-5 text-[#A8F7C4]">
+              <div className="mb-4 rounded-2xl border border-[#21462F] bg-[#06100B]/80 px-4 py-3 text-xs leading-5 text-[#A8F7C4]">
                 {message}
               </div>
             )}
-
-            <div className="mt-4 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
-              <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">No Phone Voice</div>
-              <div className="mb-3 flex items-center gap-2 text-sm text-[#C8E7D2]">
-                <span className={`h-2 w-2 rounded-full ${desktopVoice.running && !desktopVoice.paused ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.paused ? "bg-[#D7C47A]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
-                <span>{desktopVoice.error || desktopVoice.status || "STOPPED"}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDesktopVoiceSettingsOpen(true)}
-                className="mb-3 flex w-full items-center justify-between rounded-2xl border border-[#193324] bg-[#050C08]/70 px-3 py-2 text-xs font-semibold text-[#A8F7C4] transition hover:bg-[#0C1E14]"
-              >
-                <span>设置</span>
-                <span className="font-mono text-[#6F8878]">OPEN</span>
-              </button>
-              {desktopVoice.running ? (
-                <div className="grid grid-cols-2 gap-3">
-                  {desktopVoice.paused ? (
-                    <button onClick={() => callApi("resume_desktop_voice")} className="rounded-2xl bg-[#28F58D] py-3 text-sm font-bold text-[#041008] shadow-[0_0_28px_rgba(40,245,141,0.18)] transition hover:bg-[#67FFAD]">
-                      Resume Listening
-                    </button>
-                  ) : (
-                    <button onClick={() => callApi("pause_desktop_voice")} className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 py-3 text-sm font-semibold text-[#D7C47A] transition hover:bg-[#211C0B]">
-                      Pause Listening
-                    </button>
-                  )}
-                  <button onClick={() => callApi("stop_desktop_voice")} className="rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
-                    Stop
-                  </button>
-                </div>
-              ) : (
-                <button onClick={() => callApi("start_desktop_voice")} className="w-full rounded-2xl border border-[#2E7447] bg-[#10291B] py-3 text-sm font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
-                  Start Desktop Voice
-                </button>
-              )}
-            </div>
 
             <TextAgentPanel
               textAgent={textAgent}
@@ -346,17 +243,53 @@ function FlowVoiceDesktopConsole() {
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Bound Session</div>
               <code className="block truncate font-mono text-xs text-[#B9FFD4]">{token}</code>
               <div className="mt-3 h-px bg-[#193324]" />
-              <code className="mt-3 block truncate font-mono text-xs text-[#82B995]">{ip}:{port}</code>
-            </div>
-
-            <div className="mt-auto pt-3">
               {state.running ? (
-                <button onClick={() => callApi("stop_service")} className="w-full rounded-2xl border border-[#285C3B] bg-[#0C1E14] py-3 text-sm font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
+                <button onClick={() => callApi("stop_service")} className="mt-3 w-full rounded-xl border border-[#285C3B] bg-[#0C1E14] py-2.5 text-xs font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
                   Stop Service
                 </button>
               ) : (
-                <button onClick={() => callApi("start_service")} className="w-full rounded-2xl bg-[#28F58D] py-3 text-sm font-bold text-[#041008] shadow-[0_0_28px_rgba(40,245,141,0.22)] transition hover:bg-[#67FFAD]">
+                <button onClick={() => callApi("start_service")} className="mt-3 w-full rounded-xl bg-[#28F58D] py-2.5 text-xs font-bold text-[#041008] shadow-[0_0_24px_rgba(40,245,141,0.2)] transition hover:bg-[#67FFAD]">
                   Start Service
+                </button>
+              )}
+            </div>
+
+            <div className="mt-3 rounded-2xl border border-[#21462F] bg-[#06100B] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Computer Voice</div>
+                  <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-[#C8E7D2]">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${desktopVoice.running && !desktopVoice.paused ? "bg-[#28F58D] shadow-[0_0_12px_rgba(40,245,141,0.85)]" : desktopVoice.paused ? "bg-[#D7C47A]" : desktopVoice.error ? "bg-[#E26A5E]" : "bg-[#5B7062]"}`} />
+                    <span className="truncate">{desktopVoice.error || desktopVoice.status || "STOPPED"}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDesktopVoiceSettingsOpen(true)}
+                  className="shrink-0 rounded-lg border border-[#193324] bg-[#050C08]/70 px-2.5 py-1.5 font-mono text-[10px] text-[#7FA98E] transition hover:bg-[#0C1E14] hover:text-[#A8F7C4]"
+                >
+                  Settings
+                </button>
+              </div>
+
+              {desktopVoice.running ? (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {desktopVoice.paused ? (
+                    <button onClick={() => callApi("resume_desktop_voice")} className="rounded-xl bg-[#28F58D] py-2 text-xs font-bold text-[#041008] transition hover:bg-[#67FFAD]">
+                      Resume
+                    </button>
+                  ) : (
+                    <button onClick={() => callApi("pause_desktop_voice")} className="rounded-xl border border-[#2F2A17] bg-[#161308]/75 py-2 text-xs font-semibold text-[#D7C47A] transition hover:bg-[#211C0B]">
+                      Pause
+                    </button>
+                  )}
+                  <button onClick={() => callApi("stop_desktop_voice")} className="rounded-xl border border-[#285C3B] bg-[#0C1E14] py-2 text-xs font-semibold text-[#A8F7C4] transition hover:bg-[#12301F]">
+                    Stop
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => callApi("start_desktop_voice")} className="mt-3 w-full rounded-xl border border-[#2E7447] bg-[#10291B] py-2 text-xs font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+                  Start Computer Voice
                 </button>
               )}
             </div>
@@ -483,7 +416,7 @@ function TextAgentPanel({ textAgent, session, style, hotkey, onModeChange, onSty
   const finalizing = session.status === "finalizing" || textAgent.polishing;
 
   return (
-    <div className="mt-4 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
+    <div className="rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
       <div className="mb-3 flex items-start justify-between gap-4">
         <div>
           <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Text Agent</div>
@@ -732,7 +665,7 @@ function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
       <div className="relative mx-auto flex h-full max-w-5xl flex-col px-8 py-7">
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-[#74E7A5]/70">No Phone Voice</div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-[#74E7A5]/70">Computer Voice</div>
             <h2 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-[#F2FFF7]">桌面语音输入设置</h2>
           </div>
           <button
@@ -987,15 +920,6 @@ function HurricaneEyeIcon({ compact = false }) {
       <circle cx="34" cy="33" r="5.5" fill="#050807" stroke="#9CFCC4" strokeWidth="2" />
       <circle cx="34" cy="33" r="1.9" fill="#9CFCC4" />
     </svg>
-  );
-}
-
-function ThinInfo({ title, value }) {
-  return (
-    <div className="rounded-2xl border border-[#193324] bg-[#06100B]/80 px-4 py-3">
-      <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#5B7062]">{title}</div>
-      <div className="mt-1 text-sm text-[#C8E7D2]">{value}</div>
-    </div>
   );
 }
 
