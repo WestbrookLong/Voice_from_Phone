@@ -8,11 +8,15 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = Path(os.environ.get("CHASTREAM_DATA_ROOT", APP_ROOT / "data")).resolve()
-SESSIONS_ROOT = DATA_ROOT / "sessions"
+SESSIONS_ROOT = Path(
+    os.environ.get("CHASTREAM_SESSIONS_ROOT", DATA_ROOT / "sessions")
+).resolve()
 PROFILES_ROOT = DATA_ROOT / "profiles"
 MODELS_ROOT = DATA_ROOT / "models"
 CACHE_ROOT = DATA_ROOT / "cache"
-TEMP_ROOT = DATA_ROOT / "temp"
+TEMP_ROOT = Path(
+    os.environ.get("CHASTREAM_TEMP_ROOT", DATA_ROOT / "temp")
+).resolve()
 SETTINGS_PATH = DATA_ROOT / "settings.json"
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,10 +31,15 @@ class Settings:
     def prepare(self) -> None:
         for name in ("core",):
             (self.data_root / name).mkdir(parents=True, exist_ok=True)
-        for name in ("uploads", "voiceprint-imports"):
+        shutil.rmtree(self.runtime_root, ignore_errors=True)
+        for name in ("uploads", "voiceprint-imports", "sessions", "core-temp"):
             (self.runtime_root / name).mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()
 settings.prepare()
 os.environ.setdefault("CHASTREAM_DATA_ROOT", str(settings.data_root / "core"))
+os.environ.setdefault(
+    "CHASTREAM_SESSIONS_ROOT", str(settings.runtime_root / "sessions")
+)
+os.environ.setdefault("CHASTREAM_TEMP_ROOT", str(settings.runtime_root / "core-temp"))

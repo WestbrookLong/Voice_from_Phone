@@ -29,7 +29,9 @@ requires `requirements-worker.txt` and enough memory for CAM++/SCL.
 
 Jobs and completed note results live only in process memory and are processed
 one at a time. Uploaded audio uses a temporary runtime directory and is deleted
-after success or failure. The Android Room database owns durable note history.
+after success or failure. Full-conversation session files and model-generated
+temporary modules also use that runtime directory, which is cleared when the
+service starts. The Android Room database owns durable note history.
 
 Only model caches, voiceprint collections and voiceprint samples remain under
 `CHASTREAM_MOBILE_DATA_ROOT`; they are infrastructure data required across
