@@ -14,11 +14,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'Chastream/backend/**'
+              - '.github/workflows/chastream-mobile-deploy.yml'
+            mobile:
+              - 'Chastream/mobile/**'
+              - '.github/workflows/chastream-mobile-deploy.yml'
+
+  backend-test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -31,6 +50,12 @@ jobs:
           python -m pip install -r requirements-api.txt pytest httpx
           python -m pytest -q
 
+  android-build:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -49,7 +74,11 @@ jobs:
           path: Chastream/mobile/app/build/outputs/apk/debug/app-debug.apk
 
   deploy:
-    needs: verify
+    needs: [changes, backend-test]
+    if: >-
+      always() &&
+      needs.changes.outputs.backend == 'true' &&
+      needs.backend-test.result == 'success'
     runs-on: ubuntu-latest
     environment: production
     env:
