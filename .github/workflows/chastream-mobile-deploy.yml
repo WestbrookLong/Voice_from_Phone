@@ -114,12 +114,24 @@ jobs:
       - name: Upload backend
         if: steps.deployment.outputs.enabled == 'true'
         run: |
-          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_PATH/backend' '$DEPLOY_PATH/shared'"
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "mkdir -p '$DEPLOY_PATH/backend/app' '$DEPLOY_PATH/backend/deploy' '$DEPLOY_PATH/shared'"
           rsync -az --delete \
-            --exclude '.venv/' \
-            --exclude 'data/' \
+            --exclude '__pycache__/' \
             -e "ssh -p $SSH_PORT" \
-            Chastream/backend/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/backend/"
+            Chastream/backend/app/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/backend/app/"
+          rsync -az --delete \
+            -e "ssh -p $SSH_PORT" \
+            Chastream/backend/deploy/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/backend/deploy/"
+          rsync -az \
+            -e "ssh -p $SSH_PORT" \
+            Chastream/backend/requirements-api.txt \
+            Chastream/backend/requirements-worker.txt \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/backend/"
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "rm -rf '$DEPLOY_PATH/backend/tests' '$DEPLOY_PATH/backend/.pytest_cache'; \
+             rm -f '$DEPLOY_PATH/backend/README.md' '$DEPLOY_PATH/backend/.env.example' \
+               '$DEPLOY_PATH/backend/.gitignore'"
 
       - name: Configure server secrets
         if: steps.deployment.outputs.enabled == 'true'
