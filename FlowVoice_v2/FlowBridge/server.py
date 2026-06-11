@@ -10,7 +10,7 @@ import sys
 import unicodedata
 from ctypes import wintypes
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import web
 
@@ -154,8 +154,9 @@ def backspace(count: int) -> None:
 
 
 class TextSession:
-    def __init__(self) -> None:
+    def __init__(self, on_text_inserted: Callable[[str], None] | None = None) -> None:
         self.text = ""
+        self.on_text_inserted = on_text_inserted
 
     def replace(self, new_text: str) -> None:
         prefix_len = common_prefix_len(self.text, new_text)
@@ -165,6 +166,8 @@ class TextSession:
             backspace(delete_count)
         if insert_text:
             type_text(insert_text)
+            if self.on_text_inserted is not None:
+                self.on_text_inserted(insert_text)
         self.text = new_text
 
     def reset(self) -> None:
@@ -202,8 +205,9 @@ class BridgeSettings:
 
 
 class FlowInputSession:
-    def __init__(self) -> None:
-        self.text_session = TextSession()
+    def __init__(self, on_text_inserted: Callable[[str], None] | None = None) -> None:
+        self.on_text_inserted = on_text_inserted
+        self.text_session = TextSession(on_text_inserted)
         self.raw_text = ""
         self.raw_session_start = 0
         self.last_seq = 0
@@ -260,6 +264,8 @@ class FlowInputSession:
                 self.sync_processed_text(render_text(prefix_raw, settings))
                 log(f"[inject] punctuation {punctuation_text!r} (spoken punctuation)")
                 type_text(punctuation_text)
+                if self.on_text_inserted is not None:
+                    self.on_text_inserted(punctuation_text)
                 self.raw_session_start += consumed_length
                 self.text_session.reset()
                 continue
@@ -488,9 +494,11 @@ def validate_ops(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def create_app(token: str, text_agent: Any = None) -> web.Application:
+def create_app(token: str, text_agent: Any = None, typing_stats: Any = None) -> web.Application:
     app = web.Application()
-    session = FlowInputSession()
+    session = FlowInputSession(
+        (lambda text: typing_stats.record(text, "mobile")) if typing_stats is not None else None
+    )
     text_agent_route_active = False
 
     def require_token(request: web.Request, payload: dict[str, Any] | None = None) -> None:
@@ -593,6 +601,8 @@ def create_app(token: str, text_agent: Any = None) -> web.Application:
                         if op["type"] == "insert":
                             log(f"[inject] insert {len(op['text'])} chars: {op['text']!r}")
                             type_text(op["text"])
+                            if typing_stats is not None:
+                                typing_stats.record(op["text"], "mobile")
                         elif op["type"] == "enter":
                             log("[inject] enter")
                             press_key(VK_RETURN)

@@ -24,6 +24,7 @@ from asr.punctuation import PunctuationEngine
 from asr.vosk_engine import VoskEngine
 from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, log, render_text, send_backspace_chunks, type_text
 from text_agent import TextAgentManager
+from typing_stats import TypingStats
 
 
 DESKTOP_VOICE_MODEL_NAME = "vosk-model-small-cn-0.22"
@@ -199,12 +200,20 @@ def copy_text_to_clipboard(text: str) -> None:
 
 
 class BridgeServerThread(threading.Thread):
-    def __init__(self, host: str, port: int, token: str, text_agent: TextAgentManager | None = None) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        token: str,
+        text_agent: TextAgentManager | None = None,
+        typing_stats: TypingStats | None = None,
+    ) -> None:
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.token = token
         self.text_agent = text_agent
+        self.typing_stats = typing_stats
         self.loop: asyncio.AbstractEventLoop | None = None
         self.runner: web.AppRunner | None = None
         self.ready = threading.Event()
@@ -225,7 +234,7 @@ class BridgeServerThread(threading.Thread):
             self.loop.close()
 
     async def _start(self) -> None:
-        app = create_app(self.token, text_agent=self.text_agent)
+        app = create_app(self.token, text_agent=self.text_agent, typing_stats=self.typing_stats)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)
@@ -285,12 +294,19 @@ class TextAgentHotkeyThread(threading.Thread):
 
 
 class DesktopVoiceThread(threading.Thread):
-    def __init__(self, model_path: Path, settings: BridgeSettings, config: dict) -> None:
+    def __init__(
+        self,
+        model_path: Path,
+        settings: BridgeSettings,
+        config: dict,
+        typing_stats: TypingStats | None = None,
+    ) -> None:
         super().__init__(daemon=True)
         self.model_path = model_path
         self.settings = settings
         self.config = normalize_desktop_voice_config(config)
-        self.session = FlowInputSession()
+        self.typing_stats = typing_stats
+        self.session = self._create_input_session()
         self.asr_engine: StreamingASREngine | None = None
         self.punctuation_engine: PunctuationEngine | None = None
         self.audio_queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
@@ -599,6 +615,7 @@ class DesktopVoiceThread(threading.Thread):
             send_backspace_chunks(delete_count)
         if append_text:
             type_text(append_text)
+            self._record_inserted_text(append_text)
         self.composition_text = new
 
     def _clear_composition(self) -> None:
@@ -681,6 +698,7 @@ class DesktopVoiceThread(threading.Thread):
         if newly_committed:
             self._clear_composition()
             type_text(newly_committed)
+            self._record_inserted_text(newly_committed)
             self.committed_partial_text = committed_target
 
         composition_target = full[len(self.committed_partial_text) :]
@@ -700,12 +718,12 @@ class DesktopVoiceThread(threading.Thread):
             return
 
         if not self.committed_partial_text:
-            final_session = FlowInputSession()
+            final_session = self._create_input_session()
             final_session.sync_state(final_text, self.settings)
         elif final_text.startswith(self.committed_partial_text):
             remaining = final_text[len(self.committed_partial_text) :]
             if remaining:
-                final_session = FlowInputSession()
+                final_session = self._create_input_session()
                 final_session.sync_state(remaining, self.settings)
 
         self._reset_streaming_text_state()
@@ -734,6 +752,16 @@ class DesktopVoiceThread(threading.Thread):
             return
         self._handle_asr_events(self.asr_engine.poll_events())
 
+    def _record_inserted_text(self, text: str) -> None:
+        if self.typing_stats is not None:
+            self.typing_stats.record(text, "computer")
+
+    def _create_input_session(self) -> FlowInputSession:
+        try:
+            return FlowInputSession(self._record_inserted_text)
+        except TypeError:
+            return FlowInputSession()
+
     def stop(self) -> None:
         self.stop_event.set()
 
@@ -757,6 +785,9 @@ class DesktopApi:
         self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
         self.desktop_voice_thread: DesktopVoiceThread | None = None
+        self.typing_stats = TypingStats(
+            Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "FlowBridge" / "typing_stats.json"
+        )
         self.text_agent = TextAgentManager(
             copy_callback=copy_text_to_clipboard,
             insert_callback=type_text,
@@ -849,6 +880,7 @@ class DesktopApi:
                     "error": self.text_agent_hotkey_thread.error if self.text_agent_hotkey_thread is not None else None,
                     "label": "Ctrl+Alt+Space",
                 },
+                "typingStats": self.typing_stats.snapshot(),
             }
 
     def set_port(self, value: str) -> dict:
@@ -884,7 +916,7 @@ class DesktopApi:
             except ValueError:
                 return self._result("Port must be between 1 and 65535.")
 
-            thread = BridgeServerThread("0.0.0.0", port, self.token, self.text_agent)
+            thread = BridgeServerThread("0.0.0.0", port, self.token, self.text_agent, self.typing_stats)
             self.server_thread = thread
             thread.start()
 
@@ -1025,7 +1057,12 @@ class DesktopApi:
         with self.lock:
             if self._desktop_voice_running():
                 return self._result("Desktop voice is already listening.")
-            thread = DesktopVoiceThread(desktop_voice_model_path(), self.desktop_voice_settings, self.desktop_voice_config)
+            thread = DesktopVoiceThread(
+                desktop_voice_model_path(),
+                self.desktop_voice_settings,
+                self.desktop_voice_config,
+                self.typing_stats,
+            )
             self.desktop_voice_thread = thread
             thread.start()
 
@@ -1133,6 +1170,7 @@ class DesktopApi:
             self.text_agent_hotkey_thread = None
         self.stop_desktop_voice()
         self.stop_service()
+        self.typing_stats.close()
 
     def start_hotkeys(self) -> None:
         if self.text_agent_hotkey_thread is not None:

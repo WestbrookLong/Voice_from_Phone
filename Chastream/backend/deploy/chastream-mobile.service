@@ -1,0 +1,19 @@
+[Unit]
+Description=Chastream Mobile API and Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=__DEPLOY_PATH__/backend
+EnvironmentFile=__DEPLOY_PATH__/shared/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__DEPLOY_PATH__/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010 --proxy-headers
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

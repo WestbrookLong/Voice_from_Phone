@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QRCodeSVG } from "qrcode.react";
 import "./styles.css";
@@ -50,6 +51,12 @@ const fallbackState = {
     error: null,
     label: "Ctrl+Alt+Space",
   },
+  typingStats: {
+    today: { total: 0, mobile: 0, computer: 0 },
+    week: { total: 0, mobile: 0, computer: 0 },
+    month: { total: 0, mobile: 0, computer: 0 },
+    history: [],
+  },
 };
 
 function desktopApi() {
@@ -61,6 +68,7 @@ function FlowVoiceDesktopConsole() {
   const [state, setState] = React.useState(fallbackState);
   const [message, setMessage] = React.useState("");
   const [desktopVoiceSettingsOpen, setDesktopVoiceSettingsOpen] = React.useState(false);
+  const [typingStatsOpen, setTypingStatsOpen] = React.useState(false);
   const refreshInFlight = React.useRef(false);
 
   const ip = state.ip;
@@ -76,6 +84,7 @@ function FlowVoiceDesktopConsole() {
   };
   const textAgentStyle = state.textAgentStyle || fallbackState.textAgentStyle;
   const textAgentHotkey = state.textAgentHotkey || fallbackState.textAgentHotkey;
+  const typingStats = state.typingStats || fallbackState.typingStats;
 
   const refresh = React.useCallback(async () => {
     const api = desktopApi();
@@ -227,17 +236,36 @@ function FlowVoiceDesktopConsole() {
           </div>
 
           <aside className="col-span-12 flex min-h-0 flex-col rounded-[26px] border border-[#1E3B2B] bg-[#08100D]/88 p-5 shadow-[0_26px_80px_rgba(0,0,0,0.5)] backdrop-blur-xl lg:col-span-4">
-            <div className="mb-3 text-center">
+            <div className="mb-2 text-center">
               <div className="mx-auto mb-2 h-1 w-16 rounded-full bg-gradient-to-r from-transparent via-[#28F58D] to-transparent opacity-80" />
               <h2 className="text-xl font-semibold text-[#F2FFF7]">Quick Connect</h2>
               <p className="mt-1 text-sm leading-5 text-[#8EA99A]">Scan this QR code from your phone.</p>
             </div>
 
-            <div className="mx-auto w-full max-w-[250px] rounded-[28px] border border-[#2C6241] bg-gradient-to-br from-[#153321] to-[#06100B] p-3 shadow-[0_0_60px_rgba(40,245,141,0.13)]">
-              <div className="rounded-[20px] bg-white p-3">
+            <div className="mx-auto w-full max-w-[190px] rounded-2xl border border-[#2C6241] bg-gradient-to-br from-[#153321] to-[#06100B] p-2.5 shadow-[0_0_48px_rgba(40,245,141,0.12)]">
+              <div className="rounded-xl bg-white p-2.5">
                 <QrCode value={url} />
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setTypingStatsOpen(true)}
+              className="mt-3 w-full rounded-2xl border border-[#21462F] bg-[#06100B] p-4 text-left transition hover:border-[#2E7447] hover:bg-[#08150D]"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Typing Activity</div>
+                  <div className="mt-1 text-xs text-[#7FA98E]">普通输入字数</div>
+                </div>
+                <span className="text-xl text-[#7FA98E]" aria-hidden="true">›</span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <TypingStatValue label="本日" value={typingStats.today?.total || 0} />
+                <TypingStatValue label="本周" value={typingStats.week?.total || 0} />
+                <TypingStatValue label="本月" value={typingStats.month?.total || 0} />
+              </div>
+            </button>
 
             <div className="mt-3 rounded-2xl border border-[#21462F] bg-[#06100B] p-4">
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Bound Session</div>
@@ -293,6 +321,7 @@ function FlowVoiceDesktopConsole() {
                 </button>
               )}
             </div>
+
           </aside>
         </section>
       </main>
@@ -302,6 +331,12 @@ function FlowVoiceDesktopConsole() {
           running={desktopVoice.running}
           onChange={updateDesktopVoiceSettings}
           onClose={() => setDesktopVoiceSettingsOpen(false)}
+        />
+      )}
+      {typingStatsOpen && (
+        <TypingStatsPage
+          stats={typingStats}
+          onClose={() => setTypingStatsOpen(false)}
         />
       )}
       </div>
@@ -652,6 +687,144 @@ function ServiceBadge({ running }) {
       {running ? "Service Started" : "Service Stopped"}
     </div>
   );
+}
+
+function TypingStatValue({ label, value }) {
+  return (
+    <div className="min-w-0">
+      <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-[#5B7062]">{label}</div>
+      <div className="mt-1 truncate font-mono text-lg font-semibold text-[#B9FFD4]">{formatStatNumber(value)}</div>
+    </div>
+  );
+}
+
+function TypingStatsPage({ stats, onClose }) {
+  const history = Array.isArray(stats.history) ? stats.history : [];
+  const recentThirtyDays = history.slice(-30);
+  const recentFourteenDays = history.slice(-14).reverse();
+  const maximum = Math.max(1, ...recentThirtyDays.map((item) => Number(item.total) || 0));
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] isolate overflow-hidden bg-[#050807] text-[#DDE7DF]">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute right-[-140px] top-[-160px] h-[420px] w-[420px] rounded-full bg-[#28F58D]/8 blur-[90px]" />
+        <div className="absolute inset-0 opacity-[0.04] [background-image:linear-gradient(rgba(255,255,255,.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.6)_1px,transparent_1px)] [background-size:36px_36px]" />
+      </div>
+
+      <div className="relative mx-auto flex h-full max-w-5xl flex-col px-8 py-7">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-[#74E7A5]/70">Typing Activity</div>
+            <h2 className="mt-2 text-3xl font-semibold text-[#F2FFF7]">输入统计</h2>
+            <p className="mt-1 text-sm text-[#789484]">仅统计 FlowVoice 实际输入到光标的字符，不包含空格、换行和纪要模式。</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-xl border border-[#285C3B] bg-[#0C1E14] text-xl text-[#A8F7C4] transition hover:bg-[#12301F]"
+            aria-label="关闭输入统计"
+            title="关闭"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 border-y border-[#193324]">
+          <TypingPeriodSummary label="本日" values={stats.today} />
+          <TypingPeriodSummary label="本周" values={stats.week} />
+          <TypingPeriodSummary label="本月" values={stats.month} />
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto pt-6">
+          <section>
+            <div className="mb-4 flex items-end justify-between">
+              <div>
+                <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#5B7062]">Last 30 Days</div>
+                <h3 className="mt-1 text-lg font-semibold text-[#E8FFF0]">每日输入趋势</h3>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-[#789484]">
+                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#28F58D]" />手机输入</span>
+                <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#D7C47A]" />电脑语音</span>
+              </div>
+            </div>
+
+            <div className="grid h-48 grid-cols-[repeat(30,minmax(0,1fr))] items-end gap-1 border-b border-[#21462F] px-1 pb-1">
+              {recentThirtyDays.map((item) => {
+                const mobileHeight = Math.max(0, (Number(item.mobile) || 0) / maximum * 100);
+                const computerHeight = Math.max(0, (Number(item.computer) || 0) / maximum * 100);
+                return (
+                  <div
+                    key={item.date}
+                    className="flex h-full min-w-0 flex-col justify-end"
+                    title={`${formatStatDate(item.date)}：${formatStatNumber(item.total)} 字`}
+                  >
+                    <div className="w-full bg-[#D7C47A]" style={{ height: `${computerHeight}%`, minHeight: item.computer ? 2 : 0 }} />
+                    <div className="w-full bg-[#28F58D]" style={{ height: `${mobileHeight}%`, minHeight: item.mobile ? 2 : 0 }} />
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="mt-8 pb-4">
+            <div className="mb-3">
+              <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#5B7062]">Daily Detail</div>
+              <h3 className="mt-1 text-lg font-semibold text-[#E8FFF0]">最近 14 天</h3>
+            </div>
+            <div className="divide-y divide-[#193324] border-y border-[#193324]">
+              {recentFourteenDays.map((item) => (
+                <div key={item.date} className="grid grid-cols-[1fr_repeat(3,100px)] items-center gap-4 py-3 text-sm">
+                  <span className="text-[#A9C7B3]">{formatStatDate(item.date)}</span>
+                  <StatDetailCell label="手机" value={item.mobile} />
+                  <StatDetailCell label="电脑" value={item.computer} />
+                  <div className="text-right">
+                    <div className="font-mono text-[10px] text-[#5B7062]">合计</div>
+                    <div className="mt-0.5 font-mono font-semibold text-[#DDFCE7]">{formatStatNumber(item.total)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function TypingPeriodSummary({ label, values }) {
+  const totals = values || { total: 0, mobile: 0, computer: 0 };
+  return (
+    <div className="px-5 py-5 first:pl-0 last:pr-0 [&+&]:border-l [&+&]:border-[#193324]">
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">{label}</div>
+      <div className="mt-2 font-mono text-3xl font-semibold text-[#B9FFD4]">{formatStatNumber(totals.total)}</div>
+      <div className="mt-2 flex gap-4 text-xs text-[#789484]">
+        <span>手机 {formatStatNumber(totals.mobile)}</span>
+        <span>电脑 {formatStatNumber(totals.computer)}</span>
+      </div>
+    </div>
+  );
+}
+
+function StatDetailCell({ label, value }) {
+  return (
+    <div className="text-right">
+      <div className="font-mono text-[10px] text-[#5B7062]">{label}</div>
+      <div className="mt-0.5 font-mono text-[#91B69E]">{formatStatNumber(value)}</div>
+    </div>
+  );
+}
+
+function formatStatNumber(value) {
+  return new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
+}
+
+function formatStatDate(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric", weekday: "short" });
 }
 
 function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {

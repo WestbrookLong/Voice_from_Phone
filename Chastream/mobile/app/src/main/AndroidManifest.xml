@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".ChastreamApplication"
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="Chastream"
+        android:roundIcon="@drawable/ic_launcher"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Chastream"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".ui.DetailActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.QuickRecordActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.ConversationSetupActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.VoiceprintManagerActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.VoiceprintSampleActivity"
+            android:exported="false" />
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <receiver
+            android:name=".widget.RecentNotesWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/recent_notes_widget_info" />
+        </receiver>
+    </application>
+</manifest>

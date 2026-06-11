@@ -1,0 +1,108 @@
+name: Deploy Chastream Mobile
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Chastream/backend/**"
+      - "Chastream/mobile/**"
+      - ".github/workflows/chastream-mobile-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: chastream-mobile-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: Chastream/backend/requirements-api.txt
+
+      - name: Test backend
+        working-directory: Chastream/backend
+        run: |
+          python -m pip install -r requirements-api.txt pytest httpx
+          pytest -q
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Build Android debug APK
+        working-directory: Chastream/mobile
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chastream-mobile-debug
+          path: Chastream/mobile/app/build/outputs/apk/debug/app-debug.apk
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.CHASTREAM_SSH_HOST }}
+      SSH_PORT: ${{ secrets.CHASTREAM_SSH_PORT || '22' }}
+      SSH_USER: ${{ secrets.CHASTREAM_SSH_USER || 'ubuntu' }}
+      DEPLOY_PATH: ${{ secrets.CHASTREAM_DEPLOY_PATH || '/home/ubuntu/projects/chastream-mobile' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.CHASTREAM_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload backend
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_PATH/backend' '$DEPLOY_PATH/shared'"
+          rsync -az --delete \
+            --exclude '.venv/' \
+            --exclude 'data/' \
+            -e "ssh -p $SSH_PORT" \
+            Chastream/backend/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/backend/"
+
+      - name: Configure server secrets
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          CHASTREAM_API_TOKEN: ${{ secrets.CHASTREAM_API_TOKEN }}
+        run: |
+          {
+            printf 'DASHSCOPE_API_KEY=%s\n' "$DASHSCOPE_API_KEY"
+            printf 'CHASTREAM_API_TOKEN=%s\n' "$CHASTREAM_API_TOKEN"
+            printf 'CHASTREAM_MOBILE_DATA_ROOT=%s/shared/data\n' "$DEPLOY_PATH"
+            printf 'CHASTREAM_PUBLIC_BASE_PATH=/chastream\n'
+            printf 'CHASTREAM_QWEN_MODEL=qwen-plus\n'
+            printf 'CHASTREAM_MAX_UPLOAD_MB=500\n'
+          } | ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "umask 077; cat > '$DEPLOY_PATH/shared/.env'"
+
+      - name: Install or update service
+        run: |
+          ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "chmod +x '$DEPLOY_PATH/backend/deploy/'*.sh; \
+             if systemctl cat chastream-mobile.service >/dev/null 2>&1; then \
+               INSTALL_HEAVY_WORKER=1 '$DEPLOY_PATH/backend/deploy/update.sh' '$DEPLOY_PATH'; \
+             else \
+               '$DEPLOY_PATH/backend/deploy/install.sh' '$DEPLOY_PATH'; \
+               sudo systemctl start chastream-mobile.service; \
+               sleep 3; \
+               curl --fail --silent http://127.0.0.1:8010/health; \
+             fi"
+
+      - name: Public health check
+        run: curl --fail --silent "http://$SSH_HOST/chastream/health"

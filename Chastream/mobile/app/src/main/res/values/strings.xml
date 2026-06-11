@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Chastream</string>
+    <string name="widget_description">显示最近想法摘要并快速开始录音</string>
+</resources>
