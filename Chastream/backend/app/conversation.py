@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 
@@ -37,34 +38,43 @@ def process_conversation(record: dict) -> dict:
     manager.settings.enable_scl = bool(
         metadata.get("enableScl", manager.settings.enable_scl)
     )
-    state = manager.process_existing(
-        Path(record["audio_path"]),
-        record["title"] or "移动端对话",
-        str(metadata.get("speakerMode", "two")),
-        selected_speaker_ids,
-        analysis_style=record["style"],
-    )
-    manager.worker.join()
-    session = manager.active
-    if not session or session.status != "done":
-        raise RuntimeError(session.error if session else "Conversation processing failed.")
-    session_dir = manager.sessions.directory(session.id)
-    dialogue = _read_json(session_dir / "dialogue.json")
-    analysis = _read_json(session_dir / "analysis.json")
-    return {
-        "title": str(analysis.get("title") or session.title),
-        "summary": str(analysis.get("overview") or "")[:120],
-        "content": (session_dir / "analysis.md").read_text(encoding="utf-8"),
-        "raw_transcript": "\n".join(
-            str(item.get("text", "")) for item in session.transcript_sentences
-        ),
-        "result_json": {
-            "coreSessionId": session.id,
-            "dialogue": dialogue,
-            "analysis": analysis,
-            "settings": metadata,
-        },
-    }
+    session_dir: Path | None = None
+    try:
+        manager.process_existing(
+            Path(record["audio_path"]),
+            record["title"] or "移动端对话",
+            str(metadata.get("speakerMode", "two")),
+            selected_speaker_ids,
+            analysis_style=record["style"],
+        )
+        manager.worker.join()
+        session = manager.active
+        if not session or session.status != "done":
+            raise RuntimeError(
+                session.error if session else "Conversation processing failed."
+            )
+        session_dir = manager.sessions.directory(session.id)
+        dialogue = _read_json(session_dir / "dialogue.json")
+        analysis = _read_json(session_dir / "analysis.json")
+        return {
+            "title": str(analysis.get("title") or session.title),
+            "summary": str(analysis.get("overview") or "")[:120],
+            "content": (session_dir / "analysis.md").read_text(encoding="utf-8"),
+            "raw_transcript": "\n".join(
+                str(item.get("text", "")) for item in session.transcript_sentences
+            ),
+            "result_json": {
+                "coreSessionId": session.id,
+                "dialogue": dialogue,
+                "analysis": analysis,
+                "settings": metadata,
+            },
+        }
+    finally:
+        if session_dir is None and manager.active:
+            session_dir = manager.sessions.directory(manager.active.id)
+        if session_dir:
+            shutil.rmtree(session_dir, ignore_errors=True)
 
 
 def _read_json(path: Path) -> dict | list:

@@ -56,6 +56,9 @@ class JobWorker:
                 database.complete(job["id"], record["id"], values)
             except Exception as exc:
                 database.fail(job["id"], record["id"], str(exc))
+            finally:
+                Path(record["audio_path"]).unlink(missing_ok=True)
+                database.clear_audio_path(record["id"])
             time.sleep(0.2)
 
 

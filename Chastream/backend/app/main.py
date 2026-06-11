@@ -195,7 +195,7 @@ def create_voiceprint_element(
         raise HTTPException(status_code=400, detail="Element name is required.")
     if any(item.name.casefold() == clean_name.casefold() for item in collection.elements):
         raise HTTPException(status_code=409, detail="Element name already exists.")
-    import_dir = settings.data_root / "voiceprint-imports" / uuid.uuid4().hex
+    import_dir = settings.runtime_root / "voiceprint-imports" / uuid.uuid4().hex
     import_dir.mkdir(parents=True, exist_ok=True)
     paths = []
     for sample in samples:
@@ -274,7 +274,8 @@ def _save_upload(upload: UploadFile, category: str) -> Path:
     suffix = Path(upload.filename or "audio.wav").suffix.lower() or ".wav"
     if suffix not in {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}:
         raise HTTPException(status_code=415, detail="Unsupported audio format.")
-    path = settings.data_root / category / f"{uuid.uuid4().hex}{suffix}"
+    path = settings.runtime_root / "uploads" / category / f"{uuid.uuid4().hex}{suffix}"
+    path.parent.mkdir(parents=True, exist_ok=True)
     total = 0
     with path.open("wb") as output:
         while chunk := upload.file.read(1024 * 1024):

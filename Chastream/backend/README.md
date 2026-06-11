@@ -27,9 +27,13 @@ requires `requirements-worker.txt` and enough memory for CAM++/SCL.
 - `/api/v1/voiceprints`: manage speaker collections and their independently
   matched elements.
 
-Jobs are persisted in SQLite and processed one at a time. Uploads and model
-data are stored under `CHASTREAM_MOBILE_DATA_ROOT`, never under the system
-drive used by the desktop application.
+Jobs and completed note results live only in process memory and are processed
+one at a time. Uploaded audio uses a temporary runtime directory and is deleted
+after success or failure. The Android Room database owns durable note history.
+
+Only model caches, voiceprint collections and voiceprint samples remain under
+`CHASTREAM_MOBILE_DATA_ROOT`; they are infrastructure data required across
+restarts, not user conversation history.
 
 ## Server paths
 
