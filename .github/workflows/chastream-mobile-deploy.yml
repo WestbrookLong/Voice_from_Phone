@@ -29,7 +29,7 @@ jobs:
         working-directory: Chastream/backend
         run: |
           python -m pip install -r requirements-api.txt pytest httpx
-          pytest -q
+          python -m pytest -q
 
       - uses: actions/setup-java@v4
         with:
@@ -57,17 +57,33 @@ jobs:
       SSH_PORT: ${{ secrets.CHASTREAM_SSH_PORT || '22' }}
       SSH_USER: ${{ secrets.CHASTREAM_SSH_USER || 'ubuntu' }}
       DEPLOY_PATH: ${{ secrets.CHASTREAM_DEPLOY_PATH || '/home/ubuntu/projects/chastream-mobile' }}
+      SSH_PRIVATE_KEY: ${{ secrets.CHASTREAM_SSH_PRIVATE_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
     steps:
+      - name: Check deployment configuration
+        id: deployment
+        shell: bash
+        run: |
+          if [[ -n "$SSH_HOST" && -n "$SSH_PRIVATE_KEY" && -n "$DASHSCOPE_API_KEY" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Deployment skipped because Chastream server secrets are not configured."
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.deployment.outputs.enabled == 'true'
 
       - name: Configure SSH
+        if: steps.deployment.outputs.enabled == 'true'
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.CHASTREAM_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
 
       - name: Upload backend
+        if: steps.deployment.outputs.enabled == 'true'
         run: |
           ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_PATH/backend' '$DEPLOY_PATH/shared'"
           rsync -az --delete \
@@ -77,8 +93,8 @@ jobs:
             Chastream/backend/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/backend/"
 
       - name: Configure server secrets
+        if: steps.deployment.outputs.enabled == 'true'
         env:
-          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           CHASTREAM_API_TOKEN: ${{ secrets.CHASTREAM_API_TOKEN }}
         run: |
           {
@@ -92,6 +108,7 @@ jobs:
             "umask 077; cat > '$DEPLOY_PATH/shared/.env'"
 
       - name: Install or update service
+        if: steps.deployment.outputs.enabled == 'true'
         run: |
           ssh -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             "chmod +x '$DEPLOY_PATH/backend/deploy/'*.sh; \
@@ -105,4 +122,5 @@ jobs:
              fi"
 
       - name: Public health check
+        if: steps.deployment.outputs.enabled == 'true'
         run: curl --fail --silent "http://$SSH_HOST/chastream/health"
