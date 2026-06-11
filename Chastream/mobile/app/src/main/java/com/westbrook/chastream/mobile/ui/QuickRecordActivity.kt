@@ -57,6 +57,11 @@ class QuickRecordActivity : ComponentActivity() {
             } else {
                 "{}"
             }
+        val existingId = intent.getStringExtra("noteId")
+        val processingMode = intent.getStringExtra("processingMode")
+            ?: getSharedPreferences("note_preferences", MODE_PRIVATE)
+                .getString("processingMode", "organize")
+                .orEmpty()
         setContent {
             MaterialTheme {
                 RecorderScreen(autoStart) { isRecording ->
@@ -73,6 +78,8 @@ class QuickRecordActivity : ComponentActivity() {
                                 style = style,
                                 metadataJson = metadataJson,
                                 title = title,
+                                processingMode = processingMode,
+                                existingId = existingId,
                             )
                             finish()
                         }

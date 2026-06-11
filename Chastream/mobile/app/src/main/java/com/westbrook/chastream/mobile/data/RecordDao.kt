@@ -20,9 +20,18 @@ interface RecordDao {
     @Query("SELECT * FROM records WHERE id = :id LIMIT 1")
     suspend fun get(id: String): RecordEntity?
 
+    @Query("SELECT * FROM records WHERE id = :id LIMIT 1")
+    fun observe(id: String): Flow<RecordEntity?>
+
     @Query("SELECT * FROM records WHERE status IN ('local', 'failed') ORDER BY createdAt LIMIT 1")
     suspend fun nextPending(): RecordEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(record: RecordEntity)
+
+    @Query("DELETE FROM records WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("DELETE FROM records WHERE id IN (:ids)")
+    suspend fun deleteMany(ids: List<String>)
 }

@@ -40,7 +40,9 @@ class JobWorker:
             try:
                 if job["job_type"] == "quick_note":
                     result = process_quick_note(
-                        Path(record["audio_path"]), record["style"]
+                        Path(record["audio_path"]),
+                        record["style"],
+                        record["metadata"],
                     )
                     values = {
                         "title": result["title"],

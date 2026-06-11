@@ -19,6 +19,10 @@ interface ChastreamApi {
         @Part audio: MultipartBody.Part,
         @Part("style") style: RequestBody,
         @Part("source") source: RequestBody,
+        @Part("processing_mode") processingMode: RequestBody,
+        @Part("existing_title") existingTitle: RequestBody,
+        @Part("existing_summary") existingSummary: RequestBody,
+        @Part("existing_content") existingContent: RequestBody,
     ): CreateRecordResponse
 
     @Multipart

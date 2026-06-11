@@ -42,6 +42,10 @@ class UploadWorker(
                     audio,
                     record.style.toRequestBody(textType),
                     record.source.toRequestBody(textType),
+                    record.processingMode.toRequestBody(textType),
+                    record.title.toRequestBody(textType),
+                    record.summary.toRequestBody(textType),
+                    record.content.toRequestBody(textType),
                 )
             } else {
                 api.createConversation(
@@ -66,6 +70,8 @@ class UploadWorker(
                 RecentNotesWidget.updateAll(applicationContext)
             }
             if (remote.status == "done") {
+                file.delete()
+                repository.save(record.fromRemote(remote).copy(audioPath = ""))
                 repository.enqueueUpload()
                 Result.success()
             } else if (remote.status == "failed") {
@@ -81,14 +87,25 @@ class UploadWorker(
         }
     }
 
-    private fun RecordEntity.fromRemote(remote: RemoteRecord) = copy(
-        remoteId = remote.id,
-        title = remote.title,
-        summary = remote.summary,
-        content = remote.content,
-        rawTranscript = remote.raw_transcript,
-        status = remote.status,
-        error = remote.error,
-        updatedAt = System.currentTimeMillis(),
-    )
+    private fun RecordEntity.fromRemote(remote: RemoteRecord): RecordEntity {
+        if (remote.status != "done") {
+            return copy(
+                remoteId = remote.id,
+                status = remote.status,
+                error = remote.error,
+            )
+        }
+        return copy(
+            remoteId = remote.id,
+            title = remote.title.ifBlank { title },
+            summary = remote.summary,
+            content = remote.content,
+            rawTranscript = listOf(rawTranscript, remote.raw_transcript)
+                .filter { it.isNotBlank() }
+                .joinToString("\n\n"),
+            status = remote.status,
+            error = remote.error,
+            updatedAt = System.currentTimeMillis(),
+        )
+    }
 }

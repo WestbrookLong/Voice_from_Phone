@@ -16,6 +16,7 @@ data class RecordEntity(
     val status: String = "local",
     val source: String = "app",
     val style: String = "formal_paragraph",
+    val processingMode: String = "organize",
     val metadataJson: String = "{}",
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis(),

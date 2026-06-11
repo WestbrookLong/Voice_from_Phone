@@ -55,6 +55,10 @@ def create_quick_note(
     audio: UploadFile = File(...),
     style: str = Form("formal_paragraph"),
     source: str = Form("app"),
+    processing_mode: str = Form("organize"),
+    existing_title: str = Form(""),
+    existing_summary: str = Form(""),
+    existing_content: str = Form(""),
 ) -> dict:
     path = _save_upload(audio, "quick-notes")
     record, job = database.create_record(
@@ -62,7 +66,13 @@ def create_quick_note(
         audio_path=str(path),
         style=style,
         source=source,
-        metadata={},
+        metadata={
+            "processingMode": processing_mode,
+            "existingTitle": existing_title,
+            "existingSummary": existing_summary,
+            "existingContent": existing_content,
+        },
+        title=existing_title,
     )
     return {"record": record, "job": job}
 
