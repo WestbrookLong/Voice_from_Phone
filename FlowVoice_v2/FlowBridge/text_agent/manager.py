@@ -74,6 +74,18 @@ class TextAgentManager:
         with self.lock:
             return self.last_mobile_text
 
+    def reset_capture_baseline(self, source_text: str) -> None:
+        with self.lock:
+            self.last_mobile_text = source_text
+            if not self.active_session_id or self.active_session_id not in self.sessions:
+                return
+            session = self.sessions[self.active_session_id]
+            session.capture_baseline_text = source_text
+            session.capture_prefix_text = session.raw_text
+            session.last_captured_source_text = source_text
+            session.captured_source_text = ""
+            session.touch()
+
     def start(self, style: str = "meeting_notes") -> TextAgentSession:
         with self.lock:
             session_id = secrets.token_urlsafe(8)

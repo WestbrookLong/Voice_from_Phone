@@ -494,7 +494,12 @@ def validate_ops(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def create_app(token: str, text_agent: Any = None, typing_stats: Any = None) -> web.Application:
+def create_app(
+    token: str,
+    text_agent: Any = None,
+    typing_stats: Any = None,
+    input_gate: Any = None,
+) -> web.Application:
     app = web.Application()
     session = FlowInputSession(
         (lambda text: typing_stats.record(text, "mobile")) if typing_stats is not None else None
@@ -549,6 +554,7 @@ def create_app(token: str, text_agent: Any = None, typing_stats: Any = None) -> 
         peer = request.remote or "unknown"
         log(f"[ws] connected: {peer}")
         await ws.send_json({"type": "ready"})
+        input_gate_blocked = False
 
         async for msg in ws:
             if msg.type != web.WSMsgType.TEXT:
@@ -562,12 +568,31 @@ def create_app(token: str, text_agent: Any = None, typing_stats: Any = None) -> 
                     continue
 
                 message_type = payload.get("type")
+                if input_gate is not None and input_gate.is_paused():
+                    if not input_gate_blocked:
+                        if text_agent_route_active:
+                            text_agent_route_active = False
+                        session.reset()
+                    input_gate_blocked = True
+                    await ws.send_json({"type": "ack", "seq": payload.get("seq")})
+                    continue
+
+                resumed_from_input_gate = input_gate_blocked
+                if resumed_from_input_gate:
+                    input_gate_blocked = False
+
                 if message_type == "sync_state":
                     text = payload.get("text")
                     if not isinstance(text, str):
                         raise ValueError("sync_state.text must be a string")
                     settings = BridgeSettings.from_payload(payload.get("settings"))
-                    if text_agent is not None and text_agent.should_capture_text():
+                    if resumed_from_input_gate:
+                        if text_agent is not None:
+                            text_agent.reset_capture_baseline(text)
+                        session.reset()
+                        session.raw_text = trim_raw_text(text, session)
+                        session.raw_session_start = len(session.raw_text)
+                    elif text_agent is not None and text_agent.should_capture_text():
                         text_agent_route_active = True
                         active_source_text = text_agent.capture_active_source(text)
                         text_agent.update_text(
@@ -589,7 +614,10 @@ def create_app(token: str, text_agent: Any = None, typing_stats: Any = None) -> 
                     text = payload.get("text")
                     if not isinstance(text, str):
                         raise ValueError("sync_text.text must be a string")
-                    session.sync_processed_text(text)
+                    if resumed_from_input_gate:
+                        session.text_session.text = text[:MAX_SYNC_TEXT_LEN]
+                    else:
+                        session.sync_processed_text(text)
                 elif message_type == "reset_session":
                     if text_agent is not None and text_agent.should_capture_text():
                         text_agent.update_text("", "", active_source_text="")
@@ -599,14 +627,20 @@ def create_app(token: str, text_agent: Any = None, typing_stats: Any = None) -> 
                     ops = validate_ops(payload)
                     for op in ops:
                         if op["type"] == "insert":
+                            if input_gate is not None and input_gate.is_paused():
+                                continue
                             log(f"[inject] insert {len(op['text'])} chars: {op['text']!r}")
                             type_text(op["text"])
                             if typing_stats is not None:
                                 typing_stats.record(op["text"], "mobile")
                         elif op["type"] == "enter":
+                            if input_gate is not None and input_gate.is_paused():
+                                continue
                             log("[inject] enter")
                             press_key(VK_RETURN)
                         elif op["type"] == "backspace":
+                            if input_gate is not None and input_gate.is_paused():
+                                continue
                             log(f"[inject] backspace {op['count']}")
                             send_backspace_chunks(op["count"])
                 await ws.send_json({"type": "ack", "seq": payload.get("seq")})

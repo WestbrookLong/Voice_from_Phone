@@ -22,6 +22,7 @@ from asr.funasr_offline_engine import FunASROfflineEngine
 from asr.funasr_streaming_engine import DEFAULT_STREAMING_MODEL, FunASRStreamingEngine
 from asr.punctuation import PunctuationEngine
 from asr.vosk_engine import VoskEngine
+from input_gate import InputGate
 from server import BridgeSettings, FlowInputSession, create_app, get_lan_ip, log, render_text, send_backspace_chunks, type_text
 from text_agent import TextAgentManager
 from typing_stats import TypingStats
@@ -207,6 +208,7 @@ class BridgeServerThread(threading.Thread):
         token: str,
         text_agent: TextAgentManager | None = None,
         typing_stats: TypingStats | None = None,
+        input_gate: InputGate | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.host = host
@@ -214,6 +216,7 @@ class BridgeServerThread(threading.Thread):
         self.token = token
         self.text_agent = text_agent
         self.typing_stats = typing_stats
+        self.input_gate = input_gate
         self.loop: asyncio.AbstractEventLoop | None = None
         self.runner: web.AppRunner | None = None
         self.ready = threading.Event()
@@ -234,7 +237,12 @@ class BridgeServerThread(threading.Thread):
             self.loop.close()
 
     async def _start(self) -> None:
-        app = create_app(self.token, text_agent=self.text_agent, typing_stats=self.typing_stats)
+        app = create_app(
+            self.token,
+            text_agent=self.text_agent,
+            typing_stats=self.typing_stats,
+            input_gate=self.input_gate,
+        )
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         site = web.TCPSite(self.runner, self.host, self.port)
@@ -250,16 +258,26 @@ class BridgeServerThread(threading.Thread):
 
 
 class TextAgentHotkeyThread(threading.Thread):
-    HOTKEY_ID = 0x4641
     MOD_ALT = 0x0001
     MOD_CONTROL = 0x0002
-    VK_SPACE = 0x20
     WM_HOTKEY = 0x0312
     WM_QUIT = 0x0012
 
-    def __init__(self, callback) -> None:
+    def __init__(
+        self,
+        callback,
+        *,
+        hotkey_id: int = 0x4641,
+        virtual_key: int = 0x20,
+        modifiers: int | None = None,
+        label: str = "Ctrl+Alt+Space",
+    ) -> None:
         super().__init__(daemon=True)
         self.callback = callback
+        self.hotkey_id = hotkey_id
+        self.virtual_key = virtual_key
+        self.modifiers = self.MOD_CONTROL | self.MOD_ALT if modifiers is None else modifiers
+        self.label = label
         self.thread_id: int | None = None
         self.ready = threading.Event()
         self.error: str | None = None
@@ -273,7 +291,7 @@ class TextAgentHotkeyThread(threading.Thread):
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self.thread_id = kernel32.GetCurrentThreadId()
-        if not user32.RegisterHotKey(None, self.HOTKEY_ID, self.MOD_CONTROL | self.MOD_ALT, self.VK_SPACE):
+        if not user32.RegisterHotKey(None, self.hotkey_id, self.modifiers, self.virtual_key):
             self.error = f"RegisterHotKey failed: {ctypes.get_last_error()}"
             self.ready.set()
             return
@@ -281,10 +299,10 @@ class TextAgentHotkeyThread(threading.Thread):
         msg = wintypes.MSG()
         try:
             while not self.stop_event.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
-                if msg.message == self.WM_HOTKEY and msg.wParam == self.HOTKEY_ID:
+                if msg.message == self.WM_HOTKEY and msg.wParam == self.hotkey_id:
                     self.callback()
         finally:
-            user32.UnregisterHotKey(None, self.HOTKEY_ID)
+            user32.UnregisterHotKey(None, self.hotkey_id)
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -300,12 +318,14 @@ class DesktopVoiceThread(threading.Thread):
         settings: BridgeSettings,
         config: dict,
         typing_stats: TypingStats | None = None,
+        input_gate: InputGate | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.model_path = model_path
         self.settings = settings
         self.config = normalize_desktop_voice_config(config)
         self.typing_stats = typing_stats
+        self.input_gate = input_gate
         self.session = self._create_input_session()
         self.asr_engine: StreamingASREngine | None = None
         self.punctuation_engine: PunctuationEngine | None = None
@@ -418,6 +438,11 @@ class DesktopVoiceThread(threading.Thread):
             callback=audio_callback,
         ):
             while not self.stop_event.is_set():
+                if self._input_paused():
+                    self._discard_input_gate_audio()
+                    endpoint_detector.reset()
+                    time.sleep(0.1)
+                    continue
                 self._poll_asr_events()
                 try:
                     data = self.audio_queue.get(timeout=0.1)
@@ -549,6 +574,9 @@ class DesktopVoiceThread(threading.Thread):
                 break
 
     def _handle_asr_events(self, events: list[ASREvent]) -> None:
+        if self._input_paused():
+            self._discard_input_gate_audio()
+            return
         if self._uses_ime_composition():
             self._handle_ime_asr_events(events)
             return
@@ -589,6 +617,9 @@ class DesktopVoiceThread(threading.Thread):
         }
 
     def _handle_ime_asr_events(self, events: list[ASREvent]) -> None:
+        if self._input_paused():
+            self._discard_input_gate_audio()
+            return
         for event in events:
             if event.type == "error":
                 self._discard_streaming_partial()
@@ -750,7 +781,30 @@ class DesktopVoiceThread(threading.Thread):
     def _poll_asr_events(self) -> None:
         if self.asr_engine is None:
             return
+        if self._input_paused():
+            return
         self._handle_asr_events(self.asr_engine.poll_events())
+
+    def _input_paused(self) -> bool:
+        return self.input_gate is not None and self.input_gate.is_paused()
+
+    def _discard_input_gate_audio(self) -> None:
+        if self._uses_ime_composition():
+            self._discard_streaming_partial()
+        self.pending_partial_text = ""
+        self.committed_text = ""
+        self._reset_streaming_text_state()
+        self.session.reset()
+        if self.asr_engine is not None:
+            self.asr_engine.reset()
+        while True:
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def resume_input_gate(self) -> None:
+        self._discard_input_gate_audio()
 
     def _record_inserted_text(self, text: str) -> None:
         if self.typing_stats is not None:
@@ -785,6 +839,7 @@ class DesktopApi:
         self.port = "8787"
         self.server_thread: BridgeServerThread | None = None
         self.desktop_voice_thread: DesktopVoiceThread | None = None
+        self.input_gate = InputGate()
         self.typing_stats = TypingStats(
             Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "FlowBridge" / "typing_stats.json"
         )
@@ -796,6 +851,7 @@ class DesktopApi:
         )
         self.text_agent_style = "meeting_notes"
         self.text_agent_hotkey_thread: TextAgentHotkeyThread | None = None
+        self.input_gate_hotkey_thread: TextAgentHotkeyThread | None = None
         self.desktop_voice_config = normalize_desktop_voice_config(None)
         self.desktop_voice_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
         self.window: webview.Window | None = None
@@ -842,6 +898,12 @@ class DesktopApi:
                 "error": self.text_agent_hotkey_thread.error if self.text_agent_hotkey_thread is not None else None,
                 "label": "Ctrl+Alt+Space",
             },
+            "inputGate": self.input_gate.snapshot(),
+            "inputGateHotkey": {
+                "registered": self.input_gate_hotkey_thread is not None and self.input_gate_hotkey_thread.error is None,
+                "error": self.input_gate_hotkey_thread.error if self.input_gate_hotkey_thread is not None else None,
+                "label": "Alt+M",
+            },
         }
 
     def get_state(self) -> dict:
@@ -880,6 +942,12 @@ class DesktopApi:
                     "error": self.text_agent_hotkey_thread.error if self.text_agent_hotkey_thread is not None else None,
                     "label": "Ctrl+Alt+Space",
                 },
+                "inputGate": self.input_gate.snapshot(),
+                "inputGateHotkey": {
+                    "registered": self.input_gate_hotkey_thread is not None and self.input_gate_hotkey_thread.error is None,
+                    "error": self.input_gate_hotkey_thread.error if self.input_gate_hotkey_thread is not None else None,
+                    "label": "Alt+M",
+                },
                 "typingStats": self.typing_stats.snapshot(),
             }
 
@@ -905,20 +973,26 @@ class DesktopApi:
             self.token = secrets.token_urlsafe(12)
             return self._result("New token generated.")
 
+    def _start_service_locked(self) -> tuple[BridgeServerThread | None, str | None]:
+        if self._running():
+            return None, "Service is already running."
+        try:
+            port = int(self.port)
+            if port <= 0 or port > 65535:
+                raise ValueError
+        except ValueError:
+            return None, "Port must be between 1 and 65535."
+
+        thread = BridgeServerThread("0.0.0.0", port, self.token, self.text_agent, self.typing_stats, self.input_gate)
+        self.server_thread = thread
+        thread.start()
+        return thread, None
+
     def start_service(self) -> dict:
         with self.lock:
-            if self._running():
-                return self._result("Service is already running.")
-            try:
-                port = int(self.port)
-                if port <= 0 or port > 65535:
-                    raise ValueError
-            except ValueError:
-                return self._result("Port must be between 1 and 65535.")
-
-            thread = BridgeServerThread("0.0.0.0", port, self.token, self.text_agent, self.typing_stats)
-            self.server_thread = thread
-            thread.start()
+            thread, error = self._start_service_locked()
+            if error:
+                return self._result(error)
 
         thread.ready.wait(timeout=4)
 
@@ -936,6 +1010,29 @@ class DesktopApi:
             thread.stop()
             thread.join(timeout=2)
         return self._result("Service stopped.")
+
+    def refresh_connection(self) -> dict:
+        with self.lock:
+            thread = self.server_thread
+            self.server_thread = None
+        if thread is not None:
+            thread.stop()
+            thread.join(timeout=2)
+
+        with self.lock:
+            self.lan_ip = get_lan_ip()
+            self.page_version = str(int(time.time()))
+            thread, error = self._start_service_locked()
+            if error:
+                return self._result(error)
+
+        thread.ready.wait(timeout=4)
+
+        with self.lock:
+            if thread.error:
+                self.server_thread = None
+                return self._result(f"Failed to refresh connection: {thread.error}")
+            return self._result("Connection refreshed. Scan the updated QR code.")
 
     def copy_url(self) -> dict:
         url = self.get_state()["url"]
@@ -1033,6 +1130,22 @@ class DesktopApi:
             self.window.restore()
         return self._result()
 
+    def toggle_input_pause(self) -> dict:
+        paused = self.input_gate.toggle()
+        if not paused:
+            thread = self.desktop_voice_thread
+            if thread is not None:
+                thread.resume_input_gate()
+        return self._result("Input paused." if paused else "Input resumed.")
+
+    def set_input_pause(self, value: bool) -> dict:
+        paused = self.input_gate.set_paused(bool(value))
+        if not paused:
+            thread = self.desktop_voice_thread
+            if thread is not None:
+                thread.resume_input_gate()
+        return self._result("Input paused." if paused else "Input resumed.")
+
     def show_agent_float(self) -> None:
         agent_window = self.agent_window
         if agent_window is None:
@@ -1062,6 +1175,7 @@ class DesktopApi:
                 self.desktop_voice_settings,
                 self.desktop_voice_config,
                 self.typing_stats,
+                self.input_gate,
             )
             self.desktop_voice_thread = thread
             thread.start()
@@ -1168,24 +1282,40 @@ class DesktopApi:
             self.text_agent_hotkey_thread.stop()
             self.text_agent_hotkey_thread.join(timeout=2)
             self.text_agent_hotkey_thread = None
+        if self.input_gate_hotkey_thread is not None:
+            self.input_gate_hotkey_thread.stop()
+            self.input_gate_hotkey_thread.join(timeout=2)
+            self.input_gate_hotkey_thread = None
         self.stop_desktop_voice()
         self.stop_service()
         self.typing_stats.close()
 
     def start_hotkeys(self) -> None:
-        if self.text_agent_hotkey_thread is not None:
-            return
+        if self.text_agent_hotkey_thread is None:
+            def callback() -> None:
+                self.show_agent_float()
+                self.toggle_text_agent_recording()
 
-        def callback() -> None:
-            self.show_agent_float()
-            self.toggle_text_agent_recording()
+            thread = TextAgentHotkeyThread(callback)
+            self.text_agent_hotkey_thread = thread
+            thread.start()
+            thread.ready.wait(timeout=2)
+            if thread.error:
+                log(f"[text-agent] hotkey unavailable: {thread.error}")
 
-        thread = TextAgentHotkeyThread(callback)
-        self.text_agent_hotkey_thread = thread
-        thread.start()
-        thread.ready.wait(timeout=2)
-        if thread.error:
-            log(f"[text-agent] hotkey unavailable: {thread.error}")
+        if self.input_gate_hotkey_thread is None:
+            thread = TextAgentHotkeyThread(
+                self.toggle_input_pause,
+                hotkey_id=0x4642,
+                virtual_key=0x4D,
+                modifiers=TextAgentHotkeyThread.MOD_ALT,
+                label="Alt+M",
+            )
+            self.input_gate_hotkey_thread = thread
+            thread.start()
+            thread.ready.wait(timeout=2)
+            if thread.error:
+                log(f"[input-gate] hotkey unavailable: {thread.error}")
 
 
 def apply_window_chrome(window: webview.Window) -> None:

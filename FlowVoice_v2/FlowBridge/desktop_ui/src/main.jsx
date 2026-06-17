@@ -51,6 +51,16 @@ const fallbackState = {
     error: null,
     label: "Ctrl+Alt+Space",
   },
+  inputGate: {
+    paused: false,
+    label: "Alt+M",
+    version: 0,
+  },
+  inputGateHotkey: {
+    registered: false,
+    error: null,
+    label: "Alt+M",
+  },
   typingStats: {
     today: { total: 0, mobile: 0, computer: 0 },
     week: { total: 0, mobile: 0, computer: 0 },
@@ -84,6 +94,8 @@ function FlowVoiceDesktopConsole() {
   };
   const textAgentStyle = state.textAgentStyle || fallbackState.textAgentStyle;
   const textAgentHotkey = state.textAgentHotkey || fallbackState.textAgentHotkey;
+  const inputGate = state.inputGate || fallbackState.inputGate;
+  const inputGateHotkey = state.inputGateHotkey || fallbackState.inputGateHotkey;
   const typingStats = state.typingStats || fallbackState.typingStats;
 
   const refresh = React.useCallback(async () => {
@@ -104,7 +116,7 @@ function FlowVoiceDesktopConsole() {
     let cancelled = false;
     let timer = null;
     let started = false;
-    const interval = isAgentFloat ? 500 : 1200;
+    const interval = isAgentFloat ? 500 : 650;
     const poll = async () => {
       await refresh();
       if (!cancelled) {
@@ -140,7 +152,9 @@ function FlowVoiceDesktopConsole() {
     try {
       const method = api[action];
       const result = payload === undefined ? await method() : await method(payload);
-      setState(result.state);
+      if (result?.state) {
+        setState((previous) => ({ ...previous, ...result.state }));
+      }
       setMessage(result.message || "");
     } catch (error) {
       setMessage(`Desktop API error: ${error?.message || error}`);
@@ -203,6 +217,7 @@ function FlowVoiceDesktopConsole() {
 
           <div className="flex items-center gap-3">
             <span className="font-mono text-xs text-[#5B7062]">{ip}:{port}</span>
+            <InputGateBadge paused={inputGate.paused} label={inputGateHotkey.label || inputGate.label} />
             <ServiceBadge running={state.running} />
           </div>
         </header>
@@ -271,15 +286,20 @@ function FlowVoiceDesktopConsole() {
               <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Bound Session</div>
               <code className="block truncate font-mono text-xs text-[#B9FFD4]">{token}</code>
               <div className="mt-3 h-px bg-[#193324]" />
-              {state.running ? (
-                <button onClick={() => callApi("stop_service")} className="mt-3 w-full rounded-xl border border-[#285C3B] bg-[#0C1E14] py-2.5 text-xs font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
-                  Stop Service
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {state.running ? (
+                  <button onClick={() => callApi("stop_service")} className="rounded-xl border border-[#285C3B] bg-[#0C1E14] py-2.5 text-xs font-semibold text-[#A8F7C4] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[#12301F]">
+                    Stop Service
+                  </button>
+                ) : (
+                  <button onClick={() => callApi("start_service")} className="rounded-xl bg-[#28F58D] py-2.5 text-xs font-bold text-[#041008] shadow-[0_0_24px_rgba(40,245,141,0.2)] transition hover:bg-[#67FFAD]">
+                    Start Service
+                  </button>
+                )}
+                <button onClick={() => callApi("refresh_connection")} className="rounded-xl border border-[#2E7447] bg-[#10291B] py-2.5 text-xs font-semibold text-[#B9FFD4] transition hover:bg-[#163A26]">
+                  Refresh
                 </button>
-              ) : (
-                <button onClick={() => callApi("start_service")} className="mt-3 w-full rounded-xl bg-[#28F58D] py-2.5 text-xs font-bold text-[#041008] shadow-[0_0_24px_rgba(40,245,141,0.2)] transition hover:bg-[#67FFAD]">
-                  Start Service
-                </button>
-              )}
+              </div>
             </div>
 
             <div className="mt-3 rounded-2xl border border-[#21462F] bg-[#06100B] p-3">
@@ -321,6 +341,28 @@ function FlowVoiceDesktopConsole() {
                 </button>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => callApi("toggle_input_pause")}
+              className={`mt-3 w-full rounded-2xl border p-3 text-left transition ${
+                inputGate.paused
+                  ? "border-[#6A5A20] bg-[#211C0B] hover:bg-[#2A230D]"
+                  : "border-[#21462F] bg-[#06100B] hover:border-[#2E7447] hover:bg-[#08150D]"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#5B7062]">Input Gate</div>
+                  <div className={`mt-1 text-sm font-semibold ${inputGate.paused ? "text-[#D7C47A]" : "text-[#B9FFD4]"}`}>
+                    {inputGate.paused ? "Input Paused" : "Input Active"}
+                  </div>
+                </div>
+                <div className="text-right font-mono text-[10px] text-[#789484]">
+                  {inputGateHotkey.label || inputGate.label}
+                </div>
+              </div>
+            </button>
 
           </aside>
         </section>
@@ -685,6 +727,16 @@ function ServiceBadge({ running }) {
     <div className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.12em] shadow-[0_0_26px_rgba(40,245,141,0.15)] ${running ? "border-[#28F58D]/35 bg-[#0D2A19] text-[#8BFFBA]" : "border-[#285C3B] bg-[#0C1E14] text-[#6C8A75]"}`}>
       <span className={`h-2 w-2 rounded-full ${running ? "bg-[#28F58D] shadow-[0_0_14px_rgba(40,245,141,0.9)]" : "bg-[#5B7062]"}`} />
       {running ? "Service Started" : "Service Stopped"}
+    </div>
+  );
+}
+
+function InputGateBadge({ paused, label }) {
+  return (
+    <div className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xs font-semibold uppercase tracking-[0.12em] ${paused ? "border-[#6A5A20] bg-[#211C0B] text-[#D7C47A]" : "border-[#285C3B] bg-[#0C1E14] text-[#6C8A75]"}`}>
+      <span className={`h-2 w-2 rounded-full ${paused ? "bg-[#D7C47A] shadow-[0_0_14px_rgba(215,196,122,0.75)]" : "bg-[#28F58D]"}`} />
+      {paused ? "Input Paused" : "Input Active"}
+      <span className="hidden text-[#5B7062] xl:inline">{label}</span>
     </div>
   );
 }
