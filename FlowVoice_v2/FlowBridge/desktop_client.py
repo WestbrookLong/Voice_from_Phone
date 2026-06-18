@@ -856,7 +856,9 @@ class DesktopApi:
         self.desktop_voice_settings = bridge_settings_from_desktop_config(self.desktop_voice_config)
         self.window: webview.Window | None = None
         self.agent_window: webview.Window | None = None
+        self.input_toast_window = None
         self._agent_render = None
+        self._input_toast_show = None
         self.maximized = False
 
     def _url(self) -> str:
@@ -1136,6 +1138,7 @@ class DesktopApi:
             thread = self.desktop_voice_thread
             if thread is not None:
                 thread.resume_input_gate()
+        self.show_input_gate_toast(paused)
         return self._result("Input paused." if paused else "Input resumed.")
 
     def set_input_pause(self, value: bool) -> dict:
@@ -1144,7 +1147,26 @@ class DesktopApi:
             thread = self.desktop_voice_thread
             if thread is not None:
                 thread.resume_input_gate()
+        self.show_input_gate_toast(paused)
         return self._result("Input paused." if paused else "Input resumed.")
+
+    def show_input_gate_toast(self, paused: bool) -> None:
+        toast_window = self.input_toast_window
+        toast_show = self._input_toast_show
+        if toast_window is None or toast_show is None:
+            return
+        try:
+            from System import Action
+
+            def show() -> None:
+                toast_show(bool(paused))
+
+            if getattr(toast_window, "InvokeRequired", False):
+                toast_window.BeginInvoke(Action(show))
+            else:
+                show()
+        except Exception as exc:
+            log(f"[desktop] input toast failed: {exc}")
 
     def show_agent_float(self) -> None:
         agent_window = self.agent_window
@@ -1278,6 +1300,18 @@ class DesktopApi:
             except Exception:
                 pass
             self.agent_window = None
+        if self.input_toast_window is not None:
+            try:
+                toast_window = self.input_toast_window
+                if getattr(toast_window, "InvokeRequired", False):
+                    from System import Action
+
+                    toast_window.BeginInvoke(Action(toast_window.Close))
+                else:
+                    toast_window.Close()
+            except Exception:
+                pass
+            self.input_toast_window = None
         if self.text_agent_hotkey_thread is not None:
             self.text_agent_hotkey_thread.stop()
             self.text_agent_hotkey_thread.join(timeout=2)
@@ -1641,6 +1675,104 @@ def create_native_agent_float(api: DesktopApi) -> object:
     return form
 
 
+def create_native_input_gate_toast(api: DesktopApi) -> object:
+    import clr
+
+    clr.AddReference("System.Drawing")
+    clr.AddReference("System.Windows.Forms")
+    from System.Drawing import Color, Font, FontStyle, Point, Size
+    from System.Drawing.Drawing2D import GraphicsPath
+    from System.Windows.Forms import Form, FormBorderStyle, FormStartPosition, Label, Panel, Screen, Timer
+
+    form = Form()
+    form.Text = "FlowVoice Input Status"
+    form.ClientSize = Size(260, 58)
+    form.FormBorderStyle = getattr(FormBorderStyle, "None")
+    form.TopMost = True
+    form.ShowInTaskbar = False
+    form.StartPosition = FormStartPosition.Manual
+    form.BackColor = Color.FromArgb(8, 16, 12)
+    form.Opacity = 0.94
+
+    def rounded_region(width: int, height: int, radius: int) -> GraphicsPath:
+        path = GraphicsPath()
+        diameter = radius * 2
+        path.AddArc(0, 0, diameter, diameter, 180, 90)
+        path.AddArc(width - diameter, 0, diameter, diameter, 270, 90)
+        path.AddArc(width - diameter, height - diameter, diameter, diameter, 0, 90)
+        path.AddArc(0, height - diameter, diameter, diameter, 90, 90)
+        path.CloseFigure()
+        return path
+
+    form.Region = rounded_region(260, 58, 18)
+
+    dot = Panel()
+    dot.Size = Size(12, 12)
+    dot.Location = Point(22, 23)
+    dot.BackColor = Color.FromArgb(40, 245, 141)
+    dot.Region = rounded_region(12, 12, 6)
+    form.Controls.Add(dot)
+
+    label = Label()
+    label.AutoSize = False
+    label.Location = Point(46, 14)
+    label.Size = Size(190, 30)
+    label.Font = Font("Microsoft YaHei UI", 12, FontStyle.Bold)
+    label.ForeColor = Color.FromArgb(220, 255, 232)
+    label.BackColor = Color.Transparent
+    label.Text = "已开启语音输入"
+    form.Controls.Add(label)
+
+    hide_timer = Timer()
+    hide_timer.Interval = 1450
+
+    def hide(_sender=None, _event=None) -> None:
+        hide_timer.Stop()
+        form.Hide()
+
+    hide_timer.Tick += hide
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetWindowLongPtrW.restype = ctypes.c_void_p
+    user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+    user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    SW_SHOWNOACTIVATE = 4
+    WS_EX_NOACTIVATE = 0x08000000
+    WS_EX_TOOLWINDOW = 0x00000080
+
+    def place_form() -> None:
+        area = Screen.PrimaryScreen.WorkingArea
+        form.Left = int(area.Left + (area.Width - form.Width) / 2)
+        form.Top = int(area.Bottom - form.Height - 92)
+
+    def show_toast(paused: bool) -> None:
+        hide_timer.Stop()
+        place_form()
+        if paused:
+            dot.BackColor = Color.FromArgb(215, 196, 122)
+            label.ForeColor = Color.FromArgb(255, 238, 166)
+            label.Text = "已暂停语音输入"
+        else:
+            dot.BackColor = Color.FromArgb(40, 245, 141)
+            label.ForeColor = Color.FromArgb(220, 255, 232)
+            label.Text = "已开启语音输入"
+        if form.Visible:
+            form.Hide()
+        form.Show()
+        user32.ShowWindow(ctypes.c_void_p(form.Handle.ToInt64()), SW_SHOWNOACTIVATE)
+        hide_timer.Start()
+
+    form.FormClosed += lambda _sender, _event: hide_timer.Stop()
+    form.Show()
+    hwnd = ctypes.c_void_p(form.Handle.ToInt64())
+    ex_style = user32.GetWindowLongPtrW(hwnd, -20)
+    user32.SetWindowLongPtrW(hwnd, -20, ctypes.c_void_p(ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW))
+    form.Hide()
+    api._input_toast_show = show_toast
+    return form
+
+
 def main() -> None:
     if sys.platform != "win32":
         raise SystemExit("This program injects text with Windows SendInput and must run on Windows.")
@@ -1684,10 +1816,32 @@ def main() -> None:
         except Exception as exc:
             log(f"[desktop] agent window creation failed: {exc}")
 
+    def create_input_toast_window() -> None:
+        if api.input_toast_window is not None:
+            return
+        try:
+            log("[desktop] creating input toast window")
+            from System import Action
+
+            def create_on_ui_thread() -> None:
+                try:
+                    api.input_toast_window = create_native_input_gate_toast(api)
+                    log("[desktop] input toast window ready")
+                except Exception as exc:
+                    log(f"[desktop] input toast window failed: {exc}\n{traceback.format_exc()}")
+
+            if window.native.InvokeRequired:
+                window.native.BeginInvoke(Action(create_on_ui_thread))
+            else:
+                create_on_ui_thread()
+        except Exception as exc:
+            log(f"[desktop] input toast window creation failed: {exc}")
+
     def on_main_window_loaded() -> None:
         log("[desktop] main window loaded")
         apply_window_chrome(window)
         threading.Timer(0.8, create_agent_window).start()
+        threading.Timer(0.9, create_input_toast_window).start()
 
     window.events.loaded += on_main_window_loaded
     window.events.closing += lambda: api.shutdown()
