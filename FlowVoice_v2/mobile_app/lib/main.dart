@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() {
@@ -46,7 +47,8 @@ class FlowVoicePage extends StatefulWidget {
   State<FlowVoicePage> createState() => _FlowVoicePageState();
 }
 
-class _FlowVoicePageState extends State<FlowVoicePage> {
+class _FlowVoicePageState extends State<FlowVoicePage>
+    with WidgetsBindingObserver {
   final TextEditingController _urlController = TextEditingController();
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
@@ -60,21 +62,29 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
   int _seq = 0;
   int _connectionGeneration = 0;
   bool _isConnecting = false;
-  bool _filterPunctuation = false;
-  bool _convertSpokenPunctuation = false;
-  bool _enableVoiceCommands = false;
+  bool _filterPunctuation = true;
+  bool _convertSpokenPunctuation = true;
+  bool _enableVoiceCommands = true;
+  bool _settingsOpen = false;
+  bool _scannerOpen = false;
+  bool _recentlyTyping = false;
   Timer? _reconnectTimer;
+  Timer? _typingIdleTimer;
   final List<Map<String, Object?>> _queue = <Map<String, Object?>>[];
 
   @override
   void initState() {
     super.initState();
-    _inputController.addListener(_syncInput);
+    WidgetsBinding.instance.addObserver(this);
+    _inputController.addListener(_handleInputChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focusInputSoon());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _reconnectTimer?.cancel();
+    _typingIdleTimer?.cancel();
     _socket?.close();
     _urlController.dispose();
     _hostController.dispose();
@@ -82,6 +92,55 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
     _inputController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _focusInputSoon(delay: const Duration(milliseconds: 260));
+    }
+  }
+
+  void _focusInputSoon({
+    Duration delay = const Duration(milliseconds: 180),
+  }) {
+    Future<void>.delayed(delay, () {
+      if (!mounted || _settingsOpen || _scannerOpen) {
+        return;
+      }
+      FocusScope.of(context).requestFocus(_inputFocusNode);
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    });
+  }
+
+  void _handleInputChanged() {
+    _markRecentlyTyping();
+    _syncInput();
+  }
+
+  void _markRecentlyTyping() {
+    _typingIdleTimer?.cancel();
+    if (!_recentlyTyping && mounted) {
+      setState(() {
+        _recentlyTyping = true;
+      });
+    }
+    _typingIdleTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _recentlyTyping = false;
+      });
+    });
+  }
+
+  String get _sceneText {
+    final text = _inputController.text.trim();
+    if (text.length <= 120) {
+      return text;
+    }
+    return text.substring(text.length - 120);
   }
 
   Uri? get _wsUri {
@@ -110,15 +169,20 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
   }
 
   Future<void> _scanQrCode() async {
+    _scannerOpen = true;
+    _inputFocusNode.unfocus();
     final result = await Navigator.of(context).push<String>(
       MaterialPageRoute<String>(builder: (_) => const QrScanPage()),
     );
+    _scannerOpen = false;
     if (result == null || result.trim().isEmpty) {
+      _focusInputSoon();
       return;
     }
     _urlController.text = result.trim();
     _parseAndFillUrl(result);
     await _connect();
+    _focusInputSoon();
   }
 
   void _parseAndFillUrl(String raw) {
@@ -169,7 +233,7 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
       _setStatus(BridgeStatus.connected, '在线');
       _flushQueue();
       _syncInput(force: true);
-      _inputFocusNode.requestFocus();
+      _focusInputSoon();
 
       socket.listen(
         _handleSocketMessage,
@@ -290,14 +354,22 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
   }
 
   void _clearLocalInput() {
-    _inputController.removeListener(_syncInput);
+    _typingIdleTimer?.cancel();
+    if (_recentlyTyping) {
+      setState(() {
+        _recentlyTyping = false;
+      });
+    }
+    _inputController.removeListener(_handleInputChanged);
     _inputController.clear();
-    _inputController.addListener(_syncInput);
+    _inputController.addListener(_handleInputChanged);
     _sendResetSession();
-    _inputFocusNode.requestFocus();
+    _focusInputSoon();
   }
 
   void _openSettings() {
+    _settingsOpen = true;
+    _inputFocusNode.unfocus();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -338,49 +410,59 @@ class _FlowVoicePageState extends State<FlowVoicePage> {
           },
         );
       },
-    );
+    ).whenComplete(() {
+      _settingsOpen = false;
+      _focusInputSoon();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: _VoiceBackground(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: _VoiceShell(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    _Header(
-                      status: _status,
-                      statusText: _statusText,
-                      settingsActive: _filterPunctuation ||
-                          _convertSpokenPunctuation ||
-                          _enableVoiceCommands,
-                      onSettings: _openSettings,
-                      onScan: _scanQrCode,
-                    ),
-                    const SizedBox(height: 16),
-                    _VoiceInput(
-                      controller: _inputController,
-                      focusNode: _inputFocusNode,
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: _VoiceButton(
-                            label: '清空',
-                            onPressed: _clearLocalInput,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _focusInputSoon,
+          child: _VoiceBackground(
+            child: Stack(
+              children: <Widget>[
+                Positioned(
+                  left: 18,
+                  right: 18,
+                  top: 22,
+                  child: _Header(
+                    status: _status,
+                    statusText: _statusText,
+                    settingsActive: _filterPunctuation ||
+                        _convertSpokenPunctuation ||
+                        _enableVoiceCommands,
+                    onSettings: _openSettings,
+                    onScan: _scanQrCode,
+                  ),
                 ),
-              ),
+                Positioned.fill(
+                  top: 92,
+                  child: Center(
+                    child: _SceneStage(
+                      working: _recentlyTyping,
+                      text: _sceneText,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 1,
+                  bottom: 1,
+                  child: _HiddenVoiceInput(
+                    controller: _inputController,
+                    focusNode: _inputFocusNode,
+                  ),
+                ),
+                Positioned(
+                  right: 20,
+                  bottom: 24,
+                  child: _ClearPixelButton(onPressed: _clearLocalInput),
+                ),
+              ],
             ),
           ),
         ),
@@ -397,36 +479,21 @@ class _VoiceBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            Color(0xFF050807),
-            Color(0xFF0B1D14),
-            Color(0xFF06100B),
-          ],
-        ),
-      ),
+      decoration: const BoxDecoration(color: Color(0xFFFDFDFB)),
       child: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          const Positioned(
-            left: -110,
-            top: -120,
-            child: _GlowBlob(
-              size: 330,
-              color: Color(0x3328F58D),
-            ),
-          ),
-          const Positioned(
-            right: -120,
-            top: 30,
-            child: _GlowBlob(
-              size: 300,
-              color: Color(0x261FA463),
-            ),
-          ),
+          const _PixelStar(left: 0.07, top: 0.08, size: 18),
+          const _PixelStar(left: 0.22, top: 0.19, size: 22),
+          const _PixelStar(left: 0.37, top: 0.14, size: 14),
+          const _PixelStar(left: 0.82, top: 0.25, size: 22),
+          const _PixelStar(left: 0.12, top: 0.43, size: 18),
+          const _PixelStar(left: 0.67, top: 0.74, size: 20),
+          const _PixelStar(left: 0.80, top: 0.86, size: 22),
+          const _PixelDot(left: 0.11, top: 0.31),
+          const _PixelDot(left: 0.89, top: 0.39),
+          const _PixelDot(left: 0.41, top: 0.81),
+          const _PixelDot(left: 0.28, top: 0.89),
           child,
         ],
       ),
@@ -434,64 +501,87 @@ class _VoiceBackground extends StatelessWidget {
   }
 }
 
-class _GlowBlob extends StatelessWidget {
-  const _GlowBlob({
+class _PixelStar extends StatelessWidget {
+  const _PixelStar({
+    required this.left,
+    required this.top,
     required this.size,
-    required this.color,
   });
 
+  final double left;
+  final double top;
   final double size;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: <Color>[color, Colors.transparent],
+    return Positioned.fill(
+      child: FractionallySizedBox(
+        alignment: Alignment(left * 2 - 1, top * 2 - 1),
+        widthFactor: 0,
+        heightFactor: 0,
+        child: CustomPaint(
+          size: Size.square(size),
+          painter: const _PixelStarPainter(),
         ),
       ),
     );
   }
 }
 
-class _VoiceShell extends StatelessWidget {
-  const _VoiceShell({required this.child});
+class _PixelDot extends StatelessWidget {
+  const _PixelDot({
+    required this.left,
+    required this.top,
+  });
 
-  final Widget child;
+  final double left;
+  final double top;
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 760),
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(34),
-          border: Border.all(color: const Color(0x3828F58D)),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: <Color>[
-              Color(0xF508100D),
-              Color(0xE00B1D14),
-            ],
-          ),
-          boxShadow: const <BoxShadow>[
-            BoxShadow(
-              color: Color(0x80000000),
-              blurRadius: 90,
-              offset: Offset(0, 30),
-            ),
-          ],
+    return Positioned.fill(
+      child: FractionallySizedBox(
+        alignment: Alignment(left * 2 - 1, top * 2 - 1),
+        widthFactor: 0,
+        heightFactor: 0,
+        child: Container(
+          width: 8,
+          height: 8,
+          color: const Color(0xFFC9C9C9),
         ),
-        child: child,
       ),
     );
   }
+}
+
+class _PixelStarPainter extends CustomPainter {
+  const _PixelStarPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = const Color(0xFFC7C7C7);
+    final unit = size.width / 5;
+    final blocks = <Offset>[
+      const Offset(2, 0),
+      const Offset(2, 1),
+      const Offset(0, 2),
+      const Offset(1, 2),
+      const Offset(2, 2),
+      const Offset(3, 2),
+      const Offset(4, 2),
+      const Offset(2, 3),
+      const Offset(2, 4),
+    ];
+    for (final block in blocks) {
+      canvas.drawRect(
+        Rect.fromLTWH(block.dx * unit, block.dy * unit, unit, unit),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PixelStarPainter oldDelegate) => false;
 }
 
 class _Header extends StatelessWidget {
@@ -511,83 +601,23 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 340;
-        final ultraCompact = constraints.maxWidth < 300;
-        return Row(
-          children: <Widget>[
-            Expanded(
-              child: Row(
-                children: <Widget>[
-                  if (!ultraCompact) const Flexible(child: _Eyebrow()),
-                  if (!compact) ...const <Widget>[
-                    SizedBox(width: 10),
-                    Flexible(
-                      child: Text(
-                        'Flow Voice',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Color(0xFFF0FFF5),
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -0.36,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            _StatusPill(
-              status: status,
-              text: compact ? '' : statusText,
-            ),
-            const SizedBox(width: 8),
-            _RoundIconButton(
-              icon: Icons.settings,
-              active: settingsActive,
-              onPressed: onSettings,
-            ),
-            const SizedBox(width: 8),
-            _RoundIconButton(
-              icon: Icons.qr_code_scanner,
-              active: false,
-              onPressed: onScan,
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _Eyebrow extends StatelessWidget {
-  const _Eyebrow();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0x1F28F58D),
-        border: Border.all(color: const Color(0x3D28F58D)),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: const Text(
-        'LIVE INPUT',
-        maxLines: 1,
-        overflow: TextOverflow.fade,
-        softWrap: false,
-        style: TextStyle(
-          color: Color(0xFF7BFFB5),
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-          height: 1,
-          letterSpacing: 0.9,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: <Widget>[
+        _StatusPill(status: status, text: statusText),
+        const SizedBox(width: 16),
+        _RoundIconButton(
+          icon: Icons.settings,
+          active: settingsActive,
+          onPressed: onSettings,
         ),
-      ),
+        const SizedBox(width: 16),
+        _RoundIconButton(
+          icon: Icons.qr_code_scanner,
+          active: false,
+          onPressed: onScan,
+        ),
+      ],
     );
   }
 }
@@ -603,63 +633,28 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isConnected = status == BridgeStatus.connected;
-    final isError =
-        status == BridgeStatus.error || status == BridgeStatus.disconnected;
-    final color = isConnected
-        ? const Color(0xFF9CFCC4)
-        : isError
-            ? const Color(0xFFC4533C)
-            : const Color(0xFF5B7062);
-    final dot = isConnected
-        ? const Color(0xFF28F58D)
-        : isError
-            ? const Color(0xFFC4533C)
-            : const Color(0xFF5B7062);
-    return Container(
-      constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
-      padding: EdgeInsets.symmetric(
-        horizontal: text.isEmpty ? 0 : 12,
-        vertical: 9,
-      ),
-      decoration: BoxDecoration(
-        color: isConnected ? const Color(0x2628F58D) : const Color(0xC708100D),
-        border: Border.all(color: const Color(0x1F28F58D)),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Container(
-            width: 8,
-            height: 8,
+    final color = switch (status) {
+      BridgeStatus.connected => const Color(0xFF28D85F),
+      BridgeStatus.connecting => const Color(0xFFB8B8B8),
+      BridgeStatus.disconnected || BridgeStatus.error => const Color(0xFFE1513F),
+    };
+    return Semantics(
+      label: '连接状态：$text',
+      button: false,
+      child: _PixelButtonFrame(
+        child: Center(
+          child: Container(
+            width: 18,
+            height: 18,
             decoration: BoxDecoration(
+              color: color,
               shape: BoxShape.circle,
-              color: dot,
               boxShadow: <BoxShadow>[
-                BoxShadow(
-                  color: dot.withValues(alpha: 0.6),
-                  blurRadius: 10,
-                ),
+                BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 8),
               ],
             ),
           ),
-          if (text.isNotEmpty) ...<Widget>[
-            const SizedBox(width: 6),
-            Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.fade,
-              softWrap: false,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -678,21 +673,130 @@ class _RoundIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: active ? const Color(0xFF28F58D) : const Color(0xC208100D),
-      shape: const CircleBorder(
-        side: BorderSide(color: Color(0x3328F58D)),
+    return _PixelButtonFrame(
+      active: active,
+      onTap: onPressed,
+      child: Icon(
+        icon,
+        size: 31,
+        color: const Color(0xFF050505),
       ),
+    );
+  }
+}
+
+class _PixelButtonFrame extends StatelessWidget {
+  const _PixelButtonFrame({
+    required this.child,
+    this.active = false,
+    this.onTap,
+  });
+
+  final Widget child;
+  final bool active;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
       child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onPressed,
-        child: SizedBox(
-          width: 42,
-          height: 42,
-          child: Icon(
-            icon,
-            size: 21,
-            color: active ? const Color(0xFF041008) : const Color(0xFFDDE7DF),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: 66,
+          height: 66,
+          decoration: BoxDecoration(
+            color: active ? const Color(0xFFF4FFF8) : Colors.white,
+            border: Border.all(color: const Color(0xFF111111), width: 3),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0xFF111111),
+                offset: Offset(4, 4),
+                blurRadius: 0,
+              ),
+            ],
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _SceneStage extends StatelessWidget {
+  const _SceneStage({
+    required this.working,
+    required this.text,
+  });
+
+  final bool working;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = working
+        ? 'assets/flowvoice_working_scene.png'
+        : 'assets/flowvoice_idle_scene.png';
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.clamp(280.0, 820.0);
+        return SizedBox(
+          width: width,
+          child: AspectRatio(
+            aspectRatio: 820 / 680,
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  child: Image.asset(
+                    image,
+                    key: ValueKey<String>(image),
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.none,
+                  ),
+                ),
+                Positioned(
+                  left: width * 0.39,
+                  top: width / (820 / 680) * 0.145,
+                  width: width * 0.34,
+                  height: width / (820 / 680) * 0.25,
+                  child: _MonitorText(text: text),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MonitorText extends StatelessWidget {
+  const _MonitorText({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    if (text.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: Text(
+          text,
+          maxLines: 6,
+          overflow: TextOverflow.fade,
+          style: const TextStyle(
+            color: Color(0xFFE7F3EA),
+            fontSize: 10.5,
+            height: 1.28,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -700,8 +804,8 @@ class _RoundIconButton extends StatelessWidget {
   }
 }
 
-class _VoiceInput extends StatelessWidget {
-  const _VoiceInput({
+class _HiddenVoiceInput extends StatelessWidget {
+  const _HiddenVoiceInput({
     required this.controller,
     required this.focusNode,
   });
@@ -711,49 +815,46 @@ class _VoiceInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 122,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0x2428F58D)),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            Color(0xDB08100D),
-            Color(0xDE0B1D14),
-          ],
-        ),
-        boxShadow: const <BoxShadow>[
-          BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 48,
-            offset: Offset(0, 18),
+    return SizedBox(
+      width: 1,
+      height: 1,
+      child: Opacity(
+        opacity: 0.01,
+        child: TextField(
+          controller: controller,
+          focusNode: focusNode,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          autocorrect: true,
+          enableSuggestions: true,
+          maxLines: null,
+          decoration: const InputDecoration(
+            border: InputBorder.none,
+            isCollapsed: true,
           ),
-        ],
-      ),
-      child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        minLines: 3,
-        maxLines: 3,
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        autocorrect: true,
-        enableSuggestions: true,
-        style: const TextStyle(
-          color: Color(0xFFDDE7DF),
-          fontSize: 22,
-          height: 1.36,
-          fontWeight: FontWeight.w500,
-        ),
-        decoration: const InputDecoration(
-          hintText: '开始输入',
-          hintStyle: TextStyle(color: Color(0x57DDE7DF)),
-          border: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         ),
       ),
+    );
+  }
+}
+
+class _ClearPixelButton extends StatelessWidget {
+  const _ClearPixelButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: const Color(0xFF8C8C8C),
+        textStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      child: const Text('清空'),
     );
   }
 }

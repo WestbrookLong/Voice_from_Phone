@@ -15,6 +15,7 @@ from aiohttp import web
 import webview
 
 from asr.base import ASREvent, StreamingASREngine
+from asr.baidu_engine import DEFAULT_BAIDU_DEV_PID, BaiduSpeechEngine
 from asr.bert_reranker import DEFAULT_BERT_RERANKER_MODEL
 from asr.endpointing import EndpointConfig, EndpointDecision, EndpointDetector
 from asr.funasr_candidate_streaming_engine import FunASRCandidateStreamingEngine
@@ -34,13 +35,14 @@ DESKTOP_VOICE_DEFAULT_CONFIG = {
     "funasrMode": "offline",
     "funasrModel": "iic/SenseVoiceSmall",
     "funasrStreamingChunkMs": 600,
+    "baiduDevPid": DEFAULT_BAIDU_DEV_PID,
     "semanticReranker": "bert",
     "semanticModel": DEFAULT_BERT_RERANKER_MODEL,
     "punctuationStrategy": "spoken",
     "voiceCommands": True,
     "hotwords": "",
 }
-VALID_DESKTOP_VOICE_ENGINES = {"vosk", "funasr"}
+VALID_DESKTOP_VOICE_ENGINES = {"vosk", "funasr", "baidu"}
 VALID_FUNASR_MODELS = {"iic/SenseVoiceSmall", "paraformer-zh"}
 VALID_FUNASR_MODES = {"offline", "streaming", "candidate_streaming"}
 VALID_SEMANTIC_RERANKERS = {"bert", "heuristic"}
@@ -91,6 +93,12 @@ def append_recognized_text(base: str, addition: str) -> str:
 def normalize_desktop_voice_config(value: dict | None) -> dict:
     source = value if isinstance(value, dict) else {}
     config = dict(DESKTOP_VOICE_DEFAULT_CONFIG)
+    env_engine = os.environ.get("FLOWVOICE_DESKTOP_ENGINE")
+    if env_engine:
+        source = {**source, "engine": env_engine}
+    env_baidu_dev_pid = os.environ.get("FLOWVOICE_BAIDU_DEV_PID")
+    if env_baidu_dev_pid:
+        source = {**source, "baiduDevPid": env_baidu_dev_pid}
     engine = str(source.get("engine", config["engine"])).strip().lower()
     if engine in VALID_DESKTOP_VOICE_ENGINES:
         config["engine"] = engine
@@ -109,6 +117,8 @@ def normalize_desktop_voice_config(value: dict | None) -> dict:
     except (TypeError, ValueError):
         streaming_chunk_ms = config["funasrStreamingChunkMs"]
     config["funasrStreamingChunkMs"] = max(100, min(1000, streaming_chunk_ms))
+    baidu_dev_pid = str(source.get("baiduDevPid", config["baiduDevPid"])).strip()
+    config["baiduDevPid"] = baidu_dev_pid or DEFAULT_BAIDU_DEV_PID
 
     semantic_reranker = str(source.get("semanticReranker", config["semanticReranker"])).strip().lower()
     if semantic_reranker in VALID_SEMANTIC_RERANKERS:
@@ -137,6 +147,8 @@ def bridge_settings_from_desktop_config(config: dict) -> BridgeSettings:
 def create_asr_engine(config: dict, model_path: Path) -> StreamingASREngine:
     if config["engine"] == "vosk":
         return VoskEngine(model_path)
+    if config["engine"] == "baidu":
+        return BaiduSpeechEngine(dev_pid=config.get("baiduDevPid", DEFAULT_BAIDU_DEV_PID))
     if config.get("funasrMode") == "candidate_streaming":
         return FunASRCandidateStreamingEngine(
             DEFAULT_STREAMING_MODEL,
@@ -358,6 +370,7 @@ class DesktopVoiceThread(threading.Thread):
                 "engine": self.config["engine"],
                 "funasrMode": self.config["funasrMode"],
                 "funasrModel": self.config["funasrModel"],
+                "baiduDevPid": self.config.get("baiduDevPid", DEFAULT_BAIDU_DEV_PID),
                 "activeModel": self._active_model_name(),
                 "finalRescoreModel": self._final_rescore_model_name(),
                 "streamingChunkMs": self.config.get("funasrStreamingChunkMs", 600),
@@ -536,6 +549,8 @@ class DesktopVoiceThread(threading.Thread):
     def _loading_status(self) -> str:
         if self.config["engine"] == "vosk":
             return "LOADING MODEL"
+        if self.config["engine"] == "baidu":
+            return "LOADING BAIDU ASR"
         if self.config.get("funasrMode") == "candidate_streaming":
             return "LOADING FUNASR CANDIDATE STREAMING"
         if self.config.get("funasrMode") == "streaming":
@@ -545,6 +560,8 @@ class DesktopVoiceThread(threading.Thread):
     def _active_model_name(self) -> str:
         if self.config["engine"] == "vosk":
             return "vosk"
+        if self.config["engine"] == "baidu":
+            return f"baidu-dev-pid-{self.config.get('baiduDevPid', DEFAULT_BAIDU_DEV_PID)}"
         if self.config.get("funasrMode") in {"streaming", "candidate_streaming"}:
             return DEFAULT_STREAMING_MODEL
         return self.config["funasrModel"]
@@ -878,6 +895,14 @@ class DesktopApi:
     def _desktop_voice_settings_snapshot(self) -> dict:
         return dict(self.desktop_voice_config)
 
+    def _desktop_voice_active_model_name(self) -> str:
+        if self.desktop_voice_config["engine"] == "vosk":
+            return "vosk"
+        if self.desktop_voice_config["engine"] == "baidu":
+            return f"baidu-dev-pid-{self.desktop_voice_config.get('baiduDevPid', DEFAULT_BAIDU_DEV_PID)}"
+        if self.desktop_voice_config["funasrMode"] in {"streaming", "candidate_streaming"}:
+            return DEFAULT_STREAMING_MODEL
+        return self.desktop_voice_config["funasrModel"]
     def _desktop_voice_final_rescore_model_name(self) -> str:
         if self.desktop_voice_config["engine"] != "funasr":
             return ""
@@ -923,7 +948,8 @@ class DesktopApi:
                     "engine": self.desktop_voice_config["engine"],
                     "funasrMode": self.desktop_voice_config["funasrMode"],
                     "funasrModel": self.desktop_voice_config["funasrModel"],
-                    "activeModel": DEFAULT_STREAMING_MODEL if self.desktop_voice_config["engine"] == "funasr" and self.desktop_voice_config["funasrMode"] in {"streaming", "candidate_streaming"} else self.desktop_voice_config["funasrModel"],
+                    "baiduDevPid": self.desktop_voice_config.get("baiduDevPid", DEFAULT_BAIDU_DEV_PID),
+                    "activeModel": self._desktop_voice_active_model_name(),
                     "finalRescoreModel": self._desktop_voice_final_rescore_model_name(),
                     "streamingChunkMs": self.desktop_voice_config.get("funasrStreamingChunkMs", 600),
                 }
@@ -1241,6 +1267,7 @@ class DesktopApi:
             previous_mode = self.desktop_voice_config["funasrMode"]
             previous_model = self.desktop_voice_config["funasrModel"]
             previous_chunk_ms = self.desktop_voice_config.get("funasrStreamingChunkMs", 600)
+            previous_baidu_dev_pid = self.desktop_voice_config.get("baiduDevPid", DEFAULT_BAIDU_DEV_PID)
             previous_hotwords = self.desktop_voice_config.get("hotwords", "")
             previous_reranker = self.desktop_voice_config.get("semanticReranker", "bert")
             previous_semantic_model = self.desktop_voice_config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL)
@@ -1254,6 +1281,7 @@ class DesktopApi:
                 or previous_mode != self.desktop_voice_config["funasrMode"]
                 or previous_model != self.desktop_voice_config["funasrModel"]
                 or previous_chunk_ms != self.desktop_voice_config.get("funasrStreamingChunkMs", 600)
+                or previous_baidu_dev_pid != self.desktop_voice_config.get("baiduDevPid", DEFAULT_BAIDU_DEV_PID)
                 or previous_hotwords != self.desktop_voice_config.get("hotwords", "")
                 or previous_reranker != self.desktop_voice_config.get("semanticReranker", "bert")
                 or previous_semantic_model != self.desktop_voice_config.get("semanticModel", DEFAULT_BERT_RERANKER_MODEL)
@@ -1356,6 +1384,18 @@ class DesktopApi:
 def apply_window_chrome(window: webview.Window) -> None:
     if sys.platform != "win32":
         return
+    try:
+        import clr
+
+        clr.AddReference("System.Drawing")
+        from System.Drawing import Icon
+
+        icon_path = Path(__file__).resolve().parent / "assets" / "flowvoice_hurricane_eye.ico"
+        if icon_path.exists():
+            window.native.Icon = Icon(str(icon_path))
+    except Exception:
+        pass
+
     try:
         hwnd = ctypes.c_void_p(window.native.Handle.ToInt64())
         dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)

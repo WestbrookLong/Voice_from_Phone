@@ -28,6 +28,7 @@ const fallbackState = {
     funasrMode: "offline",
     funasrModel: "iic/SenseVoiceSmall",
     funasrStreamingChunkMs: 600,
+    baiduDevPid: "80001",
     semanticReranker: "bert",
     semanticModel: "hfl/chinese-macbert-base",
     punctuationStrategy: "spoken",
@@ -911,9 +912,22 @@ function DesktopVoiceSettingsPage({ settings, running, onChange, onClose }) {
                 options={[
                   ["vosk", "Vosk MVP（当前稳定）"],
                   ["funasr", "FunASR（高质量，可选）"],
+                  ["baidu", "Baidu API (cloud ASR)"],
                 ]}
                 onChange={(engine) => onChange({ engine })}
               />
+              {settings.engine === "baidu" && (
+                <>
+                  <SettingText
+                    title="Baidu dev_pid"
+                    value={settings.baiduDevPid || "80001"}
+                    onChange={(baiduDevPid) => onChange({ baiduDevPid })}
+                  />
+                  <div className="rounded-2xl border border-[#2F2A17] bg-[#161308]/75 px-4 py-3 text-xs leading-5 text-[#D7C47A]">
+                    Set FLOWVOICE_BAIDU_API_KEY and FLOWVOICE_BAIDU_SECRET_KEY before starting Computer Voice. Default dev_pid is 80001; FLOWVOICE_BAIDU_DEV_PID can override it.
+                  </div>
+                </>
+              )}
               <SettingSelect
                 title="FunASR 模型"
                 value={settings.funasrModel}

@@ -67,6 +67,20 @@ The streaming partial chunk interval is configurable in the desktop settings as 
 
 This mode does not use SenseVoiceSmall as the final whole-sentence rescore path. The final event is the streaming final text plus safe candidate-span replacements. The default semantic reranker is a candidate-constrained BERT MLM scorer using `hfl/chinese-macbert-base`: it masks and scores only the ASR-proposed candidate span in context, then applies a replacement only when another candidate is safely better. If the BERT model or `transformers` stack is unavailable, the mode falls back to the lightweight hotword/rule reranker instead of breaking the input path.
 
+
+## Baidu ASR mode
+
+`engine=baidu` uses Baidu cloud short-speech REST recognition. The desktop recorder still uses the local endpoint detector to collect one utterance, then sends 16 kHz mono PCM to Baidu and emits a `final` event. This mode does not emit `partial` events.
+
+Configure credentials before starting the desktop client:
+
+```powershell
+$env:FLOWVOICE_BAIDU_API_KEY="your_api_key"
+$env:FLOWVOICE_BAIDU_SECRET_KEY="your_secret_key"
+```
+
+The default Baidu `dev_pid` is `80001`. You can change it in the Computer Voice settings or set `FLOWVOICE_BAIDU_DEV_PID` before launch.
+
 ## Punctuation strategy
 
 - `spoken`: no punctuation model is run. The existing `BridgeSettings` spoken-punctuation path converts words like comma/period equivalents into real punctuation.
